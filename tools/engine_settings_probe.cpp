@@ -84,7 +84,7 @@ int main(int argc,char** argv){
     const auto source=stack+512;
     constexpr uint32_t projection=0x82994870;
     std::array<float,16> native_projection{1.1f,0,0,0,0,1.9555556f,0,0,0,0,1.0001f,1,0,0,-.1f,0};
-    for(auto ratio:{std::pair{16u,9u},std::pair{21u,9u},std::pair{32u,9u}}){
+    for(auto ratio:{std::pair{4u,3u},std::pair{16u,9u},std::pair{21u,9u},std::pair{32u,9u}}){
       motogp::wide::SetRatio(ratio.first,ratio.second);
       for(unsigned i=0;i<16;++i)write(source+i*4,std::bit_cast<uint32_t>(native_projection[i]));
       PPCContext ctx{};ctx.r3.u32=source;ctx.r1.u32=stack+2048;ctx.lr=0x821CD0A0;
@@ -94,13 +94,13 @@ int main(int argc,char** argv){
       Check(ctx.r1.u32==stack+2048 && ctx.lr==0x821CD0A0,"Projection hook preserves native ABI");
       Check(read(source)==std::bit_cast<uint32_t>(native_projection[0]),"Source camera matrix is preserved");
       const auto x_clip=std::bit_cast<float>(read(projection));
-      Check(ratio.first==16?x_clip>1:x_clip<1,"A world point outside 16:9 becomes visible in wide modes");
+      Check(ratio.first*9<=ratio.second*16?x_clip>1:x_clip<1,"Wide modes expand horizontal coverage; narrow modes retain the vertical field of view");
       ctx.r3.u32=projection;ctx.lr=0x8236BB78;sub_821E2108(ctx,base);
       Check(std::bit_cast<float>(read(projection))==x_clip,"State restoration never applies the aspect twice");
     }
     constexpr uint32_t batch_count=uint32_t((-31941*65536)-17184);
     const auto old_count=read(batch_count),old_buffer=read(batch_count+4),old_texture=read(batch_count+8);
-    for(auto ratio:{std::pair{16u,9u},std::pair{21u,9u},std::pair{32u,9u}})for(bool alias:{false,true}){
+    for(auto ratio:{std::pair{4u,3u},std::pair{16u,9u},std::pair{21u,9u},std::pair{32u,9u}})for(bool alias:{false,true}){
       motogp::wide::SetRatio(ratio.first,ratio.second);
       std::array<uint32_t,4> vertices{stack+1024,stack+1048,stack+1072,stack+1096};if(alias)vertices[3]=vertices[0];
       for(unsigned i=0;i<4;++i)for(unsigned word=0;word<6;++word)write(vertices[i]+word*4,std::bit_cast<uint32_t>(float((i+word)%2)));
@@ -111,8 +111,10 @@ int main(int argc,char** argv){
       Check(read(batch_count)==4,"Four HUD vertices reach actual native batch");
       for(unsigned i=0;i<4;++i)for(unsigned word=0;word<6;++word){
         const auto batched=read(stack+256+i*24+word*4);
-        const auto expected=word==0?std::bit_cast<uint32_t>(.5f+(std::bit_cast<float>(saved[i][word])-.5f)*motogp::wide::HorizontalScale()):saved[i][word];
-        Check(batched==expected,"Central HUD corrects horizontal aspect and preserves Y/Z/color/UV");
+        const bool narrow=ratio.first==4;
+        const auto expected=narrow?(word==1?std::bit_cast<uint32_t>(.5f+(std::bit_cast<float>(saved[i][word])-.5f)*.75f):saved[i][word]):
+            (word==0?std::bit_cast<uint32_t>(.5f+(std::bit_cast<float>(saved[i][word])-.5f)*motogp::wide::HorizontalScale()):saved[i][word]);
+        Check(batched==expected,"HUD fits a centered safe area, preserving unaffected coordinates and Z/color/UV");
         Check(read(vertices[i]+word*4)==saved[i][word],"Native HUD source vertices fully restored, including aliases");
       }
       Check(ctx.r1.u32==stack+2048 && ctx.lr==0x12345678,"HUD quad wrapper preserves native ABI");

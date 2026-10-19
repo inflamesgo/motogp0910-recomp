@@ -773,12 +773,12 @@ int wmain(int argc,wchar_t** argv){
       const auto changed=SendMessageW(app.volume,TBM_GETPOS,0,0);CheckUI(position!=changed&&app.Text(app.volume_value)==std::to_wstring(changed)+L"%","Buffered slider retains native keyboard input and percentage notification");
       CheckNoEraseFlash(app,app.volume,app.S(20),app.S(20));SendMessageW(app.volume,TBM_SETPOS,TRUE,position);
       app.ShowPage(0);
-      app.ScrollPage(24);SetFocus(app.navigation[0]);RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_UPDATENOW|RDW_ALLCHILDREN);
-      ClickControl(app.aspect,app.S(10));
-      CheckUI(app.page_scroll[0]==24,"Clicking a low visible selector does not jump the page");
-      CheckUI(SendMessageW(app.aspect,CB_GETDROPPEDSTATE,0,0),"The partially visible bottom selector opens on the first real mouse click");
-      SendMessageW(app.aspect,CB_SHOWDROPDOWN,FALSE,0);SetFocus(app.navigation[0]);SetFocus(app.aspect);
-      CheckUI(app.page_scroll[0]>24,"Keyboard focus still reveals the complete selector");
+      app.ScrollPage(108);SetFocus(app.navigation[0]);RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_UPDATENOW|RDW_ALLCHILDREN);
+      ClickControl(app.fps_limit,app.S(10));
+      CheckUI(app.page_scroll[0]==108,"Clicking a partially visible selector does not jump the page");
+      CheckUI(SendMessageW(app.fps_limit,CB_GETDROPPEDSTATE,0,0),"The partially visible top selector opens on the first real mouse click");
+      SendMessageW(app.fps_limit,CB_SHOWDROPDOWN,FALSE,0);SetFocus(app.navigation[0]);SetFocus(app.fps_limit);
+      CheckUI(app.page_scroll[0]<108,"Keyboard focus still reveals the complete selector");
       app.ShowPage(3);app.ScrollPage(0);const auto generation=app.localization_generation;toml::table before;app.GetControls().Store(before);
       SendMessageW(app.language,CB_SHOWDROPDOWN,TRUE,0);SendMessageW(app.language,CB_SETCURSEL,1,0);app.Command(kLanguage,CBN_SELCHANGE);PumpUI();
       CheckUI(!app.turkish&&app.localization_generation==generation,"An open language popup is not rebuilt inside its native selection transaction");
@@ -801,7 +801,7 @@ int wmain(int argc,wchar_t** argv){
       for(auto size:{std::pair{640,480},std::pair{1024,768},std::pair{1280,800},std::pair{1680,1050},std::pair{1920,1200},std::pair{2560,1440},std::pair{2560,1600},std::pair{1728,972}})
         CheckUI(std::count(sizes.begin(),sizes.end(),size)==1,"Common aspect ratios and monitor-reported dimensions appear once");
       CheckUI(std::none_of(sizes.begin(),sizes.end(),[](auto value){return !WindowSizeFits(value,{2560,1600});}),"Invalid or oversized advertised modes are filtered too");}
-    for(const auto* mode:{"fsr2","fsr3"})for(const auto* quality:{"auto","nativeaa","quality","balanced","performance","ultra_performance"})for(const auto* aspect:{"auto","16:9","21:9","32:9"}){
+    for(const auto* mode:{"fsr2","fsr3"})for(const auto* quality:{"auto","nativeaa","quality","balanced","performance","ultra_performance"})for(const auto* aspect:{"auto","4:3","16:9","21:9","32:9"}){
       Settings requested;requested.effect=mode;requested.fsr_quality=quality;requested.aspect=aspect;
       app.SetControls(requested);const auto actual=app.GetControls();
       CheckUI(actual.effect==mode && actual.fsr_quality==quality && actual.aspect==aspect,"Experimental FSR quality and wide aspect controls round trip");

@@ -146,7 +146,7 @@ struct Settings {
   std::string network_mode="online",online_server=kCommunityServer;
   std::string lan_player_name="Player",lan_room_name="MotoGP room",lan_bind_ip,lan_host_ip;
   int width = 0, height = 0, scale_x = 1, scale_y = 1, anisotropic = -1, volume = 100, adapter = -1;
-  int guest_width=0,guest_height=0,game_language=1,refresh_rate=0,fps_limit=0;
+  int guest_width=0,guest_height=0,game_language=1,refresh_rate=0,fps_limit=0,monitor=1;
   bool fullscreen = true, vsync = true, keyboard = true, mute = false;
   bool letterbox = true, dither = false, shader_cache = true, msaa = true;
   double fsr_reduction = 0.2, cas_sharpness = 0.0;
@@ -172,6 +172,8 @@ struct Settings {
     s.lan_bind_ip=Get(t,"lan_bind_ip",std::string{});s.lan_host_ip=Get(t,"lan_host_ip",std::string{});
     s.width = Get<int64_t>(t, "window_width", 0);
     s.height = Get<int64_t>(t, "window_height", 0);
+    const auto saved_monitor=Get<int64_t>(t,"monitor",1);
+    s.monitor=saved_monitor>=1 && saved_monitor<=16?static_cast<int>(saved_monitor):1;
     s.guest_width=Get<int64_t>(t,"video_mode_width",0);
     s.guest_height=Get<int64_t>(t,"video_mode_height",0);
     s.fullscreen = Get(t, "fullscreen", true);
@@ -226,14 +228,14 @@ struct Settings {
           L"LAN: player name must be 1-15 UTF-8 bytes, room name 1-31 bytes; use a valid IPv4 or leave it empty.",
           L"LAN: oyuncu adı 1-15 UTF-8 bayt, oda adı 1-31 bayt olmalı; geçerli IPv4 yaz veya boş bırak.");
     Wide(lan_player_name);Wide(lan_room_name);
-    if(aspect!="auto" && aspect!="16:9" && aspect!="21:9" && aspect!="32:9")throw Error(L"Unsupported aspect ratio.",L"Desteklenmeyen en-boy oranı.");
+    if(aspect!="auto" && aspect!="16:9" && aspect!="4:3" && aspect!="21:9" && aspect!="32:9")throw Error(L"Unsupported aspect ratio.",L"Desteklenmeyen en-boy oranı.");
     for(size_t i=0;i<engine_effects.size();++i){const auto values=EngineValues(kEngineEffects[i]);
       if(std::find(values.begin(),values.end(),engine_effects[i])==values.end())throw Error(L"Unsupported engine effect setting.",L"Desteklenmeyen motor efekt ayarı.");}
     if(shadow_distance<0 || shadow_distance>180)throw Error(L"Shadow distance must be 0 to 180.",L"Gölge mesafesi 0 ile 180 arasında olmalı.");
     if(width<0 || height<0 || width>8192 || height>8192 ||
        guest_width<0 || guest_height<0 || guest_width>8192 || guest_height>8192 ||
        scale_x<1 || scale_x>8 || scale_y<1 || scale_y>8 ||
-       adapter < -2 || anisotropic < -1 || anisotropic>5 || volume<0 || volume>100 ||
+       adapter < -2 || monitor<1 || monitor>16 || anisotropic < -1 || anisotropic>5 || volume<0 || volume>100 ||
        !std::isfinite(fsr_reduction) || fsr_reduction<0 || fsr_reduction>2 ||
        !std::isfinite(cas_sharpness) || cas_sharpness<0 || cas_sharpness>1 ||
        (backend!="sdl" && backend!="xinput") ||
@@ -269,6 +271,7 @@ struct Settings {
     // skip intros. Keep the runtime's internal diagnostic switch out of the UI.
     Put(t,"allow_intro_skip",true);
     Put(t, "window_width", width); Put(t, "window_height", height);
+    Put(t,"monitor",monitor);
     if(guest_width)Put(t,"video_mode_width",guest_width);
     if(guest_height)Put(t,"video_mode_height",guest_height);
     Put(t, "fullscreen", fullscreen); Put(t, "vsync", vsync);
