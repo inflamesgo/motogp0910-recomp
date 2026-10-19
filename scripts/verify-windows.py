@@ -29,6 +29,7 @@ PROBES = {
     'relay_crypto_probe': '',
     'config_file_probe': '',
 }
+FULL_DISC_PROBES = {'localization_probe', 'launcher_probe', 'launcher_layout_probe'}
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -37,18 +38,31 @@ def main():
     parser.add_argument('--output-dir', type=Path, default=Path('out/windows-validation'))
     parser.add_argument('--wine', type=Path)
     parser.add_argument('--skip-ui', action='store_true')
+    parser.add_argument('--compilation-inputs-only', action='store_true',
+                        help='Report full-disc probes as skipped; run checks supported by XEX/patch inputs')
+    parser.add_argument('--list-targets', action='store_true', help='Print selected build targets without running checks')
     args = parser.parse_args()
+    skipped = {name: 'requires full original disc assets' for name in FULL_DISC_PROBES
+               if args.compilation_inputs_only}
+    if args.skip_ui:
+        skipped['launcher_layout_probe'] = 'interactive launcher UI check disabled'
+    selected = {name: kind for name, kind in PROBES.items() if name not in skipped}
+    if args.list_targets:
+        print('\n'.join([*selected, 'input_defaults_probe']))
+        return 0
     build, game = args.build_dir.resolve(), args.game_root.resolve()
-    for name in [*PROBES, 'input_defaults_probe']:
-        if name == 'launcher_layout_probe' and args.skip_ui:
-            continue
+    for name in [*selected, 'input_defaults_probe']:
         if not (build / (name + '.exe')).is_file():
             parser.error(f'Build the missing probe target first: {name}')
     if not (game / 'default.xex').is_file():
         parser.error('Game root must contain default.xex and default.xexp')
     args.output_dir.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix='run-', dir=args.output_dir.resolve()))
-    results = []
+    results = [{'probe': name, 'status': 'skipped', 'reason': reason, 'exit': None}
+               for name, reason in sorted(skipped.items())]
+    for result in results:
+        print(f"{result['probe']}: SKIP ({result['reason']})", flush=True)
+    (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     provenance = {file.name: hashlib.sha256(file.read_bytes()).hexdigest()
                   for file in (build / 'rexruntime.dll', build / 'rexgpu-xenos.dll',
                                build / 'amd_fidelityfx_dx12.dll')}
@@ -96,13 +110,12 @@ def main():
             except subprocess.TimeoutExpired:
                 log.write('\nTimed out after 180 seconds\n')
                 code = 124
-        results.append({'probe': label, 'exit': code, 'seconds': round(time.monotonic() - start, 3)})
+        results.append({'probe': label, 'status': 'passed' if code == 0 else 'failed',
+                        'exit': code, 'seconds': round(time.monotonic() - start, 3)})
         print(f'{label}: {"PASS" if code == 0 else "FAIL"}', flush=True)
         (root / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
 
-    for name, kind in PROBES.items():
-        if kind == 'ui' and args.skip_ui:
-            continue
+    for name, kind in selected.items():
         extra = [target(game)] if kind in ('game', 'ui') else [target(build / 'rexgpu-xenos.dll')] if kind == 'gpu' else []
         if kind == 'localization':
             extra = [target(game), target(build / 'resources/localization/tr/overlay')]

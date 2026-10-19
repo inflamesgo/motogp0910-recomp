@@ -3,6 +3,12 @@ name: Windows build
 # Intentionally manual-only until the first build is explicitly requested.
 on:
   workflow_dispatch:
+    inputs:
+      quality_checks:
+        description: 'Run available Windows CPU/UI checks (full-disc checks reported as skipped)'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -53,9 +59,21 @@ jobs:
           GAME_INPUTS_TOKEN: ${{ secrets.GAME_INPUTS_TOKEN }}
         run: python scripts/prepare-actions-inputs.py
 
-      - name: Build Windows release without running tests
+      - name: Build Windows release with optional quality checks
         run: |
-          ./scripts/build-windows.ps1 -PreparedInputs assets/actions-inputs -Jobs 4 -SkipTests
+          $quality = '${{ inputs.quality_checks }}' -eq 'true'
+          ./scripts/build-windows.ps1 -PreparedInputs assets/actions-inputs -Jobs 4 -SkipTests -QualityChecks:$quality
+
+      - name: Upload quality-check summaries
+        if: always() && inputs.quality_checks
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: Windows-quality-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            out/windows-validation/**/results.json
+            out/windows-validation/**/runtime-sha256.json
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Package application
         run: |

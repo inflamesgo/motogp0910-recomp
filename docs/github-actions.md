@@ -69,8 +69,8 @@ The workflow uses a fresh Windows 2025 runner, LLVM 20.1.8, the SDK pin from
 accepts `-PreparedInputs` for the verified XEX/patch pair; the existing
 `-GameRoot` / `-TitleUpdatePath` path remains available for local builds.
 
-Tests and game launch are explicitly skipped with `-SkipTests`. A successful
-job establishes compilation and packaging, not gameplay validation. Artifacts
+By default tests and game launch are skipped with `-SkipTests`. A successful
+build-only job establishes compilation and packaging, not gameplay validation. Artifacts
 expire after seven days. Standard GitHub-hosted runner compute is free for
 public repositories; private repositories use the owner's Actions allowance.
 
@@ -80,6 +80,30 @@ After the first requested build succeeds, a `push` trigger restricted to
 `main` can be added in a separate change. There is no such trigger today.
 Avoid pull-request triggers that expose private inputs to unreviewed code.
 
+## Quality checks
+
+`Quick quality checks` runs after every push to `main`, on pull requests targeting
+`main`, and when manually dispatched. It checks Python syntax and runs the existing
+server protocol, storage and security regression suites on both Linux and Windows.
+It does not use private inputs, download SDKs, build the game or access the live
+community service. Failed checks are reported on the commit and Actions run.
+
+For the manual Windows CPU/UI suite, open **Windows build > Run workflow** and
+enable **quality_checks**. The build helper then builds the selected existing
+probe targets and runs `scripts/verify-windows.py` before packaging. Failures
+stop the build; JSON summaries distinguish passed, failed and skipped probes.
+Summaries and verified runtime hashes are uploaded as a separate seven-day artifact.
+No game inputs, raw memory dumps or entire test working folders are uploaded.
+
+The current private archive contains only the XEX and patch. Full-disc
+`localization_probe`, `launcher_probe` and `launcher_layout_probe` checks therefore
+remain explicitly skipped rather than being run against fake disc assets.
+The other CPU/software UI probes can exercise the patched title, configuration,
+input defaults, engine settings, prompt selection and runtime integration.
+Physical controllers, real GPU output, complete launcher interaction and actual
+races still need their own native validation. This manual suite has not yet
+been run on the GitHub Windows runner; its first result is not assumed to pass.
+
 ## GitHub Pages is separate
 
 To stop the generated `pages-build-deployment` workflow, open **Settings >
@@ -87,6 +111,8 @@ Pages**, leave **Source** as **Deploy from a branch**, select **None** in the
 branch selector and click **Save**. This disables website publishing without
 disabling the Windows build workflow or deleting repository files.
 
-The initial workflow wiring has not been executed or validated on a GitHub
-Windows runner. Secret configuration and the first owner-requested build are
-still required before calling the pipeline operational.
+The first requested build confirmed private Google Drive input download and
+SHA-256 checks, then exposed an older Windows PowerShell runtime-staging command
+dependency. Runtime staging now computes the same SHA-256 with .NET directly.
+The next requested run must verify the remaining native packaging steps before
+the full build pipeline is called operational.

@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'Original')][string]$TitleUpdatePath,
     [Parameter(Mandatory = $true, ParameterSetName = 'Prepared')][string]$PreparedInputs,
     [ValidateRange(1, 16)][int]$Jobs = 2,
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [switch]$QualityChecks
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -169,9 +170,19 @@ try {
         Copy-Item -LiteralPath (Join-Path $CrtDirectory.FullName $Name) -Destination $ExeDirectory -Force
     }
     & (Join-Path $PSScriptRoot 'stage-spatial-runtime.ps1') -Destination $ExeDirectory
-    if (!$SkipTests) {
+    if (!$SkipTests -and !$QualityChecks) {
         Invoke-Native -Command $CMake -Arguments @('--build', '--preset', 'win-amd64-release', '--target', 'motogp_headless_probe', '--parallel', "$Jobs")
         Invoke-Native -Command (Join-Path $ExeDirectory 'motogp_headless_probe.exe') -Arguments @($Staged)
+    }
+    if ($QualityChecks) {
+        $Python = (Get-Command python -ErrorAction Stop).Source
+        $ValidationArguments = @((Join-Path $PSScriptRoot 'verify-windows.py'), '--build-dir', $ExeDirectory,
+            '--game-root', $Staged, '--output-dir', (Join-Path $ProjectRoot 'out/windows-validation'), '--compilation-inputs-only')
+        $ProbeTargets = @(& $Python @ValidationArguments --list-targets)
+        if ($LASTEXITCODE -ne 0 -or !$ProbeTargets.Count) { throw 'Could not determine Windows quality-check targets.' }
+        Invoke-Native -Command $CMake -Arguments (@('--build', '--preset', 'win-amd64-release', '--parallel', "$Jobs", '--target') + $ProbeTargets)
+        & (Join-Path $PSScriptRoot 'stage-spatial-runtime.ps1') -Destination $ExeDirectory
+        Invoke-Native -Command $Python -Arguments $ValidationArguments
     }
     Write-Host 'Windows build complete. Executable: out/build/win-amd64-release/motogp0910.exe'
     Write-Host 'Gameplay has not been validated. See README.md for full game data and patch requirements.'
