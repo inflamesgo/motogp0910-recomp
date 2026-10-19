@@ -233,8 +233,8 @@
     LabelControl(0,L"Upscaler sharpness",L"Ölçekleyici keskinliği",0,408,kFormWidth-90);sharp_value=PageControl(0,L"STATIC",L"90%",SS_RIGHT,kFormWidth-70,408,70,22);
     sharpness=PageControl(0,TRACKBAR_CLASSW,L"",WS_TABSTOP|TBS_HORZ|TBS_NOTICKS,0,434,kFormWidth,30,kSharpness);SendMessageW(sharpness,TBM_SETRANGE,TRUE,MAKELPARAM(0,100));
     vsync=check(0,0,490,kColumnWidth,kVsync);msaa=check(0,kColumnX,490,kColumnWidth,kMsaa);
-    letterbox=check(0,0,532,kColumnWidth,kLetterbox);
-    dither=check(0,0,574,kColumnWidth,kDither);shader_cache=check(0,kColumnX,574,kColumnWidth,kShaderCache);
+    letterbox=check(0,0,532,kColumnWidth,kLetterbox);shader_cache=check(0,kColumnX,532,kColumnWidth,kShaderCache);
+    dither=check(0,0,574,kColumnWidth,kDither);
     for(size_t i=0;i<engine_choices.size();++i){const auto slot=i<3?i:i+1;
       engine_choices[i]=field(4,kEngineEffects[i].english,kEngineEffects[i].turkish,(slot%2)*kColumnX,(slot/2)*82,kEngineBase+i);}
     shadow_distance=field(4,L"Shadow render distance",L"Gölge çizim mesafesi",kColumnX,82,kShadowDistance);
