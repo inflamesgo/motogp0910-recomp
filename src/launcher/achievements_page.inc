@@ -10,6 +10,21 @@
   motogp::achievements::Options achievement_options;
   bool unlocks_known=false,unlocks_stale=false;
   int achievement_scroll=0;
+  bool AchievementSearchShortcut(const MSG& message){
+    if(message.message!=WM_KEYDOWN||message.hwnd!=achievement_search||GetFocus()!=achievement_search||
+       !(GetKeyState(VK_CONTROL)&0x8000)||(GetKeyState(VK_MENU)&0x8000))return false;
+    // Consume before dialog translation so no second Ctrl character is queued.
+    if(message.wParam=='A'){SendMessageW(achievement_search,EM_SETSEL,0,-1);return true;}
+    UINT command=0;
+    switch(message.wParam){
+      case 'C':command=WM_COPY;break;
+      case 'X':command=WM_CUT;break;
+      case 'V':command=WM_PASTE;break;
+      case 'Z':command=WM_UNDO;break;
+      default:return false;
+    }
+    SendMessageW(achievement_search,command,0,0);return true;
+  }
   void LocalizeAchievements(){
     if(!achievement_filter)return;
     SetWindowTextW(achievement_search_label,T(L"Search",L"Ara"));

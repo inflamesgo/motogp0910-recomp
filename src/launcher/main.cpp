@@ -756,7 +756,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
     motogp::ApplyWindowIcon(window);
     BOOL dark=TRUE;DwmSetWindowAttribute(window,20,&dark,sizeof(dark));
     ShowWindow(window,show);UpdateWindow(window);MSG message;
-    while(GetMessageW(&message,nullptr,0,0)>0){if(app.CaptureKey(message))continue;if(!IsDialogMessageW(window,&message)){TranslateMessage(&message);DispatchMessageW(&message);}}
+    while(GetMessageW(&message,nullptr,0,0)>0){if(app.CaptureKey(message)||app.AchievementSearchShortcut(message))continue;if(!IsDialogMessageW(window,&message)){TranslateMessage(&message);DispatchMessageW(&message);}}
     CloseHandle(mutex);
   }catch(const std::exception& e){MessageBoxW(nullptr,(L"Cannot open launcher / Launcher açılamadı:\n"+ErrorDetails(e)).c_str(),L"MotoGP 09/10",MB_OK|MB_ICONERROR);result=1;}
   PopupAnimation::DismissClosing();Gdiplus::GdiplusShutdown(gdip_token);CoUninitialize();return result;
