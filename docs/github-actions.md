@@ -111,8 +111,14 @@ Pages**, leave **Source** as **Deploy from a branch**, select **None** in the
 branch selector and click **Save**. This disables website publishing without
 disabling the Windows build workflow or deleting repository files.
 
-The first requested build confirmed private Google Drive input download and
-SHA-256 checks, then exposed an older Windows PowerShell runtime-staging command
+The first requested build confirmed Google Drive input download and SHA-256
+checks, then exposed an older Windows PowerShell runtime-staging command
 dependency. Runtime staging now computes the same SHA-256 with .NET directly.
-The next requested run must verify the remaining native packaging steps before
-the full build pipeline is called operational.
+[Run 39305063341](https://github.com/inflamesgo/motogp0910-recomp/actions/runs/39305063341)
+then completed the native Windows build, packaging and artifact upload in
+7 minutes 30 seconds. Its application source is `d6e405a`; subsequent quality
+workflow changes do not alter the application binaries.
+
+[Quick-check run 39305310774](https://github.com/inflamesgo/motogp0910-recomp/actions/runs/39305310774)
+passed all 60 existing server tests on Windows and all 60 on Linux, plus Python
+syntax checks. The optional Windows CPU/UI suite remains unrun on Actions.
