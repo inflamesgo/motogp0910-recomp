@@ -1,7 +1,10 @@
+[CmdletBinding(DefaultParameterSetName = 'Original')]
 param(
-    [Parameter(Mandatory = $true)][string]$GameRoot,
-    [Parameter(Mandatory = $true)][string]$TitleUpdatePath,
-    [ValidateRange(1, 16)][int]$Jobs = 2
+    [Parameter(Mandatory = $true, ParameterSetName = 'Original')][string]$GameRoot,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Original')][string]$TitleUpdatePath,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Prepared')][string]$PreparedInputs,
+    [ValidateRange(1, 16)][int]$Jobs = 2,
+    [switch]$SkipTests
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -85,14 +88,21 @@ if ($LASTEXITCODE -ne 0 -or $CMakeVersion -notmatch 'cmake version (\d+\.\d+\.\d
 Write-Host "Clang: $Clang"
 Write-Host "CMake: $CMake"
 Write-Host "Ninja: $Ninja"
-$GameRoot = (Resolve-Path -LiteralPath $GameRoot).Path
-$TitleUpdatePath = (Resolve-Path -LiteralPath $TitleUpdatePath).Path
-$Xex = Join-Path $GameRoot 'default.xex'
 $XexHash = '54245417e996ed0aa561a5a803fd810e87684bd0b43082f316db711b3ee786ae'
 $TuHash = '441df6cc2e20ac8aeeed475138c1714d477f965423d8c5c9b0202e3a18d8141f'
 $PatchHash = '0419205ba10dc65eaa7b0bb62abc64cada46119ece5ed749e4ba20c06a6bc079'
+if ($PSCmdlet.ParameterSetName -eq 'Prepared') {
+    $PreparedInputs = (Resolve-Path -LiteralPath $PreparedInputs).Path
+    $Xex = Join-Path $PreparedInputs 'default.xex'
+    $Patch = Join-Path $PreparedInputs 'default.xexp'
+    Assert-Hash -Path $Patch -Expected $PatchHash
+} else {
+    $GameRoot = (Resolve-Path -LiteralPath $GameRoot).Path
+    $TitleUpdatePath = (Resolve-Path -LiteralPath $TitleUpdatePath).Path
+    $Xex = Join-Path $GameRoot 'default.xex'
+    Assert-Hash -Path $TitleUpdatePath -Expected $TuHash
+}
 Assert-Hash -Path $Xex -Expected $XexHash
-Assert-Hash -Path $TitleUpdatePath -Expected $TuHash
 
 $SdkMetadata = Get-Content -LiteralPath (Join-Path $ProjectRoot 'sdk-version.json') -Raw | ConvertFrom-Json
 $SdkVersion = $SdkMetadata.version
@@ -116,17 +126,20 @@ if ((& $RexGlue --version) -ne $SdkVersion -or $LASTEXITCODE -ne 0) {
 
 Push-Location $ProjectRoot
 try {
-    $ToolsBuild = Join-Path $ProjectRoot 'out/tools-win'
-    Invoke-Native -Command $CMake -Arguments @('-S', 'tools', '-B', $ToolsBuild, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release', "-DCMAKE_CXX_COMPILER=$Clang", "-DCMAKE_MAKE_PROGRAM=$Ninja", "-DCMAKE_PREFIX_PATH=$Sdk")
-    Invoke-Native -Command $CMake -Arguments @('--build', $ToolsBuild, '--parallel', "$Jobs")
-    $Extracted = Join-Path $ProjectRoot 'assets/updates/extracted'
-    if (!(Test-Path -LiteralPath $Extracted)) {
-        Invoke-Native -Command (Join-Path $ToolsBuild 'motogp_inspect.exe') -Arguments @('stfs-extract', $TitleUpdatePath, $Extracted)
+    if ($PSCmdlet.ParameterSetName -eq 'Original') {
+        $ToolsBuild = Join-Path $ProjectRoot 'out/tools-win'
+        Invoke-Native -Command $CMake -Arguments @('-S', 'tools', '-B', $ToolsBuild, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release', "-DCMAKE_CXX_COMPILER=$Clang", "-DCMAKE_MAKE_PROGRAM=$Ninja", "-DCMAKE_PREFIX_PATH=$Sdk")
+        Invoke-Native -Command $CMake -Arguments @('--build', $ToolsBuild, '--parallel', "$Jobs")
+        $Extracted = Join-Path $ProjectRoot 'assets/updates/extracted'
+        if (!(Test-Path -LiteralPath $Extracted)) {
+            Invoke-Native -Command (Join-Path $ToolsBuild 'motogp_inspect.exe') -Arguments @('stfs-extract', $TitleUpdatePath, $Extracted)
+        }
+        $Patch = Join-Path $Extracted 'default.xexp'
     }
     $Staged = Join-Path $ProjectRoot 'assets/game-tu'
     New-Item -ItemType Directory -Force $Staged | Out-Null
     Stage-File -Source $Xex -Destination (Join-Path $Staged 'default.xex') -Expected $XexHash
-    Stage-File -Source (Join-Path $Extracted 'default.xexp') -Destination (Join-Path $Staged 'default.xexp') -Expected $PatchHash
+    Stage-File -Source $Patch -Destination (Join-Path $Staged 'default.xexp') -Expected $PatchHash
     Invoke-Native -Command $RexGlue -Arguments @('codegen', '--ignore-stamp', 'motogp0910_manifest.toml')
     Invoke-Native -Command $CMake -Arguments @('--preset', 'win-amd64-release', "-DCMAKE_CXX_COMPILER=$Clang", "-DCMAKE_MAKE_PROGRAM=$Ninja", "-DCMAKE_PREFIX_PATH=$Sdk", "-DREXSDK_VERSION=$($SdkMetadata.cmake_version)")
     Invoke-Native -Command $CMake -Arguments @('--build', '--preset', 'win-amd64-release', '--parallel', "$Jobs")
@@ -141,9 +154,25 @@ try {
     Get-ChildItem -LiteralPath (Join-Path $Sdk 'bin') -Filter '*.dll' -File | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination $ExeDirectory -Force
     }
-    Invoke-Native -Command $CMake -Arguments @('--build', '--preset', 'win-amd64-release', '--target', 'motogp_headless_probe', '--parallel', "$Jobs")
+    # Native packages need the matching Microsoft C++ redistributable DLLs.
+    $RedistRoot = Join-Path $VsInstall 'VC/Redist/MSVC'
+    $CrtDirectory = Get-ChildItem -LiteralPath $RedistRoot -Directory | Sort-Object Name -Descending |
+        ForEach-Object {
+            $X64Redist = Join-Path $_.FullName 'x64'
+            if (Test-Path -LiteralPath $X64Redist -PathType Container) {
+                Get-ChildItem -LiteralPath $X64Redist -Filter 'Microsoft.VC*.CRT' -Directory
+            }
+        } |
+        Select-Object -First 1
+    if (!$CrtDirectory) { throw 'Microsoft x64 C++ redistributable DLLs were not found.' }
+    foreach ($Name in @('msvcp140.dll', 'msvcp140_atomic_wait.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
+        Copy-Item -LiteralPath (Join-Path $CrtDirectory.FullName $Name) -Destination $ExeDirectory -Force
+    }
     & (Join-Path $PSScriptRoot 'stage-spatial-runtime.ps1') -Destination $ExeDirectory
-    Invoke-Native -Command (Join-Path $ExeDirectory 'motogp_headless_probe.exe') -Arguments @($Staged)
+    if (!$SkipTests) {
+        Invoke-Native -Command $CMake -Arguments @('--build', '--preset', 'win-amd64-release', '--target', 'motogp_headless_probe', '--parallel', "$Jobs")
+        Invoke-Native -Command (Join-Path $ExeDirectory 'motogp_headless_probe.exe') -Arguments @($Staged)
+    }
     Write-Host 'Windows build complete. Executable: out/build/win-amd64-release/motogp0910.exe'
     Write-Host 'Gameplay has not been validated. See README.md for full game data and patch requirements.'
 } finally {

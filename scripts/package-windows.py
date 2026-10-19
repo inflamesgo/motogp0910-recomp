@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package the cross-built Windows application; original game files stay out."""
+"""Package native or cross-built Windows outputs; original game files stay out."""
 from pathlib import Path
 import hashlib
 import shutil
@@ -21,6 +21,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build-dir',type=Path,default=ROOT/'out/build/windows-nightly-release')
     parser.add_argument('--archive',default='MotoGP0910-Windows-x64-stability-update.zip')
+    parser.add_argument('--sdk-root', type=Path, default=Path('/workspace/shared/rexglue-nightly-packages/win-amd64'), help='SDK root containing optional additional dependency licenses')
     parser.add_argument('--lan-preview',action='store_true',help='Include the experimental LAN multiplayer integration and Windows test instructions')
     parser.add_argument('--online-preview',action='store_true',help='Include community Online/LAN/Offline instructions')
     parser.add_argument('--include-one-pc-test', action='store_true', help='Include optional loopback test helpers; omitted from clean two-PC packages')
@@ -48,10 +49,11 @@ def main():
             raise SystemExit(f"Missing build output: {name}")
         shutil.copy2(source, binaries / name)
     shutil.copy2(BUILD / "MotoGP09-10Launcher.exe", STAGE / "MotoGP09-10Launcher.exe")
-    licenses = Path("/workspace/shared/rexglue-nightly-packages/win-amd64/licenses")
+    (STAGE / 'licenses').mkdir()
+    licenses = args.sdk_root / 'licenses'
     if licenses.is_dir():
         shutil.copytree(licenses, STAGE / "licenses", dirs_exist_ok=True)
-    shutil.copy2("/workspace/shared/rexglue-sdk-nightly/LICENSE", STAGE / "licenses/ReXGlue-LICENSE.txt")
+    # The pinned runtime's tracked notices include the matching ReXGlue license.
     controller_db = ROOT / "third_party/SDL_GameControllerDB"
     shutil.copy2(controller_db / "gamecontrollerdb.txt", binaries / "gamecontrollerdb.txt")
     shutil.copy2(controller_db / "LICENSE.txt", STAGE / "licenses/SDL_GameControllerDB-LICENSE.txt")

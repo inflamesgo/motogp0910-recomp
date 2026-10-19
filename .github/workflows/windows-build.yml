@@ -1,0 +1,83 @@
+name: Windows build
+
+# Intentionally manual-only until the first build is explicitly requested.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-2025
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out sources without historical release ZIPs
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/downloads/
+
+      - name: Check private input connection
+        env:
+          GAME_INPUTS_URL: ${{ secrets.GAME_INPUTS_URL }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GAME_INPUTS_URL)) {
+            throw 'Set the repository Actions secret GAME_INPUTS_URL before running this workflow. See docs/github-actions.md.'
+          }
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Windows LLVM
+        run: |
+          choco install llvm --version=20.1.8 --yes --no-progress --allow-downgrade --force
+          if ($LASTEXITCODE -ne 0) { throw 'LLVM installation failed.' }
+
+      - name: Download and verify private compilation inputs
+        env:
+          GAME_INPUTS_URL: ${{ secrets.GAME_INPUTS_URL }}
+          GAME_INPUTS_TOKEN: ${{ secrets.GAME_INPUTS_TOKEN }}
+        run: python scripts/prepare-actions-inputs.py
+
+      - name: Build Windows release without running tests
+        run: |
+          ./scripts/build-windows.ps1 -PreparedInputs assets/actions-inputs -Jobs 4 -SkipTests
+
+      - name: Package application
+        run: |
+          $sdk = Get-Content sdk-version.json -Raw | ConvertFrom-Json
+          $shortSha = $env:GITHUB_SHA.Substring(0, 7)
+          $archive = "MotoGP0910-Windows-x64-$shortSha-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.zip"
+          python scripts/package-windows.py --build-dir out/build/win-amd64-release --sdk-root "out/sdk-$($sdk.version)/win-amd64" --archive $archive
+
+      - name: Upload downloadable Windows ZIP
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: MotoGP0910-Windows-x64-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/dist/MotoGP0910-Windows-x64-*.zip
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Remove private inputs
+        if: always()
+        run: |
+          foreach ($folder in @('assets/actions-inputs', 'assets/game-tu')) {
+            if (Test-Path -LiteralPath $folder) {
+              Remove-Item -LiteralPath $folder -Recurse -Force
+            }
+          }
