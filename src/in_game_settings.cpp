@@ -91,7 +91,7 @@ const std::vector<Spec>& Catalog(){static const auto all=[] {
   for(const auto& b:launcher::kBindings){
     // UTF-8 UI names come from the SDK-independent canonical binding list.
     std::string en;for(auto* p=b.english;*p;++p)en+=char(*p);
-    const char* tr[]={"Vites büyüt / Onayla (A/Cross)","Vites küçült / Geri (B/Circle)","Arka fren (X/Square)","Kutlama hareketi (Y/Triangle)","Ön fren (LT/L2)","Gaz (RT/R2)","Kapan (LB/L1)","Kamera değiştir (RB/R1)","Öne eğil (LS/Left stick)","Arkaya eğil (LS/Left stick)","Sola dön (LS/Left stick)","Sağa dön (LS/Left stick)","Arkaya bak (LS/L3)","Etrafa bak: yukarı (RS/Right stick)","Etrafa bak: aşağı (RS/Right stick)","Etrafa bak: sol (RS/Right stick)","Etrafa bak: sağ (RS/Right stick)","Atanmamış (RS/R3)","Özür hareketi (D-pad Yukarı)","Kamera değiştir (D-pad Aşağı)","Öfke hareketi (D-pad Sol)","Sonraki müzik (D-pad Sağ)","İkinci Şans (Back/Select)","Duraklat (Start/Start)","Atanmamış (Guide/PS)"};
+    const char* tr[]={"Kapan / Onayla (A/Cross)","Vites küçült / Geri (B/Circle)","Arka fren (X/Square)","Vites büyüt (Y/Triangle)","Fren (LT/L2)","Gaz (RT/R2)","Arkaya bak (LB/L1)","Kamera değiştir (RB/R1)","Sürücüyü öne eğ (LS Yukarı)","Sürücüyü arkaya eğ (LS Aşağı)","Sola dön (LS/Left stick)","Sağa dön (LS/Left stick)","Atanmamış (LS/L3)","Atanmamış (RS Yukarı)","Atanmamış (RS Aşağı)","Atanmamış (RS Sol)","Atanmamış (RS Sağ)","Atanmamış (RS/R3)","Kutlama hareketi (D-pad Yukarı)","Kamera değiştir (D-pad Aşağı)","Özür hareketi (D-pad Sol)","Öfke hareketi (D-pad Sağ)","İkinci Şans (Back/Select)","Duraklat (Start/Start)","Atanmamış (Guide/PS)"};
     s.push_back({b.key,en,tr[&b-launcher::kBindings.data()],P::Controls,K::Binding});
   }
   return s;
