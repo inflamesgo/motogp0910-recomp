@@ -22,9 +22,10 @@
     Tip(crash_diagnostics,L"Collects an additional local crash report if the game fails. Reports are saved in Logs.",L"Oyun çökerse ek bir yerel çökme raporu toplar. Raporlar Loglar klasörüne kaydedilir.");
     Tip(render_resolution,L"1.5x uses a 720p source and FSR 1, 2 or 3. Windowed/fullscreen targets 1080p; Borderless uses desktop resolution. FSR 2 / 3 has limited temporal inputs.",L"1.5x, 720p kaynak ve FSR 1, 2 veya 3 kullanır. Pencereli/tam ekran 1080p'yi hedefler; Kenarlıksız masaüstü çözünürlüğünü kullanır. FSR 2 / 3'ün zamansal girdileri sınırlıdır.");
     Tip(size,L"Common and monitor-reported window sizes that fit the selected display. Borderless uses your desktop resolution.",L"Seçili ekrana sığan yaygın ve monitörün bildirdiği pencere boyutları. Kenarlıksız mod masaüstü çözünürlüğünü kullanır.");
+    Tip(display_monitor,L"Uses your primary screen by default. Choose another monitor for the next game launch; resolution and refresh-rate choices follow it.",L"Varsayılan olarak birincil ekranını kullanır. Sonraki oyun açılışı için başka monitör seçebilirsin; çözünürlük ve yenileme hızı seçenekleri ona göre güncellenir.");
     Tip(refresh_rate,L"Exclusive fullscreen only. Borderless and windowed modes use the desktop refresh rate.",L"Yalnızca özel tam ekranda kullanılır. Kenarlıksız ve pencereli modlar masaüstünün yenileme hızını kullanır.");
     Tip(fps_limit,L"Adds a maximum frame rate. This does not remove the game's own limit.",L"En yüksek kare hızına sınır ekler. Oyunun kendi sınırını kaldırmaz.");
-    Tip(aspect,L"Auto keeps the original 16:9 view. Wider ratios are experimental.",L"Otomatik, özgün 16:9 görüntüyü korur. Daha geniş oranlar deneyseldir.");
+    Tip(aspect,L"Auto adapts to wider windows and keeps 16:9 on narrower screens. Forced 4:3 and ultrawide ratios are experimental.",L"Otomatik, geniş pencerelere uyum sağlar; dar ekranlarda 16:9'u korur. Sabit 4:3 ve ultra geniş oranlar deneyseldir.");
     Tip(msaa,L"Uses native 2× MSAA when supported by your GPU.",L"Ekran kartın destekliyorsa yerel 2× MSAA kullanır.");
     Tip(letterbox,L"Preserves the aspect ratio, adding black bars when needed.",L"Görüntü oranını korur; gerektiğinde siyah kenarlar ekler.");
     Tip(dither,L"Adds subtle dithering to reduce banding in color gradients.",L"Renk geçişlerindeki bantlaşmayı hafif dithering ile azaltır.");

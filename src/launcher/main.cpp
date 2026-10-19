@@ -1,4 +1,5 @@
 #include "core.h"
+#include "nobk_account.h"
 #include "file_verification.h"
 #include "notices_dialog.h"
 #include "scroll_rail.h"
@@ -50,8 +51,10 @@ struct App {
   HWND window{},path{},size{},backend{},language{},status{},title{},subtitle{},folder_label{},
        fullscreen{},vsync{},keyboard{},mute{},browse{},save{},defaults{},logs{},report{},play{},
        adapter{},msaa{},post_effect{},shader_cache{},render_resolution{},effect{},sharpness{},sharp_value{},
-       anisotropic{},letterbox{},dither{},volume{},volume_value{},prompt_style{},game_language{},refresh_rate{},fps_limit{},fsr_quality{},aspect{};
+       anisotropic{},letterbox{},dither{},volume{},volume_value{},prompt_style{},game_language{},refresh_rate{},fps_limit{},fsr_quality{},aspect{},display_monitor{};
   HWND network_mode{},network_player{},network_room{},network_adapter{},network_host{},network_server{};
+  HWND account_label{},account_status{},account_user{},account_pass{},account_signin{},account_register{},account_signout{};
+  std::optional<NobkAccount> account=LoadAccount();
   Tooltips help;
   std::map<HWND,HWND> help_labels;
   std::array<HWND,7> navigation{};
@@ -68,8 +71,9 @@ struct App {
   std::map<HWND,bool> checks;
   std::array<std::string,kBindings.size()> edited_bindings=settings.bindings;
   std::vector<Adapter> adapters=HardwareAdapters();
-  std::pair<int,int> display_maximum=HardwareDisplayMaximum(Get<int64_t>(config.table,"monitor",0));
-  std::vector<std::pair<int,int>> dimensions=WindowSizesFor(display_maximum,HardwareDisplayModes(Get<int64_t>(config.table,"monitor",0)));
+  std::vector<Monitor> monitors=HardwareMonitors();
+  std::pair<int,int> display_maximum=HardwareDisplayMaximum(settings.monitor);
+  std::vector<std::pair<int,int>> dimensions=WindowSizesFor(display_maximum,HardwareDisplayModes(settings.monitor));
   std::vector<int> refresh_rates{0},fps_limits{0,30,60,90,120,144,165,180,240};
   int current_page=3,binding_index=0;
   bool pages_ready=false,switching_page=false;
@@ -209,11 +213,45 @@ struct App {
     SetWindowTextW(sharp_value,(std::to_wstring(SendMessageW(sharpness,TBM_GETPOS,0,0))+L"%").c_str());
     LocalizeUpscalerHelp();
   }
+  int SelectedMonitor()const{
+    const auto selected=SendMessageW(display_monitor,CB_GETCURSEL,0,0);
+    return selected>=0 && selected<static_cast<LRESULT>(monitors.size())?monitors[selected].index:1;
+  }
+  void FillMonitors(){
+    auto selected=SendMessageW(display_monitor,CB_GETCURSEL,0,0);
+    if(selected<0)selected=settings.monitor-1;
+    SendMessageW(display_monitor,CB_RESETCONTENT,0,0);
+    for(const auto& monitor:monitors){
+      auto text=monitor.primary?std::wstring(T(L"1 — Primary screen",L"1 — Birincil ekran")):
+          std::wstring(T(L"Screen ",L"Ekran "))+std::to_wstring(monitor.index);
+      text+=L" ("+std::to_wstring(monitor.desktop.first)+L" × "+std::to_wstring(monitor.desktop.second)+L")";
+      SendMessageW(display_monitor,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(text.c_str()));
+    }
+    SendMessageW(display_monitor,CB_SETCURSEL,selected>=0 && selected<static_cast<LRESULT>(monitors.size())?selected:0,0);
+  }
+  void FillWindowSizes(std::pair<int,int> preferred){
+    SendMessageW(size,CB_RESETCONTENT,0,0);
+    for(auto [w,h]:dimensions){auto text=(w||h)?std::to_wstring(w)+L" × "+std::to_wstring(h):T(L"Automatic / desktop",L"Otomatik / masaüstü");
+      SendMessageW(size,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(text.c_str()));}
+    const auto found=std::find(dimensions.begin(),dimensions.end(),preferred);
+    SendMessageW(size,CB_SETCURSEL,found==dimensions.end()?0:std::distance(dimensions.begin(),found),0);
+  }
+  void RefreshMonitorSizes(int width=-1,int height=-1){
+    if(width<0 || height<0){const auto selected=SendMessageW(size,CB_GETCURSEL,0,0);
+      const auto previous=selected>=0 && selected<static_cast<LRESULT>(dimensions.size())?dimensions[selected]:std::pair{0,0};
+      width=previous.first;height=previous.second;}
+    const int selected=SelectedMonitor();
+    display_maximum=HardwareDisplayMaximum(selected);
+    dimensions=WindowSizesFor(display_maximum,HardwareDisplayModes(selected));
+    const std::pair preferred{width,height};
+    if(WindowSizeFits(preferred,display_maximum) && std::find(dimensions.begin(),dimensions.end(),preferred)==dimensions.end())dimensions.push_back(preferred);
+    FillWindowSizes(preferred);
+  }
   void RefreshRates(int preferred=-1){
     if(!refresh_rate || !size)return;
     if(preferred<0){auto index=SendMessageW(refresh_rate,CB_GETCURSEL,0,0);preferred=index>=0 && index<static_cast<LRESULT>(refresh_rates.size())?refresh_rates[index]:0;}
     auto index=SendMessageW(size,CB_GETCURSEL,0,0);auto output=index>=0 && index<static_cast<LRESULT>(dimensions.size())?dimensions[index]:std::pair{0,0};
-    refresh_rates=HardwareRefreshRates(output.first,output.second,Get<int64_t>(config.table,"monitor",0));
+    refresh_rates=HardwareRefreshRates(output.first,output.second,SelectedMonitor());
     SendMessageW(refresh_rate,CB_RESETCONTENT,0,0);
     for(auto rate:refresh_rates){auto label=rate?std::to_wstring(rate)+L" Hz":T(L"Automatic",L"Otomatik");SendMessageW(refresh_rate,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label.c_str()));}
     const bool exclusive=SendMessageW(fullscreen,CB_GETCURSEL,0,0)==0;
@@ -279,13 +317,13 @@ struct App {
     SetWindowTextW(msaa,T(L"Native 2× MSAA",L"Yerel 2× MSAA"));
     SetWindowTextW(shader_cache,T(L"Shader cache",L"Shader önbelleği"));
     SetWindowTextW(dither,T(L"Reduce color banding",L"Renk bantlaşmasını azalt"));
-    SetWindowTextW(adaptive_triggers,T(L"DualSense adaptive triggers (Experimental)…",L"DualSense adaptif tetikler (Deneysel)…"));
+    SetWindowTextW(adaptive_triggers,T(L"DualSense adaptive triggers (Experimental)",L"DualSense adaptif tetikler (Deneysel)"));
     SetWindowTextW(keyboard,T(L"Enable keyboard",L"Klavyeyi etkinleştir"));
     SetWindowTextW(crash_diagnostics,T(L"Extended crash diagnostics",L"Gelişmiş çökme tanılaması"));
     SetWindowTextW(mute,T(L"Mute game audio",L"Oyun sesini kapat"));
-    SetWindowTextW(save,T(L"Save",L"Kaydet"));
-    SetWindowTextW(defaults,T(L"Defaults",L"Varsayılan"));
-    SetWindowTextW(logs,T(L"Logs",L"Loglar"));SetWindowTextW(report,T(L"Report",L"Rapor"));
+    SetWindowTextW(save,T(L"Save settings",L"Ayarları kaydet"));
+    SetWindowTextW(defaults,T(L"Restore defaults",L"Varsayılana dön"));
+    SetWindowTextW(logs,T(L"Open logs",L"Logları aç"));SetWindowTextW(report,T(L"Error report",L"Hata raporu"));
     SetWindowTextW(verify_files,verifying?T(L"Cancel check",L"Kontrolü iptal et"):T(L"Verify game files",L"Dosyaları doğrula"));
     SetWindowTextW(play,T(process?L"GAME RUNNING":L"PLAY",process?L"OYUN ÇALIŞIYOR":L"OYUNU BAŞLAT"));
     FillCombo(post_effect,{T(L"Off",L"Kapalı"),L"FXAA",L"FXAA Extreme"});
@@ -293,7 +331,7 @@ struct App {
     FillCombo(prompt_style,{T(L"Automatic",L"Otomatik"),L"PlayStation 3",L"Xbox 360",T(L"Keyboard",L"Klavye")});
     FillCombo(effect,{T(L"Bilinear (default)",L"Bilinear (varsayılan)"),L"AMD CAS",L"AMD FSR 1",L"AMD FSR 2",L"AMD FSR 3"});
     FillCombo(fsr_quality,{T(L"Auto",L"Otomatik"),T(L"Native AA",L"Yerel AA"),T(L"Quality",L"Kalite"),T(L"Balanced",L"Dengeli"),T(L"Performance",L"Performans"),T(L"Ultra Performance",L"Ultra Performans")});
-    FillCombo(aspect,{T(L"Auto / 16:9",L"Otomatik / 16:9"),L"16:9",T(L"21:9 (Experimental)",L"21:9 (Deneysel)"),T(L"32:9 (Experimental)",L"32:9 (Deneysel)")});
+    FillCombo(aspect,{T(L"Auto",L"Otomatik"),L"16:9",T(L"4:3 (Experimental)",L"4:3 (Deneysel)"),T(L"21:9 (Experimental)",L"21:9 (Deneysel)"),T(L"32:9 (Experimental)",L"32:9 (Deneysel)")});
     FillCombo(anisotropic,{T(L"Game default",L"Oyunun ayarı"),T(L"Off",L"Kapalı"),L"1×",L"2×",L"4×",L"8×",L"16×"});
     for(size_t i=0;i<engine_choices.size();++i){auto c=engine_choices[i];const auto selected=SendMessageW(c,CB_GETCURSEL,0,0);SendMessageW(c,CB_RESETCONTENT,0,0);
       for(const std::string_view value:EngineValues(kEngineEffects[i])){
@@ -311,10 +349,9 @@ struct App {
     SendMessageW(adapter,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(T(L"Automatic (recommended)",L"Otomatik (önerilen)")));
     for(const auto& item:adapters)SendMessageW(adapter,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(item.name.c_str()));
     SendMessageW(adapter,CB_SETCURSEL,gpu<0?0:gpu,0);
-    auto selected=SendMessageW(size,CB_GETCURSEL,0,0);SendMessageW(size,CB_RESETCONTENT,0,0);
-    for(auto [w,h]:dimensions){auto text=(w||h)?std::to_wstring(w)+L" × "+std::to_wstring(h):T(L"Automatic / desktop",L"Otomatik / masaüstü");
-      SendMessageW(size,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(text.c_str()));}
-    SendMessageW(size,CB_SETCURSEL,selected<0?0:selected,0);
+    FillMonitors();
+    const auto selected=SendMessageW(size,CB_GETCURSEL,0,0);
+    FillWindowSizes(selected>=0 && selected<static_cast<LRESULT>(dimensions.size())?dimensions[selected]:std::pair{0,0});
     SetWindowTextW(status,(turkish?status_tr:status_en).c_str());UpdateSharpness();RefreshRates();
     SetWindowTextW(reset_bindings,T(L"Reset keys to defaults",L"Tuşları varsayılana döndür"));
     for(size_t i=0;i<binding_buttons.size();++i)RefreshBinding(i);
@@ -349,11 +386,9 @@ struct App {
   void SetControls(const Settings& s){
     SetCheck(debug_overlay,s.debug_overlay_enabled);
     SetNetworkControls(s);
-    SendMessageW(aspect,CB_SETCURSEL,s.aspect=="21:9"?2:s.aspect=="32:9"?3:s.aspect=="16:9"?1:0,0);
-    auto found=std::find(dimensions.begin(),dimensions.end(),std::pair{s.width,s.height});
-    if(found==dimensions.end() && WindowSizeFits({s.width,s.height},display_maximum)){dimensions.emplace_back(s.width,s.height);Localize();found=dimensions.end()-1;}
-    if(found==dimensions.end())found=dimensions.begin();
-    SendMessageW(size,CB_SETCURSEL,std::distance(dimensions.begin(),found),0);
+    SendMessageW(display_monitor,CB_SETCURSEL,s.monitor>=1 && s.monitor<=static_cast<int>(monitors.size())?s.monitor-1:0,0);
+    RefreshMonitorSizes(s.width,s.height);
+    SendMessageW(aspect,CB_SETCURSEL,s.aspect=="4:3"?2:s.aspect=="21:9"?3:s.aspect=="32:9"?4:s.aspect=="16:9"?1:0,0);
     for(size_t i=0;i<engine_choices.size();++i){const auto values=EngineValues(kEngineEffects[i]);auto found=std::find(values.begin(),values.end(),s.engine_effects[i]);
       SendMessageW(engine_choices[i],CB_SETCURSEL,found==values.end()?0:std::distance(values.begin(),found),0);}
     auto shadow=std::find(shadow_distances.begin(),shadow_distances.end(),s.shadow_distance);
@@ -393,8 +428,11 @@ struct App {
   Settings GetControls()const{
     Settings s=settings;
     s.debug_overlay_enabled=Checked(debug_overlay);
+    const auto screen=SendMessageW(display_monitor,CB_GETCURSEL,0,0);
+    if(screen<0 || screen>=static_cast<LRESULT>(monitors.size()))throw std::runtime_error("Invalid monitor selection");
+    s.monitor=SelectedMonitor();
     ReadNetworkControls(s);
-    const auto aspect_index=SendMessageW(aspect,CB_GETCURSEL,0,0);if(aspect_index<0 || aspect_index>3)throw std::runtime_error("Invalid aspect ratio selection");s.aspect=std::array{"auto","16:9","21:9","32:9"}[aspect_index];auto index=SendMessageW(size,CB_GETCURSEL,0,0);
+    const auto aspect_index=SendMessageW(aspect,CB_GETCURSEL,0,0);if(aspect_index<0 || aspect_index>4)throw std::runtime_error("Invalid aspect ratio selection");s.aspect=std::array{"auto","16:9","4:3","21:9","32:9"}[aspect_index];auto index=SendMessageW(size,CB_GETCURSEL,0,0);
     if(index<0 || static_cast<size_t>(index)>=dimensions.size())throw std::runtime_error("Invalid window size selection");
     std::tie(s.width,s.height)=dimensions[index];auto gpu=SendMessageW(adapter,CB_GETCURSEL,0,0);
     if(gpu<0 || gpu>static_cast<LRESULT>(adapters.size()))throw std::runtime_error("Invalid GPU selection");
@@ -601,6 +639,7 @@ struct App {
       }else if(id==kLanguage && (event==CBN_SELCHANGE||event==CBN_CLOSEUP)){
         if(!language_pending){language_pending=true;PostMessageW(window,kApplyLauncherLanguage,0,0);}
       }else if(id==kLanEnabled && event==CBN_SELCHANGE){UpdateNetworkMode();
+      }else if(id==kMonitor && event==CBN_SELCHANGE){RefreshMonitorSizes();RefreshRates();SyncUpscaledPreset();
       }else if(id==kRenderResolution && event==CBN_SELCHANGE){
         if(SendMessageW(render_resolution,CB_GETCURSEL,0,0)==kUpscaled1080Preset)Select1080Upscale();
       }else if((id==kFullscreen || id==kSize) && event==CBN_SELCHANGE){RefreshRates();SyncUpscaledPreset();
@@ -620,10 +659,13 @@ struct App {
           case kResetBinding:CancelCapture();SetBinding(binding_index,kBindings[binding_index].defaults);break;
           case kResetBindings:CancelCapture();for(size_t i=0;i<kBindings.size();++i)SetBinding(i,kBindings[i].defaults);break;
           case kVerifyFiles:StartVerification();break;
+          case kSignIn:AccountSignIn();break;
+          case kSignOut:AccountSignOut();break;
+          case kRegister:ShellExecuteW(window,L"open",kAccountRegister,nullptr,nullptr,SW_SHOWNORMAL);break;
           case kBrowse:Browse();break;case kSave:SaveSettings();break;
           case kDefaults:settings=Settings{};SetControls(settings);Status(L"Defaults selected. Save or press PLAY to apply.",L"Varsayılanlar seçildi. Kaydet veya oyunu başlat.");break;
           case kLogs:OpenFolder(exe/L"logs");break;case kReport:CreateReport();break;
-          case kPlay:if(process || verifying)break;Validate(exe,GameRoot());SaveSettings();process=Start(exe,Arguments(GameRoot(),settings,config.table),Checked(crash_diagnostics));Running(true);SetTimer(window,1,700,nullptr);
+          case kPlay:if(process || verifying)break;Validate(exe,GameRoot());PrepareOnlineLaunch();SaveSettings();process=Start(exe,Arguments(GameRoot(),settings,config.table),Checked(crash_diagnostics));Running(true);SetTimer(window,1,700,nullptr);
             Status(L"Game running. Closing the launcher leaves the game open.",L"Oyun çalışıyor. Launcher'ı kapatman oyunu kapatmaz.");break;
         }
       }

@@ -21,10 +21,14 @@ import socket
 import ssl
 import struct
 import time
+import urllib.error
+import urllib.request
 
 LOG = logging.getLogger('motogp.online')
 TITLE, GAME, COMPAT = 0x434307F0, 0x101, 0x4D4750394C414E02
 PEER_BASE = 0x0009000000000000
+NOBK_XUID_BASE = 0x100000  # NOBK Online: xuid = 0x100000 + site account id
+LINK_TOKEN_CHARS = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_')
 WIRE = struct.Struct('>IHHIIQ IQQI')
 ENVELOPE = struct.Struct('>4s16sQQ')
 DISCOVER, ADVERT, JOIN, JOINED, LEAVE, LEFT, HEARTBEAT, REJECT, DATA, ROSTER = range(1, 11)
@@ -131,6 +135,8 @@ class Client:
     adverts: set = field(default_factory=set)
     queries: dict = field(default_factory=dict)
     joins: Bucket = field(default_factory=lambda: Bucket(10,20))
+    dropped: dict = field(default_factory=dict)
+    relayed: dict = field(default_factory=dict)  # kind -> [last monotonic time, count] of room packets this peer sent
 
 @dataclass
 class Room:
@@ -166,14 +172,30 @@ class Store:
           CREATE INDEX IF NOT EXISTS writes_created ON writes(created);
         ''')
         self.db.execute('CREATE INDEX IF NOT EXISTS writes_player_created ON writes(player,created DESC,nonce)')
+        # NOBK Online site accounts: a linked player keeps one identity (records,
+        # name) on every PC; extra PCs' profile credentials point at it.
+        if 'account' not in {row[1] for row in self.db.execute('PRAGMA table_info(players)')}:
+            with self.db:self.db.execute('ALTER TABLE players ADD COLUMN account INTEGER')
+        self.db.executescript('''
+          CREATE UNIQUE INDEX IF NOT EXISTS players_account ON players(account) WHERE account IS NOT NULL;
+          CREATE TABLE IF NOT EXISTS credential_alias (credential TEXT PRIMARY KEY, player INTEGER NOT NULL REFERENCES players(id));
+        ''')
         self.player_count = self.db.execute('SELECT COUNT(*) FROM players').fetchone()[0]
         self.schemas = schemas
-    def connect(self, credential, name):
+    def player_for(self, digest):
+        """(player id, linked account or None) for a profile credential digest."""
+        row = self.db.execute('SELECT p.id, p.account FROM credential_alias a JOIN players p ON p.id=a.player WHERE a.credential=?', (digest,)).fetchone()
+        return row or self.db.execute('SELECT id, account FROM players WHERE credential=?', (digest,)).fetchone()
+    def connect(self, credential, name, require_account=False):
         if not 1 <= len(name.encode('utf-8')) <= 15 or any(ord(c)<32 or ord(c)==127 for c in name): raise Invalid('player name must be 1-15 UTF-8 bytes')
         digest = hashlib.sha256(credential).hexdigest()
-        row = self.db.execute('SELECT id FROM players WHERE credential=?', (digest,)).fetchone()
+        row = self.player_for(digest)
+        if require_account and not (row and row[1]):
+            raise Invalid('sign in with your NOBK Online account in the launcher')
         with self.db:
-            if row: self.db.execute('UPDATE players SET name=? WHERE id=?', (name, row[0])); number = row[0]
+            # A linked player's name is the site account name; the game cannot change it.
+            if row and row[1]: number = row[0]; name = None
+            elif row: self.db.execute('UPDATE players SET name=? WHERE id=?', (name, row[0])); number = row[0]
             else:
                 if self.player_count >= self.max_players: raise Limited('registered player capacity reached')
                 number = self.db.execute('INSERT INTO players(credential,name) VALUES(?,?)', (digest, name)).lastrowid
@@ -183,9 +205,35 @@ class Store:
             with self.db:self.db.execute('UPDATE players SET name=? WHERE id=?',('Player '+f'{number:04X}'[-4:],number))
         return PEER_BASE | number
     def owner(self, credential):
-        row = self.db.execute('SELECT id FROM players WHERE credential=?', (hashlib.sha256(credential).hexdigest(),)).fetchone()
+        row = self.player_for(hashlib.sha256(credential).hexdigest())
         if not row: raise Invalid('connect before using statistics')
         return row[0]
+    def link(self, credential, account, username):
+        """Bind this PC's profile credential to a verified NOBK Online account.
+        First link keeps the profile's existing records; another PC of the same
+        account then shares that player instead of starting a new one."""
+        if not 0 < account < 2**31 or not 1 <= len(username.encode('utf-8')) <= 15 or any(ord(c)<32 or ord(c)==127 for c in username):
+            raise Invalid('invalid account')
+        digest = hashlib.sha256(credential).hexdigest()
+        own = self.player_for(digest)
+        linked = self.db.execute('SELECT id FROM players WHERE account=?', (account,)).fetchone()
+        with self.db:
+            if linked:
+                number = linked[0]
+                if not own or own[0] != number:
+                    if own and own[1]: raise Invalid('this PC is linked to another NOBK Online account')
+                    self.db.execute('INSERT OR REPLACE INTO credential_alias(credential,player) VALUES(?,?)', (digest, number))
+            elif own:
+                if own[1]: raise Invalid('this PC is linked to another NOBK Online account')
+                number = own[0]
+                self.db.execute('UPDATE players SET account=? WHERE id=?', (account, number))
+            else:
+                if self.player_count >= self.max_players: raise Limited('registered player capacity reached')
+                number = self.db.execute('INSERT INTO players(credential,name,account) VALUES(?,?,?)', (digest, username, account)).lastrowid
+                if not 0 < number <= 0xFFFFFF: raise Limited('player limit reached')
+                self.player_count += 1
+            self.db.execute('UPDATE players SET name=? WHERE id=?', (username, number))
+        return number
     def write(self, player, nonce, views):
         # Only native views with an explicitly researched ordering/aggregation are
         # eligible. Never guess that higher race times or repeated totals win.
@@ -282,25 +330,33 @@ class Service(asyncio.DatagramProtocol):
         self.discovery = Bucket(64,128)
         self.db_cpu = Bucket(0.25,0.25)
         self.transport = None
+        self.live_snapshot = None
+        self.drops_logged = 0.0
+        # NOBK Online accounts: launcher tokens are verified by the site's own
+        # account API on this machine (loopback); None disables /v2/link.
+        self.account_api = None
+        self.require_account = False
+        self.account_checks = Bucket(5,20)
     def connection_made(self, transport):
         self.transport=transport
         self.udp_port=transport.get_extra_info('sockname')[1]
     def connect(self, credential, name):
         self.expire()
-        row=self.store.db.execute('SELECT id FROM players WHERE credential=?',(hashlib.sha256(credential).hexdigest(),)).fetchone()
+        row=self.store.player_for(hashlib.sha256(credential).hexdigest())
         peer=(PEER_BASE | row[0]) if row else 0
         old=self.clients.get(peer)
         if len(self.clients)>=self.max_clients and not old:raise Limited('server is full')
         if old:
             if time.monotonic()-old.seen < 15 and old.endpoint: raise Invalid('this online profile is already connected')
-        peer=self.store.connect(credential,name)
+        peer=self.store.connect(credential,name,self.require_account)
         if old:self.remove(peer)
         client=Client(peer); self.clients[peer]=client; self.tickets[client.ticket]=client
         LOG.info('Connected player %016x', peer)
         return struct.pack('>Q16s32sH', peer, client.ticket, client.key, self.udp_port)
     def envelope(self, client, data, address):
         size = len(data)+68
-        if not client.outgoing.take(size) or not self.udp_outgoing.take(size): return
+        if not client.outgoing.take(size) or not self.udp_outgoing.take(size):
+            client.dropped['out-limit']=client.dropped.get('out-limit',0)+1;return
         client.sequence += 1
         body=ENVELOPE.pack(ONLINE_MAGIC, client.ticket, client.sequence, client.peer)+data
         self.transport.sendto(body+hmac.digest(client.key, b'S'+body, 'sha256'), address)
@@ -324,10 +380,12 @@ class Service(asyncio.DatagramProtocol):
         # Unauthenticated traffic/replays must never spend another player's
         # quota, or the verified global gameplay budget. Crypto work has its
         # own bounded gate so failure-path CPU is still capped.
-        if not client.packets.take() or not self.udp_packets.take() or not self.udp_incoming.take(len(data)): return
+        if not client.packets.take() or not self.udp_packets.take() or not self.udp_incoming.take(len(data)):
+            client.dropped['in-limit']=client.dropped.get('in-limit',0)+1;return
         now=time.monotonic()
         client.allowance=min(256000, client.allowance+(now-client.budget_at)*128000);client.budget_at=now
-        if client.allowance < len(data): return
+        if client.allowance < len(data):
+            client.dropped['in-bytes']=client.dropped.get('in-bytes',0)+1;return
         client.allowance -= len(data)
         raw=data[36:-32]
         try:
@@ -389,12 +447,13 @@ class Service(asyncio.DatagramProtocol):
                 if previous.session != session: return
                 previous.body=body;previous.seen=time.monotonic();return
             if kind == LEFT and peer in self.rooms and self.rooms[peer].session == session:
-                self.close_room(peer);return
+                self.close_room(peer,'host left');return
             if kind == ROSTER:
                 room=self.rooms.get(peer)
                 if not room or room.session!=session or sequence<room.host_sequence:return
                 present=self.roster(room,body)
                 for removed in room.members-present:
+                    LOG.info('Room %016x: host %d removed player %d',room.session,peer&0xFFFFFF,removed&0xFFFFFF)
                     previous=self.clients.get(removed)
                     if previous:
                         if previous.room==peer:previous.room=0
@@ -465,15 +524,24 @@ class Service(asyncio.DatagramProtocol):
             r=Reader(body);source_port,dest_port=r.u16(),r.u16();r.blob(1344);r.end()
             if not source_port or not dest_port:return
         self.forward(destination,raw)
+        mark=client.relayed.setdefault(kind,[0.0,0]);mark[0]=time.monotonic();mark[1]+=1
         if kind == LEAVE and target==room.host and peer!=room.host:
             # Release the directory slot even if the host's UDP acknowledgment
             # is lost. The leaving client has already cleared its local room.
+            LOG.info('Room %016x: player %d left; traffic %s; host traffic %s',room.session,peer&0xFFFFFF,self.traffic(peer),self.traffic(room.host))
             room.members.discard(peer);client.room=0
             room.pending.pop(peer,None)
         if kind == LEFT:
             room.members.discard(target);destination.room=0
             room.pending.pop(target,None);room.host_sequence=sequence
-    def close_room(self, host):
+    def traffic(self, peer):
+        """Seconds since this peer last sent each room packet kind through the relay (diagnostics)."""
+        client=self.clients.get(peer)
+        if not client:return 'gone'
+        now=time.monotonic();names={DATA:'data',HEARTBEAT:'hb',ROSTER:'roster'}
+        parts=[f'{names[k]} {now-client.relayed[k][0]:.1f}s/{client.relayed[k][1]}' for k in names if k in client.relayed]
+        return ', '.join(parts) or 'none'
+    def close_room(self, host, reason=''):
         room=self.rooms.pop(host,None)
         if not room: return
         for peer in room.members:
@@ -481,34 +549,88 @@ class Service(asyncio.DatagramProtocol):
             if client and client.room==host:
                 if peer!=host:self.forward(client,packet(LEFT,0,host,room.session))
                 client.room=0
-        LOG.info('Closed room %016x', room.session)
+        LOG.info('Closed room %016x host %d members %s: %s; traffic %s', room.session, host&0xFFFFFF, sorted(m&0xFFFFFF for m in room.members), reason or 'closed',
+                 '; '.join(f'{m&0xFFFFFF}: {self.traffic(m)}' for m in sorted(room.members|{host})))
     def remove(self, peer):
         client=self.clients.get(peer)
         if not client:return
-        self.close_room(peer)
+        self.close_room(peer,'host disconnected')
         if client.room in self.rooms:self.rooms[client.room].members.discard(peer)
         self.clear_pending(peer)
         self.tickets.pop(client.ticket,None);self.clients.pop(peer,None)
     def expire(self):
         now=time.monotonic()
         for host,room in list(self.rooms.items()):
-            if now-room.seen>15:self.close_room(host)
+            if now-room.seen>15:self.close_room(host,'no host advert for 15 s')
             else:room.pending={p:v for p,v in room.pending.items() if now-v[1]<10}
         for peer,c in list(self.clients.items()):
-            if now-c.seen>45:self.remove(peer)
+            if now-c.seen>45:LOG.info('Player %d timed out (no UDP for 45 s)',peer&0xFFFFFF);self.remove(peer)
+        if now-self.drops_logged>=10:
+            for c in self.clients.values():
+                if c.dropped:LOG.info('Player %d: %s',c.peer&0xFFFFFF,', '.join(f'{k} {v}' for k,v in sorted(c.dropped.items())));c.dropped.clear()
+            self.drops_logged=now
         self.limits.prune();self.profile_limits.prune()
         for client in self.clients.values():
             client.queries={p:v for p,v in client.queries.items() if now-v[1]<5}
             if client.candidate and now-client.challenge_at>5:
                 client.candidate=None;client.challenge=b'';client.deferred=None
     async def housekeeping(self):
-        while True:await asyncio.sleep(1);self.expire()
+        tick=0
+        while True:
+            await asyncio.sleep(1);self.expire();tick+=1
+            if self.live_snapshot and tick%5==0:
+                try:self.write_snapshot()
+                except Exception:LOG.exception('live snapshot failed')
+    def write_snapshot(self):
+        """Write a public, read-only summary (names, rooms) for the website API.
+        No tickets, keys, endpoints or IP addresses are included."""
+        ids=sorted({c.peer&0xFFFFFF for c in self.clients.values() if c.endpoint})
+        names={}
+        for i in range(0,len(ids),200):
+            chunk=ids[i:i+200]
+            names.update(self.store.db.execute('SELECT id,name FROM players WHERE id IN ('+','.join('?'*len(chunk))+')',chunk).fetchall())
+        rooms=[]
+        for host,room in self.rooms.items():
+            try:
+                r=Reader(room.body);r.u64();r.u64()
+                flags,capacity,members,state,private,private_members=(r.u32() for _ in range(6))
+                r.raw(16);title=r.text(31)
+            except (Invalid,UnicodeError,struct.error):continue
+            rooms.append({'host':host&0xFFFFFF,'host_name':names.get(host&0xFFFFFF,''),'name':title,
+                'capacity':capacity,'members':[{'id':m&0xFFFFFF,'name':names.get(m&0xFFFFFF,'')} for m in sorted(room.members)],
+                'in_race':bool(state),'age':int(time.monotonic()-room.seen)})
+        data={'updated':int(time.time()),'online':[{'id':i,'name':names.get(i,'')} for i in ids],'rooms':rooms}
+        path=Path(self.live_snapshot);temporary=path.with_name(path.name+'.tmp')
+        temporary.write_text(json.dumps(data,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
+        os.replace(temporary,path)
     def connect_name(self, body):
         r=Reader(body)
         if r.u64()!=COMPAT:raise Invalid('client build/protocol is incompatible')
         name=r.text(15);r.end()
         if not name or any(ord(c)<32 or ord(c)==127 for c in name):raise Invalid('invalid player name')
         return name
+    def verify_account(self, token):
+        """Blocking (run in a thread): launcher token -> (account id, username)."""
+        request=urllib.request.Request(self.account_api,data=json.dumps({'token':token}).encode(),method='POST',
+            headers={'Content-Type':'application/json','X-Requested-With':'nobk','Accept-Language':'tr'})
+        try:
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request,timeout=4) as reply:
+                data=json.loads(reply.read(8192))
+        except urllib.error.HTTPError as error:
+            try:message=json.loads(error.read(2048)).get('error','')
+            except ValueError:message=''
+            raise Invalid(str(message or 'NOBK Online sign-in was rejected')[:120]) from None
+        except (OSError,ValueError):raise Limited('NOBK Online account service unavailable') from None
+        try:
+            account=int(str(data['xuid']),16)-NOBK_XUID_BASE;name=str(data['gamertag'])
+        except (KeyError,TypeError,ValueError):raise Limited('NOBK Online account service returned an invalid answer') from None
+        if not 0<account<2**31:raise Limited('NOBK Online account service returned an invalid answer')
+        return account,name
+    @staticmethod
+    def link_token(body):
+        token=body.decode('ascii')
+        if not 16<=len(token)<=128 or any(c not in LINK_TOKEN_CHARS for c in token):raise Invalid('invalid NOBK Online sign-in token')
+        return token
     def handle(self, path, credential, body):
         if path == '/v2/connect':return self.connect(credential,self.connect_name(body))
         owner=self.store.owner(credential)
@@ -575,23 +697,34 @@ class Service(asyncio.DatagramProtocol):
             else:
                 credential=credential_header(headers.get('authorization',''))
                 owner_key=hashlib.sha256(credential).digest()
-                if path!='/v2/connect':
+                if path=='/v2/link':
+                    if not self.account_api:raise Invalid('NOBK Online accounts are not enabled on this server')
+                    if not self.limits.take(('link',address),1/10,10) or not self.account_checks.take():raise Limited('sign-in request limit')
+                elif path!='/v2/connect':
                     self.store.owner(credential)  # invented profiles never allocate state
                     rate,burst=(1,64) if path.endswith('/write') else (5,64)
                     if not self.profile_limits.take((path,owner_key),rate,burst):raise Limited('profile request limit')
                 body=await asyncio.wait_for(reader.readexactly(size),self.body_timeout)
                 if path=='/v2/connect':
                     self.connect_name(body)
-                    known=self.store.db.execute('SELECT 1 FROM players WHERE credential=?',(owner_key.hex(),)).fetchone()
+                    known=self.store.player_for(owner_key.hex())
                     if known:
                         # Existing players behind one NAT must not spend the
                         # same scarce new-profile quota when reconnecting.
                         if not self.profile_limits.take(('connect-owner',owner_key),1,20):raise Limited('profile connection request limit')
                     elif not self.limits.take(('register',address),1/60,20) or not self.registrations.take():
                         raise Limited('registration limit')
+                if path=='/v2/link':
+                    # The site account answer arrives first, off the event loop, so
+                    # a slow account service never delays the UDP relay.
+                    account,username=await asyncio.to_thread(self.verify_account,self.link_token(body))
                 if not self.db_cpu.take(0.001):raise Limited('storage work limit')
                 began=time.monotonic();self.store.deadline=began+0.05
-                try:response=self.handle(path,credential,body)
+                try:
+                    if path=='/v2/link':
+                        self.store.link(credential,account,username);response=username.encode('utf-8')
+                        LOG.info('Linked NOBK Online account %d',account)
+                    else:response=self.handle(path,credential,body)
                 finally:
                     self.store.deadline=0
                     self.db_cpu.tokens=max(0,self.db_cpu.tokens-(time.monotonic()-began))
@@ -689,6 +822,9 @@ async def run(args):
     for option in (socket.SO_RCVBUF,socket.SO_SNDBUF):
         try:udp_socket.setsockopt(socket.SOL_SOCKET,option,1024*1024)
         except OSError:LOG.debug('OS kept the default UDP socket buffer')
+    service.live_snapshot=args.live_snapshot
+    service.account_api=args.account_api;service.require_account=args.require_account
+    if args.require_account and not args.account_api:raise Invalid('--require-account needs --account-api')
     server=ControlServer(service,args.http_bind,args.http_port,ssl_context)
     task=asyncio.create_task(service.housekeeping())
     LOG.info('Control API %s:%s (%s), UDP relay %s:%s',args.http_bind,args.http_port,'TLS' if ssl_context else 'loopback HTTP',args.udp_bind,service.udp_port)
@@ -703,6 +839,9 @@ def main():
     p.add_argument('--udp-bind',default='0.0.0.0');p.add_argument('--udp-port',type=int,default=30821)
     p.add_argument('--database',default='data/community.sqlite3')
     p.add_argument('--leaderboards',default=str(Path(__file__).with_name('leaderboards.json')))
+    p.add_argument('--account-api',help='NOBK Online launcher sign-in API on this machine, e.g. http://127.0.0.1:8090/api/account/launcher')
+    p.add_argument('--require-account',action='store_true',help='Online play only for profiles linked to a NOBK Online account')
+    p.add_argument('--live-snapshot',help='Write a public JSON summary of online players/rooms here every 5 s (for the website)')
     p.add_argument('--proxy-secret-file',help='Shared private key file; requires authenticated local Caddy proxy headers')
     p.add_argument('--max-players',type=int,default=10000);p.add_argument('--max-db-mib',type=int,default=256)
     p.add_argument('--cert');p.add_argument('--key');p.add_argument('--max-clients',type=int,default=256);p.add_argument('--max-rooms',type=int,default=128)
