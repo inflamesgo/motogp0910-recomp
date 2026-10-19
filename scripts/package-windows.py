@@ -284,8 +284,10 @@ def main():
     # Required notices are embedded and accessible in the launcher. Do not
     # distribute a separate licenses folder, and reject stale launchers or
     # newly added dependencies whose notices have not been incorporated.
-    notices = (ROOT / "resources/launcher/third-party-notices.txt").read_text(encoding="utf-8")
-    if notices.encode("utf-8") not in (BUILD / "MotoGP09-10Launcher.exe").read_bytes():
+    notices_path = ROOT / "resources/launcher/third-party-notices.txt"
+    notices = notices_path.read_text(encoding="utf-8")
+    # RCDATA embeds exact checkout bytes, including CRLF on native Windows.
+    if notices_path.read_bytes() not in (BUILD / "MotoGP09-10Launcher.exe").read_bytes():
         raise SystemExit("Rebuild the launcher with the embedded third-party notices before packaging")
     for notice in (STAGE / "licenses").rglob("*"):
         if notice.is_file() and notice.read_text(encoding="utf-8-sig") not in notices:
