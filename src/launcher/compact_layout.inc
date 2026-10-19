@@ -58,6 +58,14 @@
       app.ScrollPage(requested);return 0;
     }
     switch(message){
+      case WM_NCHITTEST:{
+        // STATIC normally returns HTTRANSPARENT, which sends clicks past the
+        // painted rail to the launcher instead of starting thumb capture here.
+        POINT point{GET_X_LPARAM(lparam),GET_Y_LPARAM(lparam)};ScreenToClient(control,&point);
+        const auto rail=app.Rail(control,app.page_extent[app.current_page],kPageHeight,app.page_scroll[app.current_page]);
+        if(rail.maximum&&PtInRect(&rail.track,point))return HTCLIENT;
+        break;
+      }
       case WM_PRINTCLIENT:{const auto dc=reinterpret_cast<HDC>(wparam);app.DrawSurface(dc,control);app.PaintRail(dc,control,app.page_extent[app.current_page],kPageHeight,app.page_scroll[app.current_page]);return 0;}
       case WM_PAINT:{PAINTSTRUCT ps;const auto dc=BeginPaint(control,&ps);RECT r;GetClientRect(control,&r);app.DrawSurface(dc,control);
         app.PaintRail(dc,control,app.page_extent[app.current_page],kPageHeight,app.page_scroll[app.current_page]);EndPaint(control,&ps);return 0;}
