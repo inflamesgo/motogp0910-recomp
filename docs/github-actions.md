@@ -22,6 +22,15 @@ hashes; the downloader and Windows build helper verify them again.
    direct URL as its value. Enter it in GitHub settings, never in a commit,
    workflow input, issue, public release or chat message.
 
+Google Drive file sharing links are also supported. Upload the two-file ZIP,
+enable **Anyone with the link > Viewer**, leave downloads allowed, and put the
+normal file sharing URL into `GAME_INPUTS_URL`. The downloader converts it to a
+direct download URL. Leave `GAME_INPUTS_TOKEN` unset for Drive. This option does
+not require a GitHub token, but anyone who obtains the Drive link can download
+the file; storing the link as a secret does not change its Drive permissions.
+Google download quotas or an additional consent page can still block a run;
+the downloader stops if it receives a web page instead of the expected ZIP.
+
 Alternatively, use a separate private GitHub repository, for example
 `inflamesgo/motogp0910-build-inputs`:
 

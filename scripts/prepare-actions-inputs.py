@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import urllib.parse
 import urllib.request
@@ -33,6 +34,17 @@ def main():
     url = os.environ.get('GAME_INPUTS_URL', '').strip()
     if urllib.parse.urlsplit(url).scheme.lower() != 'https':
         raise ValueError('Set GAME_INPUTS_URL to a private direct HTTPS ZIP download.')
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.netloc.lower() in ('drive.google.com', 'www.drive.google.com'):
+        query = urllib.parse.parse_qs(parsed.query)
+        match = re.search(r'/file/d/([A-Za-z0-9_-]+)(?:/|$)', parsed.path)
+        file_id = match.group(1) if match else query.get('id', [''])[0]
+        if not re.fullmatch(r'[A-Za-z0-9_-]+', file_id):
+            raise ValueError('Use a Google Drive file sharing link, not a folder link.')
+        download_query = {'id': file_id, 'export': 'download', 'confirm': 't'}
+        if query.get('resourcekey'):
+            download_query['resourcekey'] = query['resourcekey'][0]
+        url = 'https://drive.usercontent.google.com/download?' + urllib.parse.urlencode(download_query)
     headers = {'User-Agent': 'MotoGP0910-Actions', 'Accept': 'application/octet-stream'}
     token = os.environ.get('GAME_INPUTS_TOKEN', '').strip()
     if token:
@@ -61,6 +73,8 @@ def main():
         raise RuntimeError('Private input download failed; check GAME_INPUTS_URL and its expiry.') from None
     if len(archive) > LIMIT:
         raise ValueError('Private input archive exceeds the 128 MiB limit.')
+    if not zipfile.is_zipfile(io.BytesIO(archive)):
+        raise ValueError('The link did not return a ZIP. Check download access; Drive files must allow anyone with the link to download.')
     contents = {}
     with zipfile.ZipFile(io.BytesIO(archive)) as package:
         if sorted(package.namelist()) != sorted(EXPECTED):
