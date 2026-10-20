@@ -129,8 +129,7 @@ Package SHA-256: `adb0227053a35f28459b356ed3f2794f191b0633ea424e522a18ac211e465c
   options and safely persists supported choices. [Achievements](docs/achievements.md),
   [live settings](docs/in-game-settings.md).
 - **DualSense triggers:** experimental, off by default, native DualSense/Edge
-  through SDL; no adaptive effects on 8BitDo/DS3/DS4. Physical resistance remains
-  untested. [Scope](docs/adaptive-triggers.md).
+  through SDL. Physical resistance remains untested. [Scope](docs/adaptive-triggers.md).
 - **Runtime/game repairs:** missing native callbacks and initializer boundaries,
   serialized collision-coordinate correction, scoped career livery readback,
   TLS/thread/date/launch-path fixes and native crash reporting. The user

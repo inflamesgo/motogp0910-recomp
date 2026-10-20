@@ -91,7 +91,7 @@ const std::vector<Spec>& Catalog(){static const auto all=[] {
   for(const auto& b:launcher::kBindings){
     // UTF-8 UI names come from the SDK-independent canonical binding list.
     std::string en;for(auto* p=b.english;*p;++p)en+=char(*p);
-    const char* tr[]={"Kapan / Onayla (A/Cross)","Vites küçült / Geri (B/Circle)","Arka fren (X/Square)","Vites büyüt (Y/Triangle)","Fren (LT/L2)","Gaz (RT/R2)","Arkaya bak (LB/L1)","Kamera değiştir (RB/R1)","Sürücüyü öne eğ (LS Yukarı)","Sürücüyü arkaya eğ (LS Aşağı)","Sola dön (LS/Left stick)","Sağa dön (LS/Left stick)","Atanmamış (LS/L3)","Atanmamış (RS Yukarı)","Atanmamış (RS Aşağı)","Atanmamış (RS Sol)","Atanmamış (RS Sağ)","Atanmamış (RS/R3)","Kutlama hareketi (D-pad Yukarı)","Kamera değiştir (D-pad Aşağı)","Özür hareketi (D-pad Sol)","Öfke hareketi (D-pad Sağ)","İkinci Şans (Back/Select)","Duraklat (Start/Start)","Atanmamış (Guide/PS)"};
+    const char* tr[]={"Kapan / Onayla (A/Cross)","Vites küçült / Geri (B/Circle)","Arka fren (X/Square)","Vites büyüt (Y/Triangle)","Fren (LT/L2)","Gaz (RT/R2)","Arkaya bak (LB/L1)","Kamera değiştir (RB/R1)","Sürücüyü öne eğ (LS Yukarı)","Sürücüyü arkaya eğ (LS Aşağı)","Sola dön (LS Sol)","Sağa dön (LS Sağ)","Atanmamış (LS/L3)","Atanmamış (RS Yukarı)","Atanmamış (RS Aşağı)","Atanmamış (RS Sol)","Atanmamış (RS Sağ)","Atanmamış (RS/R3)","Kutlama hareketi (D-pad Yukarı)","Kamera değiştir (D-pad Aşağı)","Özür hareketi (D-pad Sol)","Öfke hareketi (D-pad Sağ)","İkinci Şans (Back/Select)","Duraklat (Start/Start)","Atanmamış (Guide/PS)"};
     s.push_back({b.key,en,tr[&b-launcher::kBindings.data()],P::Controls,K::Binding});
   }
   return s;
@@ -343,7 +343,9 @@ bool DrawMenu(Model& model,View& view,bool tr,ImFont* font,ImFont* heading){
       ImGui::TextWrapped("%s",Tr(tr,"DualSense / Edge + native SDL required; USB or Bluetooth. Static resistance profiles. Physical hardware testing is pending.","DualSense / Edge + yerel SDL gerekir; USB veya Bluetooth. Sabit direnç profilleri. Fiziksel donanım testi henüz yapılmadı."));
       if(!adaptive::LiveAvailable())ImGui::TextWrapped("%s",Tr(tr,"Select the SDL controller backend in the launcher to enable live DualSense controls.","Canlı DualSense ayarları için launcher’dan SDL kontrolcü arka ucunu seç."));
       ImGui::TextWrapped("%s",Tr(tr,"Trigger resistance stays fixed during play; it does not follow speed, engine RPM or braking load.","Tetik direnci oyun sırasında sabit kalır; hız, motor devri veya fren yükünü takip etmez."));
-      ImGui::TextWrapped("%s",adaptive::Status(tr).c_str());ImGui::Separator();
+      const auto trigger_status=adaptive::Status(tr);
+      if(!trigger_status.empty())ImGui::TextWrapped("%s",trigger_status.c_str());
+      ImGui::Separator();
     }
     if(view.page==Page::Graphics&&(model.Value("present_effect")=="fsr2"||model.Value("present_effect")=="fsr3")){
       ImGui::TextWrapped("%s",Tr(tr,"FSR 2/3: full temporal reconstruction is incomplete. No frame generation or scene render-cost reduction.","FSR 2/3: tam zamansal yeniden oluşturma eksik. Kare üretimi veya sahne çizim yükü azalması sağlamaz."));ImGui::Separator();

@@ -15,3 +15,7 @@
 - Preserve Offline, LAN and community Online modes. Do not make speculative
   physics/handling changes or add frame generation; both are outside scope.
 - Use the SDK/toolchain pins in sdk-version.json and the custom runtime manifest.
+- Write commit subjects in English as `type(scope): short imperative summary`.
+  Use `feat` for new features, `fix` for corrections, `ci` for Actions changes,
+  and `docs`, `build`, `refactor`, `perf` or `chore` when appropriate. Keep each
+  subject specific to the actual change.

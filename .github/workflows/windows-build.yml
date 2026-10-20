@@ -1,6 +1,6 @@
 name: Windows build
 
-# Intentionally manual-only until the first build is explicitly requested.
+# Windows builds run only by explicit manual dispatch, never on commit pushes.
 on:
   workflow_dispatch:
     inputs:
@@ -76,7 +76,14 @@ jobs:
           retention-days: 7
 
       - name: Package application
+        id: package
         run: |
+          $title = (git log -1 --format=%s).Trim()
+          $title = [regex]::Replace($title, '[<>:"/\\|?*\x00-\x1F\x7F]', '-')
+          $title = $title.Trim().TrimEnd('.')
+          if ($title.Length -gt 100) { $title = $title.Substring(0, 100).Trim().TrimEnd('.') }
+          if (!$title) { $title = 'Windows build' }
+          "title=$title" >> $env:GITHUB_OUTPUT
           $sdk = Get-Content sdk-version.json -Raw | ConvertFrom-Json
           $shortSha = $env:GITHUB_SHA.Substring(0, 7)
           $archive = "MotoGP0910-Windows-x64-$shortSha-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.zip"
@@ -85,11 +92,11 @@ jobs:
       - name: Upload downloadable Windows ZIP
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: MotoGP0910-Windows-x64-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: out/dist/MotoGP0910-Windows-x64-*.zip
+          name: MotoGP0910-Windows-x64 - ${{ steps.package.outputs.title }}
+          path: out/package-windows/
           if-no-files-found: error
           retention-days: 7
-          compression-level: 0
+          compression-level: 6
 
       - name: Remove private inputs
         if: always()

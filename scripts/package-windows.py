@@ -43,7 +43,7 @@ def main():
     for name, expected in manifest["dll_sha256"].items():
         if hashlib.sha256((BUILD / name).read_bytes()).hexdigest() != expected:
             raise SystemExit(f"Runtime mismatch: {name}; stage the spatial FSR pair first")
-    for name in ("motogp0910.exe", "motogp0910-ui.dll", "motogp0910-crash-monitor.exe", "motogp0910.map", *RUNTIME):
+    for name in ("motogp0910.exe", "motogp0910-ui.dll", "motogp0910-update-helper.exe", "motogp0910-crash-monitor.exe", "motogp0910.map", *RUNTIME):
         source = BUILD / name
         if not source.is_file():
             raise SystemExit(f"Missing build output: {name}")
@@ -133,7 +133,7 @@ def main():
             "DUALSENSE (EXPERIMENTAL): Controls > DualSense adaptive triggers...\n"
             "Separate L2/R2 resistance modes and positions/strength; default off.\n"
             "F1 > Controls changes and saves the same settings live. Requires native\n"
-            "DualSense / Edge with SDL. 8BitDo / DS3 / DS4 cannot provide resistance.\n"
+            "DualSense / Edge with SDL.\n"
             "Software/SDL transport verified; physical DualSense testing pending.\n"
             "See adaptive-triggers-readme.txt.\n\n"
             "QUIT UPDATE: The user confirmed Press Start Back opens the exit dialog.\n"
@@ -303,6 +303,7 @@ def main():
         assert package.testzip() is None
         assert "bin/motogp0910-launcher.exe" not in package.namelist()
         assert "bin/motogp0910-ui.dll" in package.namelist()
+        assert "bin/motogp0910-update-helper.exe" in package.namelist()
         assert not any(p.startswith("logs/") for p in package.namelist())
         assert not any(p.endswith((".xex", ".xexp")) or p.startswith("assets/")
                        for p in package.namelist())

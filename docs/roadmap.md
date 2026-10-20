@@ -36,8 +36,7 @@ supersede the current SDK pin or package linked from the [README](../README.md).
   firewall/routing, Internet racing and native leaderboard UI. Hosting runs
   separately from the game client and does not require every player to have
   administrator access to the VDS.
-- Verify adaptive resistance on real DualSense/Edge hardware. The user's
-  8BitDo does not provide that hardware feature.
+- Verify adaptive resistance on real DualSense/Edge hardware.
 - Keep FSR 2/3 and ultrawide limitations explicit; temporal reconstruction needs
   valid engine inputs and real GPU evidence before broader claims.
 

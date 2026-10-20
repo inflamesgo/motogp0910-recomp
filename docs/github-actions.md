@@ -61,8 +61,15 @@ After the private secret is configured and the owner requests a build:
 
 1. Open **Actions > Windows build > Run workflow**.
 2. Select `main` and click **Run workflow**. Other branches are skipped.
-3. Download the Windows artifact from the completed run. It contains the
-   uniquely named application ZIP; it does not create a GitHub release.
+3. Download the Windows artifact from the completed run. Its name includes
+   the checked-out commit title rather than a long hash. GitHub's downloaded
+   ZIP contains the launcher, `bin/` and `resources/` directly, with no second
+   ZIP to extract. It does not create a GitHub release.
+
+The packaging script still validates a uniquely named local ZIP before the
+workflow uploads its staged application files. GitHub omits empty directories,
+so create `game/` when adding your original disc files to a fresh extraction,
+or select your existing game folder in the launcher.
 
 The workflow uses a fresh Windows 2025 runner, LLVM 20.1.8, the SDK pin from
 `sdk-version.json` and the matching custom runtime manifest. The Windows helper

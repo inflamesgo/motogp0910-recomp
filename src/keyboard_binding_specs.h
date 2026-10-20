@@ -3,7 +3,17 @@
 #include <string_view>
 namespace launcher {
 inline constexpr bool IsLegacyDefaultBinding(unsigned index,std::string_view value){
-  return (index==0&&value=="Semicolon,Space")||(index==1&&value=="Quote,Backspace");
+  switch(index){
+    case 0:return value=="Semicolon,Space";
+    case 1:return value=="Quote,Backspace";
+    case 12:return value=="F";
+    case 13:return value=="Up";
+    case 14:return value=="Down";
+    case 15:return value=="Left";
+    case 16:return value=="Right";
+    case 17:return value=="K";
+    default:return false;
+  }
 }
 struct BindingSpec { const char* key; const char* defaults; const wchar_t* english; const wchar_t* turkish; };
 inline constexpr std::array<BindingSpec,25> kBindings{{
@@ -17,14 +27,14 @@ inline constexpr std::array<BindingSpec,25> kBindings{{
   {"keybind_right_shoulder", "3", L"Change view (RB/R1)", L"Kamera değiştir (RB/R1)"},
   {"keybind_lstick_up", "W", L"Lean rider forward (LS Up)", L"Sürücüyü öne eğ (LS Yukarı)"},
   {"keybind_lstick_down", "S", L"Lean rider back (LS Down)", L"Sürücüyü arkaya eğ (LS Aşağı)"},
-  {"keybind_lstick_left", "A", L"Turn left (LS/Left stick)", L"Sola dön (LS/Left stick)"},
-  {"keybind_lstick_right", "D", L"Turn right (LS/Left stick)", L"Sağa dön (LS/Left stick)"},
-  {"keybind_lstick_press", "F", L"Unassigned (LS/L3)", L"Atanmamış (LS/L3)"},
-  {"keybind_rstick_up", "Up", L"Unassigned (RS Up)", L"Atanmamış (RS Yukarı)"},
-  {"keybind_rstick_down", "Down", L"Unassigned (RS Down)", L"Atanmamış (RS Aşağı)"},
-  {"keybind_rstick_left", "Left", L"Unassigned (RS Left)", L"Atanmamış (RS Sol)"},
-  {"keybind_rstick_right", "Right", L"Unassigned (RS Right)", L"Atanmamış (RS Sağ)"},
-  {"keybind_rstick_press", "K", L"Unassigned (RS/R3)", L"Atanmamış (RS/R3)"},
+  {"keybind_lstick_left", "A", L"Turn left (LS Left)", L"Sola dön (LS Sol)"},
+  {"keybind_lstick_right", "D", L"Turn right (LS Right)", L"Sağa dön (LS Sağ)"},
+  {"keybind_lstick_press", "", L"Unassigned (LS/L3)", L"Atanmamış (LS/L3)"},
+  {"keybind_rstick_up", "", L"Unassigned (RS Up)", L"Atanmamış (RS Yukarı)"},
+  {"keybind_rstick_down", "", L"Unassigned (RS Down)", L"Atanmamış (RS Aşağı)"},
+  {"keybind_rstick_left", "", L"Unassigned (RS Left)", L"Atanmamış (RS Sol)"},
+  {"keybind_rstick_right", "", L"Unassigned (RS Right)", L"Atanmamış (RS Sağ)"},
+  {"keybind_rstick_press", "", L"Unassigned (RS/R3)", L"Atanmamış (RS/R3)"},
   {"keybind_dpad_up", "Shift+Up", L"Celebration gesture (D-pad Up)", L"Kutlama hareketi (D-pad Yukarı)"},
   {"keybind_dpad_down", "Shift+Down", L"Change view (D-pad Down)", L"Kamera değiştir (D-pad Aşağı)"},
   {"keybind_dpad_left", "Shift+Left", L"Apology gesture (D-pad Left)", L"Özür hareketi (D-pad Sol)"},

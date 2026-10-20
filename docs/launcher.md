@@ -83,6 +83,12 @@ clears the binding. Reset keys restores only keyboard mappings, while Defaults
 resets all launcher-managed settings. Existing alternative key lists remain
 supported and are preserved until that action is rebound.
 
+Actions labeled **Unassigned** start without keyboard bindings. The former
+shipped L3/R3 and right-stick defaults are upgraded to empty bindings when
+loaded from configuration; different custom bindings and explicit environment,
+command-line or live overrides are preserved. Empty bindings are supported by
+the SDK and do not disable a physical controller's sticks or buttons.
+
 SDL supports Xbox, PlayStation and other mapped USB/Bluetooth controllers.
 The included `gamecontrollerdb.txt` stays in `bin/`, outside `game/`.
 XInput can be selected separately. The game now replaces registered button

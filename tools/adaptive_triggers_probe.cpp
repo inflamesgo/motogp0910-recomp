@@ -47,7 +47,7 @@ int main(){try{
   Check(!adaptive::WriteProfile(invalid=adaptive::Profile{true,{"weapon",9,1,5},{"feedback",2,0,4}})&&adaptive::ReadProfile()==p,"Invalid live profile is rejected without partial flag changes");
   rex::cvar::SetFlagByName("input_backend","sdl");
   Check(shared_sdl::Init(SDL_INIT_GAMEPAD),"Initialize actual runtime SDL");
-  Capture sony,xbox,ps4,bitdo;
+  Capture sony,xbox,ps4,unsupported;
   auto attach=[](Capture& capture,Uint16 vendor,Uint16 product,const char* name){
     SDL_VirtualJoystickDesc d{};SDL_INIT_INTERFACE(&d);d.type=SDL_JOYSTICK_TYPE_GAMEPAD;d.naxes=6;d.nbuttons=15;d.axis_mask=63;d.button_mask=0x7fff;d.vendor_id=vendor;d.product_id=product;d.name=name;d.userdata=&capture;d.SendEffect=Capture::Send;
     return shared_sdl::AttachVirtualJoystick(&d);
@@ -55,13 +55,13 @@ int main(){try{
   const auto ps=attach(sony,0x054c,0x0ce6,"DualSense adaptive probe");
   const auto xb=attach(xbox,0x045e,0x02ea,"Xbox adaptive exclusion probe");
   const auto ds4=attach(ps4,0x054c,0x09cc,"DualShock 4 exclusion probe");
-  const auto bd=attach(bitdo,0x2dc8,0x3106,"8BitDo Ultimate exclusion probe");
+  const auto bd=attach(unsupported,0x2dc8,0x3106,"Unsupported controller exclusion probe");
   Check(ps&&xb&&ds4&&bd&&shared_sdl::GetGamepadTypeForID(ps)==SDL_GAMEPAD_TYPE_PS5,"Virtual identities use real SDL classification");
   auto pump=[] {shared_sdl::UpdateJoysticks();SDL_Event e;while(shared_sdl::PollEvent(&e)){};};pump();
   adaptive::Start(true);struct Cleanup{~Cleanup(){adaptive::Stop();}} cleanup;
   Wait(sony,0,expected);
   std::this_thread::sleep_for(std::chrono::milliseconds(350));
-  Check(sony.Count()==1&&!xbox.Count()&&!ps4.Count()&&!bitdo.Count(),"Unchanged effects are not spammed; Xbox, DS4 and 8BitDo never receive trigger reports");
+  Check(sony.Count()==1&&!xbox.Count()&&!ps4.Count()&&!unsupported.Count(),"Unchanged effects are not spammed; non-PS5 devices never receive trigger reports");
   p.right={"feedback",4,6,8};size_t n=sony.Count();Check(adaptive::WriteProfile(p),"Change live right profile");Wait(sony,n,adaptive::Encode(p));
   p.right.mode="off";n=sony.Count();adaptive::WriteProfile(p);Wait(sony,n,adaptive::Encode(p));Check(sony.Last()[10]==0&&sony.Last()[21]==1,"One side off explicitly resets it while retaining other side");
   n=sony.Count();adaptive::SetFocused(false);Wait(sony,n,off);
@@ -80,6 +80,6 @@ int main(){try{
   Check(sony.Count()==n+1&&adaptive::Status(false).find("rejected")!=std::string::npos,"Rejected device produces one attempt and visible failure, without periodic log spam");
   adaptive::Stop();
   for(auto id:{ps2,xb,ds4,bd})shared_sdl::DetachVirtualJoystick(id);
-  Check(!xbox.Count()&&!ps4.Count()&&!bitdo.Count(),"Unsupported controllers remain untouched over every lifecycle transition");
+  Check(!xbox.Count()&&!ps4.Count()&&!unsupported.Count(),"Unsupported controllers remain untouched over every lifecycle transition");
   std::cout<<"Passed "<<checks<<" adaptive trigger software/transport checks; physical DualSense testing pending\n";return 0;
 }catch(const std::exception& e){adaptive::Stop();std::cerr<<"FAIL after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
