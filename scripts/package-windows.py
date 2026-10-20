@@ -72,6 +72,18 @@ def main():
     shutil.copy2(ROOT / "resources/localization/tr/manifest.json", STAGE / "resources/localization/tr/manifest.json")
     (STAGE / "resources/ui").mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "third_party/open-sans/OpenSans-Semibold.ttf", STAGE / "resources/ui/OpenSans-Semibold.ttf")
+    archive_reader = ROOT / "third_party/7zip"
+    archive_target = STAGE / "resources/archive"
+    archive_target.mkdir(parents=True, exist_ok=True)
+    archive_manifest = json.loads((archive_reader / "manifest.json").read_text())
+    for entry in archive_manifest["files"]:
+        source = archive_reader / entry["name"]
+        if source.stat().st_size != entry["size"] or hashlib.sha256(source.read_bytes()).hexdigest() != entry["sha256"]:
+            raise SystemExit(f"Archive reader integrity check failed: {entry['name']}")
+        if entry["name"] in ("7z.exe", "7z.dll", "7zip-source.tar.xz"):
+            shutil.copy2(source, archive_target / entry["name"])
+    if (archive_reader / "License.txt").read_text() not in (ROOT / "resources/launcher/third-party-notices.txt").read_text():
+        raise SystemExit("Missing embedded 7-Zip notice")
     # Runtime resources and legal notices are always included. User-facing
     # instructions are opt-in so development builds contain no README files.
     (STAGE / "game").mkdir()

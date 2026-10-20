@@ -32,7 +32,7 @@ inline void SaveAccount(const NobkAccount& account) {
   DATA_BLOB input{static_cast<DWORD>(plain.size()), reinterpret_cast<BYTE*>(plain.data())}, output{};
   const bool ok = CryptProtectData(&input, L"NOBK Online launcher sign-in", nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output);
   SecureZeroMemory(plain.data(), plain.size());
-  if (!ok) throw Error(L"Could not protect the sign-in for this Windows user.", L"Giriş bilgisi bu Windows kullanıcısı için korunamadı.");
+  if (!ok) throw Error(L"Could not protect the sign-in for this Windows user.", L"Oturum bilgisi bu Windows kullanıcısı için şifrelenemedi.");
   const auto path = AccountTokenPath();
   std::error_code error;
   fs::create_directories(path.parent_path(), error);
@@ -41,11 +41,11 @@ inline void SaveAccount(const NobkAccount& account) {
     std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
     file.write(reinterpret_cast<const char*>(output.pbData), output.cbData);
     LocalFree(output.pbData);
-    if (!file) throw Error(L"Could not save the sign-in.", L"Giriş bilgisi kaydedilemedi.");
+    if (!file) throw Error(L"Could not save the sign-in.", L"Oturum bilgisi kaydedilemedi.");
   }
   if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
     fs::remove(temporary, error);
-    throw Error(L"Could not save the sign-in.", L"Giriş bilgisi kaydedilemedi.");
+    throw Error(L"Could not save the sign-in.", L"Oturum bilgisi kaydedilemedi.");
   }
   SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_HIDDEN);
 }
@@ -111,7 +111,7 @@ inline NobkAccount SiteSignIn(const nlohmann::json& request, bool turkish) {
     const auto code = GetLastError();
     if (code == ERROR_WINHTTP_TIMEOUT || code == ERROR_WINHTTP_CANNOT_CONNECT)
       throw Error(L"Could not reach NOBK Online in time (" + std::to_wstring(code) + L"). Check that a firewall, antivirus or VPN does not block the launcher, then try again.",
-                  L"NOBK Online'a zamanında ulaşılamadı (" + std::to_wstring(code) + L"). Güvenlik duvarı, antivirüs veya VPN'in launcher'ı engellemediğini kontrol et ve tekrar dene.");
+                  L"NOBK Online bağlantısı zaman aşımına uğradı (" + std::to_wstring(code) + L"). Güvenlik duvarı, antivirüs veya VPN'in başlatıcıyı engellemediğini kontrol et ve yeniden dene.");
     throw fail(L"(" + std::to_wstring(code) + L")");
   }
   DWORD status = 0, length = sizeof(status);
@@ -148,7 +148,7 @@ inline NobkAccount SignIn(const std::string& username, const std::string& passwo
 inline std::string PrepareOnline(const std::string& server, bool turkish) {
   auto saved = LoadAccount();
   if (!saved) throw Error(L"Sign in with your NOBK Online account on the Online page first.",
-                          L"Önce Online sayfasından NOBK Online hesabınla giriş yap.");
+                          L"Önce Online sekmesinden NOBK Online hesabınla giriş yap.");
   NobkAccount account;
   try { account = SiteSignIn({{"token", saved->token}}, turkish); }
   catch (const SignInRejected&) { ForgetAccount(); throw; }

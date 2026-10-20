@@ -8,6 +8,8 @@
 namespace {
 int ui_checks=0;
 void CheckUI(bool ok,const char* message){if(!ok)throw std::runtime_error(message);++ui_checks;}
+#include "iso_import_checks.inc"
+#include "steam_shortcut_checks.inc"
 void Screenshot(HWND window,const fs::path& file,bool whole=false,bool include_popups=false){
   RECT r;POINT origin{};if(whole){GetWindowRect(window,&r);origin={r.left,r.top};r.right-=r.left;r.bottom-=r.top;r.left=r.top=0;}else{GetClientRect(window,&r);if(include_popups)ClientToScreen(window,&origin);}
   auto dc=include_popups?GetDC(nullptr):whole?GetWindowDC(window):GetDC(window),copy=CreateCompatibleDC(dc);
@@ -545,12 +547,18 @@ int wmain(int argc,wchar_t** argv){
   Gdiplus::GdiplusStartupInput gdip;ULONG_PTR token{};Gdiplus::GdiplusStartup(&token,&gdip,nullptr);
   INITCOMMONCONTROLSEX common{sizeof(common),ICC_STANDARD_CLASSES|ICC_BAR_CLASSES};InitCommonControlsEx(&common);
   int result=0;
+  if(argc==2&&std::wstring_view(argv[1])==L"--steam-only"){
+    try{CheckSteamShortcuts();std::cout<<ui_checks<<" synthetic Steam VDF checks passed\n";}
+    catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';result=1;}
+    Gdiplus::GdiplusShutdown(token);CoUninitialize();return result;
+  }
   if(argc==2&&std::wstring_view(argv[1])==L"--notices-only"){
     try{CheckEmbeddedNotices();}catch(const std::exception& e){std::cerr<<"FAIL: "<<e.what()<<'\n';result=1;}
     Gdiplus::GdiplusShutdown(token);CoUninitialize();return result;
   }
   try{
-    if(argc!=3&&argc!=4)throw std::runtime_error("Usage: launcher_ui_probe GAME_ROOT SCREENSHOT_DIRECTORY [--sliders-only|--graphics-only] (run in an isolated executable folder)");
+    if(argc!=3&&argc!=4)throw std::runtime_error("Usage: launcher_ui_probe GAME_ROOT SCREENSHOT_DIRECTORY [--sliders-only|--graphics-only|--iso-only|--updates-only] (run in an isolated executable folder)");
+    CheckSteamShortcuts();
     const auto pictures=fs::path(argv[2]);fs::create_directories(pictures);
     App app;app.scale=1;const auto game=fs::path(argv[1]);
     WNDCLASSW cls{};cls.hInstance=GetModuleHandleW(nullptr);cls.lpfnWndProc=WindowProc;cls.lpszClassName=L"MotoGPLauncherUIProbe";cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassW(&cls);
@@ -559,6 +567,26 @@ int wmain(int argc,wchar_t** argv){
     auto window=CreateWindowExW(0,cls.lpszClassName,L"MotoGP 09/10 Launcher",style,20,20,bounds.right-bounds.left,bounds.bottom-bounds.top,nullptr,nullptr,cls.hInstance,&app);
     CheckUI(window!=nullptr,"Production UI window created");ShowWindow(window,SW_SHOW);SetForegroundWindow(window);UpdateWindow(window);
     SetWindowTextW(app.path,game.c_str());app.ReadyStatus();
+    if(argc==4 && std::wstring_view(argv[3])==L"--updates-only"){
+      app.StartUpdateCheck();CheckUI(!IsWindowVisible(app.update_notice),"Unconfigured normal launch has no update notification");
+      app.update_preview=true;app.StartUpdateCheck();
+      CheckUI(IsWindowVisible(app.update_notice)&&app.update_release&&!app.update_release->CanInstall()&&!app.update_check.valid(),"Preview notification is visible with no installable URL or network request");
+      app.ToggleUpdatePanel();app.update_animation_start-=1000;app.AnimateUpdatePanel();
+      CheckUI(IsWindowVisible(app.update_panel)&&app.update_panel_height==App::kUpdateHeight,"Download icon expands the production update panel");
+      for(bool tr:{false,true}){app.turkish=tr;app.Localize();
+        CheckUI(app.Text(app.update_notes).find(tr?L"GÜNCELLEME ÖNİZLEMESİ":L"UPDATE PREVIEW")!=std::wstring::npos,"Preview changelog follows launcher language");
+        CheckUI(IsWindowEnabled(app.update_action),"Update now can demonstrate the non-installing preview action");
+        Screenshot(window,pictures/(tr?L"updates-turkish.bmp":L"updates-english.bmp"));
+      }
+      app.ToggleUpdatePanel();app.update_animation_start-=1000;app.AnimateUpdatePanel();CheckUI(!IsWindowVisible(app.update_panel),"Preview panel closes normally");
+      DestroyWindow(window);std::cout<<ui_checks<<" targeted update preview UI checks passed\n";
+      Gdiplus::GdiplusShutdown(token);CoUninitialize();return 0;
+    }
+    if(argc==4 && std::wstring_view(argv[3])==L"--iso-only"){
+      CheckIsoImport(app,pictures);Screenshot(window,pictures/L"iso-general.bmp");DestroyWindow(window);
+      std::cout<<ui_checks<<" targeted ISO parser and launcher checks passed\n";
+      Gdiplus::GdiplusShutdown(token);CoUninitialize();return 0;
+    }
     if(argc==4 && std::wstring_view(argv[3])==L"--graphics-only"){
       Check1080Graphics(app,game,pictures);DestroyWindow(window);std::cout<<ui_checks<<" targeted graphics settings checks passed\n";
       Gdiplus::GdiplusShutdown(token);CoUninitialize();return 0;
@@ -569,6 +597,7 @@ int wmain(int argc,wchar_t** argv){
     app.ShowPage(1);app.ScrollPage(0);CheckRapidCheckbox(app.mute);app.ShowPage(0);app.ScrollPage(0);CheckRapidCheckbox(app.vsync);CheckRapidCheckbox(app.msaa);
     CheckPaintCoherence(app);CheckAdaptivePainting(app);CheckActionCursors(app);CheckPopupAnimation(app.render_resolution);CheckLanguageCapacity(app);CheckAllPopupOptions(app);CheckBindingLabelWidths(app);app.ShowPage(3);
     if(argc==4){CheckUI(std::wstring_view(argv[3])==L"--sliders-only","Known targeted regression mode");DestroyWindow(window);std::cout<<ui_checks<<" slider channel-click checks passed\n";Gdiplus::GdiplusShutdown(token);CoUninitialize();return 0;}
+    CheckIsoImport(app,pictures);
     CheckUI(!app.Checked(app.debug_overlay)&&!GetDlgItem(app.page_content,164),"Debug defaults off and the former intro-skip checkbox is absent");
     CheckUI(!IsWindowVisible(app.crash_diagnostics),"General no longer contains crash diagnostics");
     app.ShowPage(4);CheckUI(IsWindowVisible(app.crash_diagnostics),"Extended crash diagnostics appears in Advanced");
@@ -615,14 +644,14 @@ int wmain(int argc,wchar_t** argv){
       std::thread dismiss([&]{while(!dismiss_done){auto dialog=FindWindowW(L"#32770",nullptr);
         if(dialog&&GetWindow(dialog,GW_OWNER)==window){PostMessageW(dialog,WM_COMMAND,IDOK,0);break;}Sleep(10);}});
       while(app.verifying){app.PollVerification();Sleep(10);}dismiss_done=true;dismiss.join();
-      CheckUI(app.status_positive&&app.status_en.starts_with(L"Verification passed")&&IsWindowEnabled(app.play),"Successful background verification updates status, writes a report and unlocks PLAY");
+      CheckUI(app.status_positive&&app.status_en.starts_with(L"Ready to play")&&IsWindowEnabled(app.play),"Successful background verification preserves the ready footer, writes a report and unlocks PLAY");
       bool report_found=false;for(const auto& entry:fs::directory_iterator(app.exe/L"logs"))if(entry.path().filename().wstring().starts_with(L"verification-"))report_found=true;
       CheckUI(report_found,"Verification result report is available through Open logs");
       SetWindowTextW(app.path,scratch.c_str());app.StartVerification();dismiss_done=false;
       std::thread dismiss_missing([&]{while(!dismiss_done){auto dialog=FindWindowW(L"#32770",nullptr);
         if(dialog&&GetWindow(dialog,GW_OWNER)==window){PostMessageW(dialog,WM_COMMAND,IDOK,0);break;}Sleep(10);}});
       while(app.verifying){app.PollVerification();Sleep(10);}dismiss_done=true;dismiss_missing.join();
-      CheckUI(!app.status_positive&&app.status_en==L"Found 4386 missing files. Open logs for the report."&&app.status_tr.starts_with(L"4386 eksik dosya"),"An empty game directory reports the missing-file count without counting the separate core error as another missing file");
+      CheckUI(!app.status_positive&&app.status_en==L"Game is not ready"&&app.status_tr==L"Oyun hazır değil","Missing-file details stay in the report while the readiness footer remains stable");
       CheckUI(!fs::exists(sample)&&!fs::exists(scratch/L"logs"),"Missing-file verification neither recreates game files nor writes reports into the game folder");
       SetWindowTextW(app.path,game.c_str());
       app.ReadyStatus();

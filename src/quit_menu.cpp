@@ -1,4 +1,5 @@
 #include "quit_menu.h"
+#include "input_synchronization.h"
 #include "overlay_theme.h"
 #include "localization.h"
 #include <rex/hook.h>
@@ -48,6 +49,7 @@ void Write(uint8_t* base,uint32_t address,uint32_t value){rex::memory::store_and
 void SynchronizeBlocker() {
   // Called only on the guest frontend thread; device/assignment state isn't
   // polled by the ImGui thread. SDK release masks held dismissal buttons.
+  const std::lock_guard lock(motogp::InputStateMutex());
   auto* system=input.load(std::memory_order_acquire);
   if(!system)return;
   const bool wanted=pending.load(std::memory_order_acquire);
@@ -61,6 +63,7 @@ void Poll() {
   // F1 may be editing MnK bindings on the UI thread. Its gate also keeps
   // held dismissal inputs from becoming a new quit request.
   if(auto check=other_menu.load(std::memory_order_acquire);check&&check()){buttons=0;input_armed=false;return;}
+  const std::lock_guard lock(motogp::InputStateMutex());
   uint16_t merged=0;
   auto* system=input.load(std::memory_order_acquire);
   if(system && focused.load(std::memory_order_acquire))for(uint32_t user=0;user<4;++user){
@@ -105,6 +108,7 @@ void PollIntroInput(uint8_t* base){
   if((key||fresh)&&BeginIntroSkip(base)){
     // Use the SDK's held-release mask so the accepting button cannot enter the
     // next menu or skip another entry until released. Do not rewrite mappings.
+    const std::lock_guard lock(motogp::InputStateMutex());
     if(auto* system=input.load()){system->AddUIInputBlocker();system->RemoveUIInputBlocker();}
   }
 }

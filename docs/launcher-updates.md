@@ -156,9 +156,32 @@ remains enabled; HTTPS-to-HTTP redirects are denied. Metadata uses an eight-seco
 deadline and downloads ten minutes, checked between blocking WinHTTP calls.
 Cancellation is cooperative and does not instantly interrupt an in-flight call.
 
-The reference launcher and installer were not executed. This port has received
-source review only: no Windows build, automated tests, or end-to-end update/
-rollback run has been performed. Before enabling a live endpoint, validate a
+The reference launcher and installer were not executed. The Windows release
+cross-build and **13 targeted Windows/Wine update-preview UI checks** passed
+on 20 October 2026. End-to-end download, installation and rollback have not
+been executed. Before enabling a live endpoint, validate a
 successful update plus cancellation, malformed/wrong-product packages, locked
 files, failed restart and rollback in a disposable installation. Verify the
 helper's static-runtime imports and actual UI layout on native Windows.
+
+## Visual preview
+
+The panel is 390 × 360 logical pixels, widened to the left over the cover art.
+The changelog has 240 pixels of height, and Update now sits at the lower edge.
+Its scrollbar uses the launcher's existing slim rail geometry, colors and drag
+handling. The native EDIT scrollbar is omitted; wheel, keyboard and rail input
+scroll the wrapped text. During download, Cancel shares the bottom action row.
+This layout revision is locally built without running UI tests at the user's
+request; the earlier check count above does not validate the revised layout.
+
+The close control now uses a 32 × 32 logical-pixel button with a larger,
+antialiased vector X, a hand cursor, a translucent hover/pressed background and
+keyboard focus. This additional polish is local source work only; it has not
+been built or tested in the current revision.
+
+Run `MotoGP09-10Launcher.exe --preview-update` to show a synthetic v1.1.11
+notification with English/Turkish sample release notes. Click the download icon
+to expand the normal update panel. Update now shows an informational preview
+message; this mode does not check an update endpoint, download a package or
+start installation. Normal launches retain the configured update behavior and
+do not show the synthetic notification. The sample is not a published release.

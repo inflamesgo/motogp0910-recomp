@@ -33,6 +33,12 @@ Keyboard defaults: Enter = Start, Space = A, Backspace = B, W/S/A/D = left
 stick, Shift + arrows = D-pad. Explicit input settings are preserved.
 **F1** opens live settings and **F7** opens achievements.
 
+The local DLC-import implementation adds **General → Install DLC** once the game
+is ready. It accepts a ZIP/RAR/7z archive or its extracted main folder and installs
+the three supported Xbox 360 DLC packages together into the separate user-data
+content store. Original game files and title-update patches are preserved. This
+revision has not been built; see [DLC import and validation limits](docs/dlc.md).
+
 The title first checks `game/default.xex` in the installation root, then the
 legacy flat layout. An explicit `--game_data_root` takes priority. Missing
 patch data can be extracted from the supplied original TU without rewriting
@@ -235,3 +241,5 @@ assets; `server/` contains the community service; `docs/` holds English guides
 and evidence; `downloads/` preserves published milestone archives. Generated
 code and private game inputs are local build artifacts. Required third-party
 source notices are retained. Documentation policy is recorded in [AGENTS.md](AGENTS.md).
+External feature references, including ChunchunQ's open-source FIFA 09 port,
+are listed in [reference projects](docs/reference-projects.md).

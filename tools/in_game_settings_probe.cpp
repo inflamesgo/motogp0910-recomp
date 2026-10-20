@@ -20,13 +20,21 @@
 #include <imgui_internal.h>
 #include <fstream>
 #include <iostream>
+#include <cstring>
+#include <exception>
 #include <deque>
 #include <set>
+#include <thread>
+#include <utility>
 using namespace motogp::settings;
 using namespace rex::input;
 using rex::X_RESULT;using rex::X_STATUS;
 REX_EXTERN(__imp__XamInputGetKeystrokeEx);
 REX_EXTERN(__imp__XamInputGetState);
+REX_EXTERN(__imp__XamInputGetCapabilities);
+REX_EXTERN(__imp__XamInputGetCapabilitiesEx);
+REX_EXTERN(__imp__XamInputSetState);
+REX_EXTERN(__imp__XamInputGetKeystroke);
 namespace {
 int checks=0;
 void Check(bool ok,const char* message){if(!ok)throw std::runtime_error(message);++checks;}
@@ -35,8 +43,17 @@ class Driver final:public InputDriver {
  public:
   Driver():InputDriver(nullptr,0){}
   X_INPUT_STATE state{};std::deque<X_INPUT_KEYSTROKE> queue;
+  std::atomic<unsigned> enumerations{0},enumerating{0},overlaps{0};
+  std::atomic<bool> stress{false};std::function<void()> on_enumerate;std::mutex callback_mutex;
   X_STATUS Setup()override{return X_STATUS_SUCCESS;}
-  void EnumerateDevices(std::vector<DeviceInfo>& out)override{DeviceInfo info{};info.id=static_cast<DeviceId>(1);out.push_back(info);}
+  void EnumerateDevices(std::vector<DeviceInfo>& out)override{
+    ++enumerations;if(enumerating.fetch_add(1)!=0)++overlaps;
+    std::function<void()> callback;{std::lock_guard lock(callback_mutex);callback=std::exchange(on_enumerate,{});}if(callback)callback();
+    if(stress.load())for(int i=0;i<32;++i)std::this_thread::yield();
+    DeviceInfo info{};info.id=static_cast<DeviceId>(1);
+    info.name=std::string(128,'n');info.guid=std::string(128,'g');out.push_back(info);
+    --enumerating;
+  }
   X_RESULT GetDeviceState(DeviceId,X_INPUT_STATE* out)override{*out=state;return X_ERROR_SUCCESS;}
   X_RESULT GetDeviceCapabilities(DeviceId,uint32_t,X_INPUT_CAPABILITIES* out)override{*out={};return X_ERROR_SUCCESS;}
   X_RESULT SetDeviceVibration(DeviceId,X_INPUT_VIBRATION*)override{return X_ERROR_SUCCESS;}
@@ -161,7 +178,13 @@ int main(int argc,char** argv){try{
   gate->Close();motogp::PaceGameFrame();Check(gate->Blocking(),"Closing while A is held cannot leak confirm into game");
   gate->Open();gate->Close();pad->state.gamepad.buttons=0;motogp::PaceGameFrame();Check(!gate->Blocking(),"Reopen/close balances exactly one blocker");Check(rex::cvar::Query<bool>("mnk_mouse"),"Mouse-look preference restored after close");
   pad->state.gamepad.buttons=X_INPUT_GAMEPAD_A;input->GetState(0,&state);Check(state.gamepad.buttons&X_INPUT_GAMEPAD_A,"Fresh gameplay input resumes after release");pad->state.gamepad.buttons=0;
-  gate->Open();gate->SetFocused(false);motogp::PaceGameFrame();Check(!gate->Buttons(),"Unfocused menu cannot act on gamepad input");gate->SetFocused(true);Check(!gate->NeutralReady(),"UI-first focus regain cannot arm before a fresh guest sample");pad->state.gamepad.buttons=X_INPUT_GAMEPAD_A;motogp::PaceGameFrame();Check(!gate->NeutralReady(),"Held A on focus regain stays disarmed");pad->state.gamepad.buttons=0;motogp::PaceGameFrame();Check(gate->NeutralReady(),"Fresh neutral sample rearms gamepad navigation");gate->Close();motogp::PaceGameFrame();
+  gate->Open();gate->SetFocused(false);const auto background_enumerations=pad->enumerations.load();
+  motogp::PaceGameFrame();Check(!gate->Buttons()&&pad->enumerations.load()==background_enumerations,"Unfocused F1 menu neither acts nor refreshes devices");
+  gate->Close();motogp::PaceGameFrame();Check(gate->Blocking()&&pad->enumerations.load()==background_enumerations,"Closing an unfocused menu defers blocker release without polling");
+  gate->Open();gate->SetFocused(true);Check(!gate->NeutralReady(),"UI-first focus regain cannot arm before a fresh guest sample");pad->state.gamepad.buttons=X_INPUT_GAMEPAD_A;motogp::PaceGameFrame();Check(!gate->NeutralReady(),"Held A on focus regain stays disarmed");pad->state.gamepad.buttons=0;motogp::PaceGameFrame();Check(gate->NeutralReady(),"Fresh neutral sample rearms gamepad navigation");
+  pad->on_enumerate=[&]{gate->SetFocused(false);gate->SetFocused(true);};
+  motogp::PaceGameFrame();Check(!gate->NeutralReady()&&gate->Blocking(),"Focus round trip during a sample discards stale neutral input");
+  motogp::PaceGameFrame();Check(gate->NeutralReady(),"A subsequent focus-stable neutral sample rearms F1");gate->Close();motogp::PaceGameFrame();
   {
     PPCContext state_call{};state_call.r3.u32=0;state_call.r4.u32=0;state_call.r5.u32=runtime.memory()->SystemHeapAlloc(sizeof(X_INPUT_STATE));
     pad->state.gamepad.buttons=X_INPUT_GAMEPAD_X;__imp__XamInputGetState(state_call,runtime.virtual_membase());
@@ -170,6 +193,26 @@ int main(int argc,char** argv){try{
   }
   // Closed original export still validates its arguments (not our empty result).
   call={};call.r5.u32=0;__imp__XamInputGetKeystrokeEx(call,runtime.virtual_membase());Check(call.r3.u32==X_ERROR_BAD_ARGUMENTS,"Original runtime keystroke export restored when closed");
+  __imp__XamInputGetKeystroke(call,runtime.virtual_membase());Check(call.r3.u32==X_ERROR_BAD_ARGUMENTS,"Non-Ex keystroke import preserves original argument validation");
+  {
+    // Exercise actual DLL exports against F1 polling on another thread. Long
+    // DeviceInfo strings exercise heap-backed destruction on every refresh.
+    const auto buffer=runtime.memory()->SystemHeapAlloc(256);auto* base=runtime.virtual_membase();std::memset(base+buffer,0,256);
+    gate->Open();pad->stress=true;const auto before=pad->enumerations.load();std::exception_ptr worker_error;
+    std::jthread polling([&]{try{for(int i=0;i<200;++i)gate->PollGuest();}catch(...){worker_error=std::current_exception();}});
+    for(int i=0;i<200;++i){
+      for(auto* function:{&__imp__XamInputGetCapabilities,&__imp__XamInputGetState,&__imp__XamInputSetState}){
+        PPCContext query{};query.r5.u32=buffer;function(query,base);Check(query.r3.u32==X_ERROR_SUCCESS,"Concurrent input import preserves runtime success");
+      }
+      PPCContext extended{};extended.r6.u32=buffer;__imp__XamInputGetCapabilitiesEx(extended,base);Check(extended.r3.u32==X_ERROR_SUCCESS,"Concurrent extended capabilities preserves runtime success");
+      for(auto* function:{&__imp__XamInputGetKeystroke,&__imp__XamInputGetKeystrokeEx}){
+        PPCContext query{};query.r5.u32=buffer;function(query,base);Check(query.r3.u32==X_ERROR_EMPTY,"Both keystroke imports stay blocked during concurrent F1 polling");
+      }
+    }
+    polling.join();pad->stress=false;if(worker_error)std::rethrow_exception(worker_error);
+    Check(pad->enumerations.load()>before&&pad->overlaps.load()==0,"Concurrent F1 and guest imports serialize device enumeration");
+    gate->Close();motogp::PaceGameFrame();Check(!gate->Blocking(),"Concurrent polling leaves no held input blocker");
+  }
   rex::ui::ImGuiDrawer drawer(window.get(),64);auto& io=drawer.GetIO();
   io.IniFilename=nullptr;io.LogFilename=nullptr;io.DeltaTime=1.f/60;static const ImWchar ranges[]={0x20,0x1ff,0};
   auto* font=io.Fonts->AddFontFromFileTTF(argv[2],17,nullptr,ranges);auto* heading=io.Fonts->AddFontFromFileTTF(argv[2],30,nullptr,ranges);Check(font&&heading,"Actual packaged fonts load");

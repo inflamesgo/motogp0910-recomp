@@ -1,4 +1,5 @@
 #include "in_game_settings.h"
+#include "input_synchronization.h"
 #include "config_file.h"
 #include "adaptive_triggers.h"
 #include "overlay_theme.h"
@@ -29,7 +30,7 @@
 #include <unistd.h>
 #endif
 namespace motogp::settings {
-std::mutex& InputValueMutex(){static std::mutex mutex;return mutex;}
+std::mutex& InputValueMutex(){return motogp::InputStateMutex();}
 namespace {
 using Paint=rex::ui::Presenter::GuestOutputPaintConfig;
 const Spec* Find(std::string_view key){for(const auto& s:Catalog())if(s.key==key)return &s;return nullptr;}
@@ -220,10 +221,17 @@ void InputGate::Open(){std::lock_guard lock(transition_);if(!input_)return;neutr
   if(restore_mouse_)rex::cvar::SetFlagByName("mnk_mouse","false");
 }epoch_.fetch_add(1,std::memory_order_release);}
 void InputGate::Close(){std::lock_guard lock(transition_);open_=false;buttons_=0;neutral_epoch_=UINT64_MAX;}
-void InputGate::SetFocused(bool value){if(focused_.exchange(value)!=value){buttons_=0;neutral_epoch_=UINT64_MAX;epoch_.fetch_add(1,std::memory_order_release);}}
+void InputGate::SetFocused(bool value){std::lock_guard lock(transition_);if(focused_.exchange(value)!=value){buttons_=0;neutral_epoch_=UINT64_MAX;epoch_.fetch_add(1,std::memory_order_release);}}
 void InputGate::PollGuest(){
   if(!input_||!held_.load(std::memory_order_acquire))return;
+  // Focus loss must leave the guest blocker held without rebuilding device
+  // lists or consuming input in the background. Refocus requires a fresh,
+  // neutral sample before the UI can act or the blocker can be released.
+  if(!focused_.load(std::memory_order_acquire)){
+    buttons_=0;neutral_epoch_=UINT64_MAX;return;
+  }
   const std::lock_guard values_lock(InputValueMutex());
+  if(!focused_.load(std::memory_order_acquire))return;
   // Open/close originate on UI, but release calls poll drivers and belongs here.
   const auto sample_epoch=epoch_.load(std::memory_order_acquire);
   uint16_t buttons=0;
@@ -237,13 +245,19 @@ void InputGate::PollGuest(){
   // Drain keystrokes as well as pad states. XamInputGetKeystrokeEx is gated
   // separately because the SDK's built-in blocker covers GetState only.
   for(uint32_t user=0;user<4;++user)for(int i=0;i<256;++i){rex::input::X_INPUT_KEYSTROKE event{};if(input_->GetKeystroke(user,0,&event)!=0)break;}
-  buttons_.store(focused_.load(std::memory_order_acquire)?buttons:0,std::memory_order_release);
-  if(!buttons&&focused_.load(std::memory_order_acquire))neutral_epoch_.store(sample_epoch,std::memory_order_release);
-  if(!buttons){std::lock_guard lock(transition_);if(!open_.load(std::memory_order_acquire)&&held_.exchange(false)){
+  // Serialize publication/release with UI focus/open/close transitions. A sample
+  // spanning Alt+Tab must not rearm the UI or release its blocker on return.
+  const std::lock_guard transition_lock(transition_);
+  if(!focused_.load(std::memory_order_acquire)||epoch_.load(std::memory_order_acquire)!=sample_epoch){
+    buttons_=0;neutral_epoch_=UINT64_MAX;return;
+  }
+  buttons_.store(buttons,std::memory_order_release);
+  if(!buttons)neutral_epoch_.store(sample_epoch,std::memory_order_release);
+  if(!buttons&&!open_.load(std::memory_order_acquire)&&held_.exchange(false)){
     input_->RemoveUIInputBlocker();
     if(restore_mouse_)rex::cvar::SetFlagByName("mnk_mouse","true");
     restore_mouse_=false;
-  }}
+  }
 }
 namespace {
 std::string CaptureKey(ImGuiKey key){

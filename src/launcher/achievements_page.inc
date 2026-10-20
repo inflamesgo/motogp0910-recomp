@@ -81,7 +81,7 @@
       }catch(const std::exception&){unlocks_stale=true;}
       try {achievement_options=motogp::achievements::ReadOptions(root/"achievement-ui.toml");SetCheck(achievement_popup,achievement_options.popup);SetCheck(achievement_sound,achievement_options.sound);EnableWindow(achievement_popup,TRUE);EnableWindow(achievement_sound,TRUE);}
       catch(const std::exception&){EnableWindow(achievement_popup,FALSE);EnableWindow(achievement_sound,FALSE);}
-      const auto note=unlocks_stale&&!unlocks_known?T(L"Could not read your achievement save. Retrying...",L"Başarım kaydı okunamadı. Tekrar deneniyor..."):unlocks_stale?T(L"Save temporarily unavailable; showing the last known progress.",L"Kayıt geçici olarak okunamıyor; son bilinen ilerleme gösteriliyor."):L"";
+      const auto note=unlocks_stale&&!unlocks_known?T(L"Could not read your achievement save. Retrying...",L"Başarım kayıt dosyası okunamadı. Yeniden deneniyor..."):unlocks_stale?T(L"Save temporarily unavailable; showing the last known progress.",L"Kayıt dosyası geçici olarak okunamıyor; son bilinen ilerleme gösteriliyor."):L"";
       if(Text(achievement_note)!=note)SetWindowTextW(achievement_note,note);
       if(before_catalog!=catalog_key||before_error!=catalog_error||before_unlocks!=unlocks||before_known!=unlocks_known||before_stale!=unlocks_stale){
       RECT summary{0,0,S(kFormWidth),S(60)};InvalidateRect(page_content,&summary,FALSE);InvalidateRect(achievement_list,nullptr,FALSE);}

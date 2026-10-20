@@ -9,6 +9,103 @@ The launcher opens on **General** every time. The default language is English; *
 interface immediately and retains the choice in the shared root `config.json`.
 File names stay English. No CMD file is required.
 
+## Importing an Xbox 360 ISO
+
+General uses one game-file action in the existing button position:
+**Select ISO → Select title update → Verify game files**. The base-game check
+requires the supported stock executable and a nonempty `xenondata` directory;
+full data hash verification remains separate. A bold cyan notice beside the
+button says **Game files are missing** first, then **Title update is missing**
+or **Title update is invalid**. It disappears when the game and update are ready.
+The footer stays **Game is not ready** until normal launch validation succeeds;
+the existing green ready message is preserved. Progress appears on the action
+button; detailed errors and verification results remain in dialogs/reports.
+
+Select ISO opens only the image picker. Its destination is always the launcher's
+own `game` directory; there is no destination picker or additional game subfolder.
+The launcher reads raw Xbox 360 XDVDFS images, including the known full-disc
+partition offsets and game-partition images. It does not mount the image,
+download game data, decrypt unsupported images or run a separate extractor.
+The parser bounds image reads, rejects directory cycles, duplicate Windows
+paths, traversal and reserved filenames, and limits directory depth/count/size.
+Non-ASCII disc filenames and split/compressed image formats are unsupported.
+
+Extraction runs in a worker with progress and cancellation. It creates a new
+staging directory, checks the stock executable first, then validates extracted
+data against the embedded file hashes. A verified extraction is installed
+directly into `game`. If that directory exists, matching files are preserved,
+conflicting files cause an error, and only absent files are moved in. The merge
+journals new files/directories and removes them if interrupted cooperatively.
+Existing installations and the ISO are never overwritten. Cancellation or failure removes the staging directory;
+the active game path changes only after successful extraction. A process kill
+or power failure can leave a temporary staging directory for manual removal.
+
+The disc is not assumed to contain title update 0.0.1.1. A matching update or
+patch already in the previously selected folder is copied into the new folder
+when absent there. Otherwise **Select title update** opens a file picker for
+the supported TU container or `default.xexp`. The picker shows **All files**;
+the file's contents, not its extension, must match a known hash before installation.
+For a TU container, the launcher immediately extracts `default.xexp` with the
+same pinned STFS reader used by the game's startup path and verifies the
+extracted patch's size and SHA-256. The original TU and verified patch are
+installed together; an already extracted, verified patch is also accepted.
+Replaced update files are retained with a `.previous-...` suffix. If installing
+the pair fails, earlier replacements are rolled back. This replaces the earlier
+behavior that copied only the container and deferred extraction to game startup.
+The imported folder is saved independently of
+other pending settings. ISO import is unavailable while the game, verification
+or launcher update is running.
+
+The optional launcher probe contains synthetic XDVDFS parser, malformed-image,
+cleanup and adaptive-button/notice checks. The Windows release cross-build and
+**23 targeted Windows/Wine checks** passed for the earlier revision on
+20 October 2026. The subsequent direct-folder installation, step-by-step update
+selection and persistent-footer revision is built locally without running tests
+at the user's request. A real supported ISO import and native Windows UI
+validation remain pending.
+
+The subsequent All files picker and immediate TU-patch extraction changes are
+local source edits only; no new build or tests were run for that revision.
+
+## Optional DLC
+
+Optional Xbox 360 DLC import is documented in [DLC installation](dlc.md).
+When game files and the supported title update are present, **Install DLC**
+appears beside **Verify game files**. It accepts a ZIP/RAR/7z archive or the main
+extracted folder and installs the supported packages together into user data.
+This is independent of the title-update import and preserves the original game.
+
+## Add to Steam
+
+**General → Steam → Add to Steam** adds `MotoGP09-10Launcher.exe` as a non-Steam
+game for the active or most recently used local Steam account. If multiple
+accounts exist and none can be identified, sign in to Steam before retrying.
+Steam launches the launcher; press **PLAY** there to start the game with the
+normal saved settings. Moving the installation requires adding its new path.
+
+Steam must be closed while its shortcuts file is edited. If it is running, the
+button asks before closing it and restarting it afterwards. Cancellation changes
+nothing. The operation runs in a worker; launching the game and installing a
+launcher update are blocked while it runs. No Steam password or network API is
+used, and no Steam game/content files are modified.
+
+The binary shortcuts reader preserves unrelated entries, tags, launch options,
+play history and unknown supported fields. Unsupported or malformed input is
+rejected. An existing `shortcuts.vdf` receives a unique `.motogp-….bak` backup;
+replacement uses a flushed temporary file and Windows atomic replacement after
+checking that Steam stayed closed and the original file did not change.
+
+Library cover, wide and hero images are generated from the existing launcher
+background. Optional `resources/steam/cover.png`, `wide.png`, `banner.png`,
+`logo.png`, `icon.png` and `icon.ico` override or supplement those images.
+Existing artwork is preserved. Artwork failure does not undo a valid shortcut.
+The interface and results are localized in English and Turkish.
+
+Source reference and MIT attribution are recorded in
+[reference projects](reference-projects.md). The source and synthetic VDF checks
+are prepared locally; no launcher build, Windows/Steam installation test or
+GitHub upload was performed for this revision.
+
 ## Graphics
 
 | Setting | Runtime behavior |

@@ -46,6 +46,9 @@ endif()
 add_library(motogp_lan_guest STATIC src/lan/guest_bridge.cpp src/lan/socket_bridge.cpp src/lan/metadata.cpp src/online/stats.cpp)
 target_link_libraries(motogp_lan_guest PUBLIC motogp_lan rex::runtime)
 rexglue_apply_target_settings(motogp_lan_guest)
+add_executable(lap_times_probe EXCLUDE_FROM_ALL tools/lap_times_probe.cpp)
+target_link_libraries(lap_times_probe PRIVATE motogp_lan_guest)
+rexglue_apply_target_settings(lap_times_probe)
 
 add_library(motogp_achievements STATIC src/achievement_ui.cpp src/achievement_sound.cpp)
 target_link_libraries(motogp_achievements PUBLIC rex::runtime motogp_config)
@@ -87,6 +90,7 @@ set(MOTOGP0910_SOURCES
     src/livery_readback.cpp
     src/game_language.cpp
     src/options_menu.cpp
+    src/online/leaderboard_display.cpp
     src/frame_pacing.cpp
     src/display_settings.cpp
     src/engine_settings.cpp
@@ -159,13 +163,21 @@ if(WIN32)
     target_compile_definitions(motogp0910-launcher-ui PRIVATE UNICODE _UNICODE)
     target_include_directories(motogp0910-launcher-ui SYSTEM PRIVATE
         $<TARGET_PROPERTY:rex::runtime,INTERFACE_INCLUDE_DIRECTORIES>)
-    target_link_libraries(motogp0910-launcher-ui PRIVATE motogp_launcher_updates motogp_launcher_achievements motogp_lan user32 shell32 ole32 comctl32 bcrypt uuid dxgi gdiplus gdi32 dwmapi uxtheme shlwapi)
+    target_link_libraries(motogp0910-launcher-ui PRIVATE motogp_launcher_updates motogp_launcher_achievements motogp_lan user32 shell32 ole32 comctl32 bcrypt uuid dxgi gdiplus gdi32 dwmapi uxtheme shlwapi advapi32)
+    add_custom_command(TARGET motogp0910-launcher-ui POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:motogp0910-launcher-ui>/resources/archive"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/7zip/7z.exe"
+            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/7zip/7z.dll"
+            "${CMAKE_CURRENT_SOURCE_DIR}/third_party/7zip/7zip-source.tar.xz"
+            "$<TARGET_FILE_DIR:motogp0910-launcher-ui>/resources/archive"
+        VERBATIM)
     add_executable(launcher_layout_probe EXCLUDE_FROM_ALL tools/launcher_layout_probe.cpp)
     motogp_embed_icon(launcher_layout_probe launcher)
     target_compile_definitions(launcher_layout_probe PRIVATE UNICODE _UNICODE)
     target_include_directories(launcher_layout_probe SYSTEM PRIVATE
         $<TARGET_PROPERTY:rex::runtime,INTERFACE_INCLUDE_DIRECTORIES>)
-    target_link_libraries(launcher_layout_probe PRIVATE motogp_launcher_updates motogp_launcher_achievements motogp_lan user32 shell32 ole32 comctl32 bcrypt uuid dxgi gdiplus gdi32 dwmapi uxtheme shlwapi)
+    target_link_libraries(launcher_layout_probe PRIVATE motogp_launcher_updates motogp_launcher_achievements motogp_lan user32 shell32 ole32 comctl32 bcrypt uuid dxgi gdiplus gdi32 dwmapi uxtheme shlwapi advapi32)
     rexglue_apply_target_settings(launcher_layout_probe)
     configure_file(resources/launcher/assets.rc.in "${CMAKE_CURRENT_BINARY_DIR}/launcher-assets.rc" @ONLY)
     set_property(SOURCE "${CMAKE_CURRENT_BINARY_DIR}/launcher-assets.rc" APPEND PROPERTY OBJECT_DEPENDS

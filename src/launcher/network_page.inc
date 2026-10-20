@@ -12,8 +12,8 @@
     network_player=field(L"Player name",L"Oyuncu adı",0,88,kColumnWidth,kLanPlayer,15);
     network_room=field(L"Room name (host)",L"Oda adı (kurucu)",kColumnX,88,kColumnWidth,kLanRoom,31);
     network_adapter=field(L"Local IPv4 (optional)",L"Yerel IPv4 (isteğe bağlı)",0,176,kColumnWidth,kLanAdapter,15);
-    network_host=field(L"Host IPv4 (optional)",L"Kurucu IPv4 (isteğe bağlı)",kColumnX,176,kColumnWidth,kLanHost,15);
-    network_server=field(L"Online server (HTTPS)",L"Çevrimiçi sunucu (HTTPS)",0,176,kFormWidth,kOnlineServer,512);
+    network_host=field(L"Host IPv4 (optional)",L"Kurucunun IPv4 adresi (isteğe bağlı)",kColumnX,176,kColumnWidth,kLanHost,15);
+    network_server=field(L"Online server (HTTPS)",L"Çevrim içi sunucu (HTTPS)",0,176,kFormWidth,kOnlineServer,512);
     // Online: the NOBK Online site account replaces the free player name.
     account_label=LabelControl(6,L"NOBK Online account",L"NOBK Online hesabı",0,88,kColumnWidth,24);
     account_status=PageControl(6,L"STATIC",L"",SS_LEFTNOWORDWRAP|SS_CENTERIMAGE,0,116,kColumnWidth,30);
@@ -92,15 +92,15 @@
     s.lan_bind_ip=Utf8(Text(network_adapter));s.lan_host_ip=Utf8(Text(network_host));s.online_server=kCommunityServer;
   }
   void LocalizeNetworkHelp(){
-    Tip(network_mode,L"Online connects to NOBK Online automatically (rooms, relay and leaderboards). Offline uses no multiplayer service. LAN works on local or virtual networks. Switching modes keeps your entered details.",L"Çevrimiçi, NOBK Online'a otomatik bağlanır (odalar, aktarım ve sıralamalar). Çevrimdışı, çok oyunculu hizmete bağlanmaz. LAN, yerel veya sanal ağlarda çalışır. Mod değiştirirken girilen bilgiler korunur.");
+    Tip(network_mode,L"Online connects to NOBK Online automatically (rooms, relay and leaderboards). Offline uses no multiplayer service. LAN works on local or virtual networks. Switching modes keeps your entered details.",L"Çevrim içi mod, odalar, veri aktarımı ve liderlik tabloları için NOBK Online'a otomatik bağlanır. Çevrim dışı mod çok oyunculu hizmete bağlanmaz. LAN, yerel veya sanal ağlarda çalışır. Mod değiştirirken girilen bilgiler korunur.");
     Tip(network_player,L"Name shown to other players. Up to 15 UTF-8 bytes.",L"Diğer oyuncuların gördüğü ad. En fazla 15 UTF-8 bayt.");
-    Tip(network_room,L"Used when you host a room. Up to 31 UTF-8 bytes. Both players need the same build and Player Match.",L"Odayı kurduğunda kullanılır. En fazla 31 UTF-8 bayt. Oyuncular aynı buildi ve Player Match seçeneğini kullanmalı.");
+    Tip(network_room,L"Used when you host a room. Up to 31 UTF-8 bytes. Both players need the same build and Player Match.",L"Odayı kurduğunda kullanılır. En fazla 31 UTF-8 bayt. Oyuncular aynı oyun derlemesini ve Player Match seçeneğini kullanmalı.");
     Tip(network_adapter,L"Leave empty for automatic selection, including virtual LAN adapters. Both players must join the same local or virtual LAN.",L"Sanal LAN bağdaştırıcıları dahil otomatik seçim için boş bırak. Oyuncular aynı yerel veya sanal LAN ağına bağlanmalı.");
     Tip(network_host,L"Rooms are discovered automatically. Enter the host's LAN IPv4 only if discovery fails.",L"Odalar otomatik bulunur. Yalnızca oda bulunamazsa kurucunun LAN IPv4 adresini gir.");
     SetWindowTextW(account_signin,T(L"Sign in",L"Giriş yap"));SetWindowTextW(account_register,T(L"Create an account",L"Hesap oluştur"));
     SetWindowTextW(account_signout,T(L"Sign out",L"Çıkış yap"));
     Tip(account_user,L"Your NOBK Online account (nobkonline.com), the same one you use for FIFA 09. It is your name in rooms and on the site.",L"NOBK Online hesabın (nobkonline.com); FIFA 09'da kullandığın hesapla aynı. Odalarda ve sitede bu adla görünürsün.");
-    Tip(account_pass,L"Only sent to nobkonline.com to sign in. The launcher keeps a sign-in token, never the password.",L"Sadece giriş için nobkonline.com'a gönderilir. Launcher şifreni değil, bir giriş anahtarı saklar.");
-    Tip(account_signout,L"Removes the saved sign-in from this Windows user.",L"Bu Windows kullanıcısındaki kayıtlı girişi siler.");
-    Tip(network_server,L"Use the same running community HTTPS server as the other players. This launcher does not host a server. Use the same build and Player Match.",L"Diğer oyuncularla aynı, çalışır durumdaki topluluk HTTPS sunucusunu kullan. Launcher sunucu açmaz. Aynı buildi ve Player Match seçeneğini kullanın.");
+    Tip(account_pass,L"Only sent to nobkonline.com to sign in. The launcher keeps a sign-in token, never the password.",L"Yalnızca giriş yapmak için nobkonline.com'a gönderilir. Başlatıcı şifreni kaydetmez; bir oturum anahtarı saklar.");
+    Tip(account_signout,L"Removes the saved sign-in from this Windows user.",L"Bu Windows kullanıcısı için kaydedilmiş oturum bilgisini siler.");
+    Tip(network_server,L"Use the same running community HTTPS server as the other players. This launcher does not host a server. Use the same build and Player Match.",L"Diğer oyuncularla aynı topluluk HTTPS sunucusunu kullan; sunucu çalışır durumda olmalı. Başlatıcı sunucu barındırmaz. Aynı oyun derlemesini ve Player Match seçeneğini kullanın.");
   }

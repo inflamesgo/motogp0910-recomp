@@ -110,6 +110,7 @@ bool PackageOwned(const fs::path& relative){
   if(binaries.contains(name))return true;
   if(name==L"resources/controller/ps3-controls.bin"||name==L"resources/controller/ps3-controls.json"||name==L"resources/controller/ps3-prompts.bin"||name==L"resources/controller/ps3-prompts.json")return true;
   if(name==L"resources/localization/tr/manifest.json"||name==L"resources/ui/opensans-semibold.ttf")return true;
+  if(name==L"resources/archive/7z.exe"||name==L"resources/archive/7z.dll"||name==L"resources/archive/7zip-source.tar.xz")return true;
   return name.starts_with(L"resources/localization/tr/overlay/")&&(name.ends_with(L".font")||name.ends_with(L".lua")||name.ends_with(L".msg"));
 }
 struct File {fs::path relative;bool existed=false;bool attempted=false;};
@@ -253,7 +254,7 @@ void Install(const fs::path& job_path){
       if(FileHash(root/file.relative)!=FileHash(payload/file.relative))throw std::runtime_error("Installed update file verification failed");
       Progress(std::wstring(turkish?L"Güncelleme kuruluyor… ":L"Installing update… ")+std::to_wstring((i+1)*100/std::max<size_t>(1,files.size()))+L"%");
     }
-    Progress(turkish?L"Launcher yeniden açılıyor…":L"Restarting launcher…");
+    Progress(turkish?L"Başlatıcı yeniden açılıyor…":L"Restarting launcher…");
     auto restart=Launch(root,token);
     if(!Healthy(restart)){StopFailedRestart(restart);throw std::runtime_error("The updated launcher did not start successfully");}
     success=true;
