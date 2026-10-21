@@ -20,6 +20,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cfloat>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -156,7 +157,7 @@ std::shared_ptr<const Results> ReadResults(const nlohmann::json& json,uint64_t s
     }
     if(const auto display=item.find("display");display!=item.end()&&display->is_object())
       row.result=Text(*display,"text",32);
-    if(row.result.empty())row.result="—";
+    if(row.result.empty())row.result="-";
     if(row.rank==1)++results->firsts;
     if(!kTracks[row.track].empty())tracks.insert(row.track);
     results->rows.push_back(std::move(row));
@@ -613,9 +614,9 @@ std::string Membership(int64_t timestamp,bool tr) {
 }
 
 std::string Mode(int64_t mode,bool tr) {
-  if(mode<0||mode>UINT32_MAX)return "—";
+  if(mode<0||mode>UINT32_MAX)return "-";
   const auto value=uint32_t(mode);
-  if((value&~0x10000000u)>16)return "—";
+  if((value&~0x10000000u)>16)return "-";
   if(value&0x10000000u)return Tr(tr,"Championship","Şampiyona");
   // The native 8223F340 getter groups 3..6 as Career, 10 as Time Trial,
   // and 2 as Arcade. Preserve those stored mode bits instead of guessing.
@@ -633,7 +634,7 @@ std::string Mode(int64_t mode,bool tr) {
     case 14:return Tr(tr,"Online","Çevrimiçi");
     case 15:return "Demo";
     case 16:return Tr(tr,"Replay","Tekrar");
-    default:return "—";
+    default:return "-";
   }
 }
 
@@ -656,22 +657,23 @@ void Flag(rex::ui::ImmediateTexture* atlas,std::string_view country,float scale)
 }
 
 struct View {
-  int tab=0, category=0;
-  float scroll=0.f;
+  int tab=0, category=0, first_row=0;
+  float scroll=0.f, drag_offset=-1.f;
   bool reset_scroll=true;
 };
 std::vector<std::string> Categories(const Results* results,bool tr) {
   std::vector<std::string> categories{Tr(tr,"All classes","Tüm sınıflar")};
   if(results)for(const auto& row:results->rows)
-    if(!row.category.empty()&&std::find(categories.begin()+1,categories.end(),row.category)==categories.end())
+    if(row.season!=1&&!row.category.empty()&&std::find(categories.begin()+1,categories.end(),row.category)==categories.end())
       categories.push_back(row.category);
   return categories;
 }
 std::vector<const Record*> OrderedRecords(const Results& results,uint32_t preferred_view,
     const std::vector<std::string>& categories,int category) {
   std::vector<const Record*> rows;
+  // 2009 is the agreed initial scope. Do not relabel known 2010 records as 2009.
   for(const auto& row:results.rows)
-    if(category==0||row.category==categories[category])rows.push_back(&row);
+    if(row.season!=1&&(category==0||row.category==categories[category]))rows.push_back(&row);
   if(preferred_view) {
     const auto weight=[&](const Record* row) {
       if(row->view==preferred_view)return 0;
@@ -682,209 +684,257 @@ std::vector<const Record*> OrderedRecords(const Results& results,uint32_t prefer
   return rows;
 }
 
-void Overview(const Snapshot& state,bool tr,ImFont* heading,float scale) {
-  if(!state.results) {
-    ImGui::TextDisabled("%s",Tr(tr,"Statistics unavailable","İstatistikler alınamadı"));return;
+// Coordinates below share one design canvas. Text and hit targets use the same
+// scale, so saved child-window scroll and ImGui line spacing cannot clip stats.
+struct Canvas {
+  ImDrawList* draw;
+  ImVec2 origin;
+  float scale;
+  ImFont* font;
+  ImVec2 Point(float x,float y)const{return {origin.x+x*scale,origin.y+y*scale};}
+  void Line(float x,float y,float end_x,float end_y)const {
+    draw->AddLine(Point(x,y),Point(end_x,end_y),Color(48,54,64),scale);
   }
-  const auto& results=*state.results;
-  const float width=ImGui::GetContentRegionAvail().x/3.f;
-  const std::string values[]{std::to_string(results.tracks)+" / 20",std::to_string(results.firsts),std::to_string(results.rows.size())};
-  const char* labels[]{Tr(tr,"TRACKS RECORDED","KAYITLI PİSTLER"),Tr(tr,"RECORDS HELD","LİDER OLDUĞU TABLOLAR"),Tr(tr,"LEADERBOARDS","SIRALAMA TABLOLARI")};
-  const float start=ImGui::GetCursorPosX();
-  for(int i=0;i<3;++i) {
-    if(i)ImGui::SameLine(start+width*i);
-    ImGui::BeginGroup();
-    if(heading)ImGui::PushFont(heading,30.f*scale);
-    ImGui::TextColored(kAccent,"%s",values[i].c_str());
-    if(heading)ImGui::PopFont();
-    ImGui::TextDisabled("%s",labels[i]);
-    ImGui::EndGroup();
+  float Text(float x,float y,float pixels,ImVec4 color,std::string text,float width=10000.f)const {
+    const auto measure=[&](const std::string& value){return font->CalcTextSizeA(pixels*scale,FLT_MAX,0,value.c_str()).x;};
+    if(measure(text)>width*scale) {
+      while(!text.empty()&&measure(text+"...")>width*scale) {
+        size_t end=text.size()-1;
+        while(end&&(static_cast<unsigned char>(text[end])&0xC0)==0x80)--end;
+        text.resize(end);
+      }
+      text+="...";
+    }
+    draw->AddText(font,pixels*scale,Point(x,y),ImGui::GetColorU32(color),text.c_str());
+    return measure(text)/scale;
   }
-  ImGui::Spacing();
-  ImGui::PushStyleColor(ImGuiCol_PlotHistogram,kAccent);
-  ImGui::PushStyleColor(ImGuiCol_FrameBg,overlay::card);
-  ImGui::ProgressBar(float(results.tracks)/20.f,{-1,5.f*scale},"");
-  ImGui::PopStyleColor(2);
-  ImGui::TextDisabled("%s",Tr(tr,"Track coverage · 20 playable circuits, including DLC","Pist kapsamı · DLC dahil 20 oynanabilir pist"));
-  if(state.preferred_view) {
-    const auto record=std::find_if(results.rows.begin(),results.rows.end(),[&](const auto& row){return row.view==state.preferred_view;});
-    ImGui::Spacing();ImGui::Separator();
-    if(record!=results.rows.end()) {
-      ImGui::TextDisabled("%s",Tr(tr,"PERSONAL BEST · SELECTED LEADERBOARD","KİŞİSEL EN İYİ · SEÇİLİ TABLO"));
-      ImGui::TextColored(kAccent,"%s",record->result.c_str());ImGui::SameLine();
-      ImGui::TextUnformatted(record->track_name.c_str());
-      ImGui::TextDisabled("%s · %s",record->category.c_str(),Mode(record->mode,tr).c_str());
-    } else ImGui::TextDisabled("%s",Tr(tr,"No published personal best on the selected board.","Seçili tabloda yayımlanmış kişisel tur kaydı yok."));
+};
+void Stripes(const Canvas& c) {
+  // Subdivide the native diagonal direction, not the entire three-stripe box.
+  // Shared vertices/colors at each band avoid seams; smoothstep avoids a harsh
+  // transparent edge and reaches full orange at the upper end of each stripe.
+  const auto uv=ImGui::GetFontTexUvWhitePixel();
+  for(int stripe=0;stripe<3;++stripe)for(int band=0;band<24;++band) {
+    const float a=band/24.f,b=(band+1)/24.f;
+    const auto point=[&](float t,float edge){return c.Point(18.f+stripe*15.f+24.f*t+edge,49.f-36.f*t);};
+    const auto tint=[&](float t) {
+      auto color=kAccent;
+      color.w=(.015f+.985f*t*t*(3.f-2.f*t))*(.66f+.17f*stripe);
+      return ImGui::GetColorU32(color);
+    };
+    c.draw->PrimReserve(6,4);
+    const auto index=c.draw->_VtxCurrentIdx;
+    c.draw->PrimWriteIdx(static_cast<ImDrawIdx>(index));
+    c.draw->PrimWriteIdx(static_cast<ImDrawIdx>(index+1));
+    c.draw->PrimWriteIdx(static_cast<ImDrawIdx>(index+2));
+    c.draw->PrimWriteIdx(static_cast<ImDrawIdx>(index));
+    c.draw->PrimWriteIdx(static_cast<ImDrawIdx>(index+2));
+    c.draw->PrimWriteIdx(static_cast<ImDrawIdx>(index+3));
+    c.draw->PrimWriteVtx(point(a,0),uv,tint(a));
+    c.draw->PrimWriteVtx(point(a,12),uv,tint(a));
+    c.draw->PrimWriteVtx(point(b,12),uv,tint(b));
+    c.draw->PrimWriteVtx(point(b,0),uv,tint(b));
   }
 }
-
-void Records(const Snapshot& state,View& view,bool tr,float scale,bool ready) {
+void Portrait(const Canvas& c,rex::ui::ImmediateTexture* texture,float side) {
+  const auto position=c.Point(32,96);
+  const float size=side*c.scale;
+  if(!texture){Helmet(c.draw,position,size);return;}
+  c.draw->AddRectFilled(position,{position.x+size,position.y+size},Color(12,15,20));
+  const float fit=size/std::max(texture->width,texture->height);
+  const ImVec2 dimensions(texture->width*fit,texture->height*fit);
+  const ImVec2 first(position.x+(size-dimensions.x)*.5f,position.y+(size-dimensions.y)*.5f);
+  c.draw->AddImage(reinterpret_cast<ImTextureID>(texture),first,{first.x+dimensions.x,first.y+dimensions.y},
+      {0,0},{1,1},ImGui::GetColorU32(ImVec4(1,1,1,1)));
+  c.draw->AddRect(position,{position.x+size,position.y+size},Color(49,54,66));
+}
+void Overview(const Snapshot& state,const Canvas& c,float x,float width,bool tr) {
+  if(!state.results){c.Text(x,160,16,kMuted,Tr(tr,"Statistics unavailable","İstatistikler alınamadı"),width);return;}
+  const auto categories=Categories(state.results.get(),tr);
+  const auto rows=OrderedRecords(*state.results,0,categories,0);
+  std::set<int> tracks;
+  unsigned firsts=0;
+  for(const auto* row:rows){if(row->track!=17)tracks.insert(row->track);if(row->rank==1)++firsts;}
+  const std::string values[]{std::to_string(tracks.size())+" / 20",std::to_string(firsts),std::to_string(rows.size())};
+  const char* labels[]{Tr(tr,"TRACKS RECORDED","KAYITLI PİSTLER"),Tr(tr,"RECORDS HELD","LİDER OLDUĞU TABLOLAR"),Tr(tr,"LEADERBOARDS","SIRALAMA TABLOLARI")};
+  const float column=width/3.f;
+  for(int i=0;i<3;++i) {
+    const float at=x+i*column;
+    c.Text(at,158,32,kAccent,values[i],column-14);
+    c.Text(at,202,12.5f,kMuted,labels[i],column-14);
+    if(i)c.Line(at-24,160,at-24,223);
+  }
+  const float fraction=std::clamp(float(tracks.size())/20.f,0.f,1.f),bar=width-54.f;
+  c.draw->AddRectFilled(c.Point(x,258),c.Point(x+bar,267),ImGui::GetColorU32(overlay::card),2*c.scale);
+  if(fraction)c.draw->AddRectFilled(c.Point(x,258),c.Point(x+bar*fraction,267),ImGui::GetColorU32(kAccent),2*c.scale);
+  c.Text(x+bar+14,254,15,kWhite,std::to_string(int(fraction*100.f+.5f))+"%",40);
+  c.Line(x,315,x+width,315);
+  c.Text(x,338,13,kMuted,Tr(tr,"PERSONAL BEST","KİŞİSEL EN İYİ"),width);
+  if(!state.preferred_view) {
+    c.Text(x,382,16,kMuted,Tr(tr,"No track selected.","Seçili pist yok."),width);return;
+  }
+  const auto record=std::find_if(rows.begin(),rows.end(),[&](auto row){return row->view==state.preferred_view;});
+  if(record==rows.end()) {
+    c.Text(x,382,16,kMuted,Tr(tr,"No published lap for these conditions.","Bu koşullarda kayıtlı turu yok."),width);return;
+  }
+  const auto& row=**record;
+  const float time_width=std::min(206.f,width*.28f),rank_width=92.f,details=x+time_width;
+  c.Text(x,378,36,kAccent,row.result,time_width-16);
+  c.Text(details,380,17,kWhite,row.track_name,width-time_width-rank_width-16);
+  c.Text(details,411,14,kMuted,row.category+" · 2009 · "+Mode(row.mode,tr),width-time_width-rank_width-16);
+  c.Line(x+width-rank_width,374,x+width-rank_width,440);
+  c.Text(x+width-rank_width+20,378,13,kMuted,Tr(tr,"Rank","Sıra"),rank_width-20);
+  c.Text(x+width-rank_width+20,402,26,kAccent,std::to_string(row.rank),rank_width-20);
+  if(row.total)c.Text(x+width-rank_width+44,412,16,kMuted,"/ "+std::to_string(row.total),rank_width-44);
+}
+void Records(const Snapshot& state,View& view,const Canvas& c,float x,float width,float bottom,bool tr,bool ready) {
   const auto categories=Categories(state.results.get(),tr);
   view.category=std::clamp(view.category,0,int(categories.size())-1);
+  ImGui::SetCursorScreenPos(c.Point(x,143));
+  ImGui::SetNextItemWidth(174*c.scale);
   ImGui::BeginDisabled(!ready);
-  const auto filter=categories[view.category]+"  [X / F]";
-  if(ImGui::Button(filter.c_str())) {
-    view.category=(view.category+1)%int(categories.size());view.reset_scroll=true;
+  if(ImGui::BeginCombo("##license_class",categories[view.category].c_str())) {
+    for(int i=0;i<int(categories.size());++i)
+      if(ImGui::Selectable(categories[i].c_str(),view.category==i)){view.category=i;view.reset_scroll=true;}
+    ImGui::EndCombo();
   }
-  ImGui::EndDisabled();ImGui::SameLine();
-  ImGui::TextDisabled("%s",Tr(tr,"Personal bests · ranked separately per board","Kişisel en iyi turlar · her tablo ayrı sıralanır"));
-  if(ImGui::BeginChild("##player_records",{0,0},ImGuiChildFlags_None,ImGuiWindowFlags_NoNavInputs)) {
-    if(view.reset_scroll)ImGui::SetScrollY(0);
-    else if(view.scroll)ImGui::SetScrollY(ImGui::GetScrollY()+view.scroll);
-    if(!state.results)ImGui::TextWrapped("%s",Tr(tr,"Could not load records for this player.","Oyuncunun tur kayıtları alınamadı."));
-    else {
-      const auto rows=OrderedRecords(*state.results,state.preferred_view,categories,view.category);
-      if(rows.empty())ImGui::TextWrapped("%s",Tr(tr,"No published records in this category.","Bu kategoride yayımlanmış tur kaydı yok."));
-      else if(ImGui::BeginTable("##personal_bests",5,ImGuiTableFlags_RowBg|ImGuiTableFlags_BordersInnerH|ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("#",ImGuiTableColumnFlags_WidthFixed,52.f*scale);
-        ImGui::TableSetupColumn(Tr(tr,"Track / class","Pist / sınıf"),ImGuiTableColumnFlags_WidthStretch,2.f);
-        ImGui::TableSetupColumn(Tr(tr,"Best result","En iyi sonuç"),ImGuiTableColumnFlags_WidthFixed,100.f*scale);
-        ImGui::TableSetupColumn(Tr(tr,"Bike / season","Motor / sezon"),ImGuiTableColumnFlags_WidthStretch,1.2f);
-        ImGui::TableSetupColumn(Tr(tr,"Mode","Mod"),ImGuiTableColumnFlags_WidthStretch,1.2f);
-        ImGui::TableHeadersRow();
-        for(const auto* row:rows) {
-          ImGui::TableNextRow(0,48.f*scale);
-          if(row->view==state.preferred_view)ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,ImGui::GetColorU32(overlay::AccentTint(.12f)));
-          ImGui::TableNextColumn();ImGui::TextColored(row->rank==1?kAccent:kWhite,"%u",row->rank);
-          if(row->total)ImGui::TextDisabled("/ %u",row->total);
-          ImGui::TableNextColumn();ImGui::TextWrapped("%s",row->track_name.c_str());ImGui::TextDisabled("%s",row->category.c_str());
-          ImGui::TableNextColumn();ImGui::TextColored(kAccent,"%s",row->result.c_str());
-          ImGui::TableNextColumn();ImGui::TextWrapped("%s",row->bike.empty()?"—":row->bike.c_str());
-          if(row->season>=0)ImGui::TextDisabled("%d",2009+row->season);
-          ImGui::TableNextColumn();ImGui::TextWrapped("%s",Mode(row->mode,tr).c_str());
-        }
-        ImGui::EndTable();
-      }
-    }
+  ImGui::EndDisabled();
+  c.Text(x+188,149,12,kMuted,"[X / F]",70);
+  if(!state.results){c.Text(x,211,16,kMuted,Tr(tr,"Records unavailable","Tur kayıtları alınamadı"),width);return;}
+  const auto rows=OrderedRecords(*state.results,state.preferred_view,categories,view.category);
+  c.Text(x+width-90,149,13,kMuted,std::to_string(rows.size())+Tr(tr," records"," kayıt"),90);
+  const float track=x+100.f,time=x+width-236.f,mode=x+width-112.f;
+  c.Text(x+12,194,13,kMuted,Tr(tr,"Rank","Sıra"),80);
+  c.Text(track,194,13,kMuted,Tr(tr,"Track / class","Pist / sınıf"),time-track-16);
+  c.Text(time,194,13,kMuted,Tr(tr,"Best lap","En iyi tur"),110);
+  c.Text(mode,194,13,kMuted,Tr(tr,"Mode","Mod"),100);
+  const float top=220.f,available=bottom-top;
+  const int visible=std::max(1,int(available/46.f));
+  const float row_height=available/visible;
+  const int maximum=std::max(0,int(rows.size())-visible);
+  if(view.reset_scroll)view.first_row=0;
+  else if(view.scroll)view.first_row+=view.scroll>0?1:-1;
+  const auto first=c.Point(x,top),last=c.Point(x+width,bottom);
+  if(ready&&ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)&&ImGui::IsMouseHoveringRect(first,last))
+    view.first_row-=int(ImGui::GetIO().MouseWheel*3);
+  view.first_row=std::clamp(view.first_row,0,maximum);
+  // Only complete rows are drawn. Scrolling changes the first row, never the
+  // whole-card position, so header, filters and footer cannot be scrolled away.
+  if(rows.empty())c.Text(x,top+20,16,kMuted,Tr(tr,"No published records in this category.","Bu kategoride yayımlanmış tur kaydı yok."),width);
+  for(int i=0;i<visible&&view.first_row+i<int(rows.size());++i) {
+    const auto& row=*rows[view.first_row+i];
+    const float y=top+i*row_height;
+    if(row.view==state.preferred_view)c.draw->AddRectFilled(c.Point(x,y),c.Point(x+width-18,y+row_height),ImGui::GetColorU32(overlay::AccentTint(.10f)));
+    c.Text(x+12,y+12,20,row.rank==1?kAccent:kWhite,std::to_string(row.rank),36);
+    if(row.total)c.Text(x+42,y+15,14,kMuted,"/ "+std::to_string(row.total),52);
+    c.Text(track,y+6,15,kWhite,row.track_name,time-track-18);
+    c.Text(track,y+29,12.5f,kMuted,row.category+" · 2009",time-track-18);
+    c.Text(time,y+13,17,kAccent,row.result,112);
+    c.Text(mode,y+15,14,kWhite,Mode(row.mode,tr),92);
+    c.Line(x,y+row_height,x+width-18,y+row_height);
   }
-  ImGui::EndChild();view.scroll=0;view.reset_scroll=false;
+  if(maximum) {
+    const float height=available,thumb=std::max(22.f,height*visible/rows.size());
+    const float thumb_y=top+(height-thumb)*view.first_row/maximum;
+    ImGui::SetCursorScreenPos(c.Point(x+width-10,top));
+    ImGui::BeginDisabled(!ready);
+    ImGui::InvisibleButton("##license_scrollbar",{10*c.scale,height*c.scale});
+    if(ImGui::IsItemActive()) {
+      const float mouse=(ImGui::GetIO().MousePos.y-c.origin.y)/c.scale;
+      if(view.drag_offset<0)view.drag_offset=mouse>=thumb_y&&mouse<=thumb_y+thumb?mouse-thumb_y:thumb*.5f;
+      const float fraction=std::clamp((mouse-top-view.drag_offset)/(height-thumb),0.f,1.f);
+      view.first_row=int(fraction*maximum+.5f);
+    } else view.drag_offset=-1;
+    ImGui::EndDisabled();
+    c.draw->AddRectFilled(c.Point(x+width-7,top),c.Point(x+width-3,bottom),Color(35,41,50),2*c.scale);
+    c.draw->AddRectFilled(c.Point(x+width-7,thumb_y),c.Point(x+width-3,thumb_y+thumb),Color(119,134,154),2*c.scale);
+  }
+  view.scroll=0;view.reset_scroll=false;
 }
 
 struct Action { bool profile = false, close = false; };
 Action DrawCard(const Snapshot& state, rex::ui::ImmediateTexture* texture,
     rex::ui::ImmediateTexture* flag_atlas,View& view,bool tr, ImFont* font, ImFont* heading, bool ready,float alpha) {
-  const auto& io = ImGui::GetIO();
-  const float scale = std::clamp(std::min(io.DisplaySize.x / 960.f, io.DisplaySize.y / 640.f), .65f, 1.5f);
-  const ImVec2 size(std::min(760.f * scale, std::max(200.f, io.DisplaySize.x - 24.f)),
-      std::min(560.f * scale, std::max(200.f, io.DisplaySize.y - 24.f)));
-  auto* background = ImGui::GetBackgroundDrawList();
+  (void)heading;
+  const auto& io=ImGui::GetIO();
+  const float scale=std::max(.1f,std::min({io.DisplaySize.x/1440.f,io.DisplaySize.y/900.f,1.35f}));
+  const ImVec2 size(1100.f*scale,580.f*scale);
   ImGui::PushStyleVar(ImGuiStyleVar_Alpha,ImGui::GetStyle().Alpha*alpha);
-  background->AddRectFilled({0, 0}, io.DisplaySize, Color(0, 0, 0, 155));
-  if (font) ImGui::PushFont(font, 18.f * scale);
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {24.f * scale, 20.f * scale});
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 2.f);
-  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.f);
-  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {14.f * scale, 10.f * scale});
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {14.f * scale, 10.f * scale});
+  ImGui::GetBackgroundDrawList()->AddRectFilled({0,0},io.DisplaySize,Color(0,0,0,155));
+  ImGui::PushFont(font?font:ImGui::GetFont(),16.f*scale);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{0,0});
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,2.f);
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,2.f);
+  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,{12.f*scale,7.f*scale});
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{10.f*scale,8.f*scale});
   ImGui::PushStyleColor(ImGuiCol_WindowBg,overlay::ink);
-  ImGui::PushStyleColor(ImGuiCol_Border,{.19f,.21f,.26f,1.f});
-  ImGui::PushStyleColor(ImGuiCol_Text, kWhite);
-  ImGui::PushStyleColor(ImGuiCol_TextDisabled, kMuted);
+  ImGui::PushStyleColor(ImGuiCol_Border,ImVec4(.19f,.21f,.26f,1));
+  ImGui::PushStyleColor(ImGuiCol_Text,kWhite);
+  ImGui::PushStyleColor(ImGuiCol_TextDisabled,kMuted);
   ImGui::PushStyleColor(ImGuiCol_Button,overlay::card);
   ImGui::PushStyleColor(ImGuiCol_ButtonHovered,overlay::AccentTint(.24f));
   ImGui::PushStyleColor(ImGuiCol_ButtonActive,overlay::AccentTint(.36f));
   ImGui::PushStyleColor(ImGuiCol_NavCursor,kAccent);
-  ImGui::SetNextWindowPos({io.DisplaySize.x * .5f, io.DisplaySize.y * .5f}, ImGuiCond_Always, {.5f, .5f});
-  ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+  ImGui::PushStyleColor(ImGuiCol_FrameBg,overlay::card);
+  ImGui::PushStyleColor(ImGuiCol_PopupBg,overlay::ink);
+  ImGui::SetNextWindowPos({io.DisplaySize.x*.5f,io.DisplaySize.y*.5f},ImGuiCond_Always,{.5f,.5f});
+  ImGui::SetNextWindowSize(size,ImGuiCond_Always);
   Action action;
-  if (ImGui::Begin("##motogp_player_card", nullptr, ImGuiWindowFlags_NoDecoration |
-      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNavInputs)) {
-    const auto origin = ImGui::GetWindowPos();
-    auto* draw = ImGui::GetWindowDrawList();
-    const float header = 68.f * scale;
-    draw->AddRectFilledMultiColor(origin, {origin.x + size.x, origin.y + header},
-        ImGui::GetColorU32(overlay::AccentTint(.18f)),ImGui::GetColorU32(overlay::ink),
-        ImGui::GetColorU32(overlay::ink),ImGui::GetColorU32(overlay::AccentTint(.08f)));
-    draw->AddLine({origin.x, origin.y + header}, {origin.x + size.x, origin.y + header},
-        ImGui::GetColorU32(kAccent), 2.f * scale);
-    for (int i = 0; i < 3; ++i) {
-      const float x = origin.x + (14.f + i * 15.f) * scale;
-      const int first_vertex = draw->VtxBuffer.Size;
-      draw->AddQuadFilled({x, origin.y + 49.f * scale}, {x + 12.f * scale, origin.y + 49.f * scale},
-          {x + 36.f * scale, origin.y + 12.f * scale}, {x + 24.f * scale, origin.y + 12.f * scale},
-          ImGui::GetColorU32(kAccent));
-      // Match the native title's permanent left-to-right fade across all three
-      // stripes. Preserve edge antialiasing and the separate opening animation.
-      for (int vertex_index = first_vertex; vertex_index < draw->VtxBuffer.Size; ++vertex_index) {
-        auto& vertex = draw->VtxBuffer[vertex_index];
-        const float fade = std::clamp((vertex.pos.x - origin.x - 14.f * scale) / (66.f * scale), 0.f, 1.f);
-        auto color = ImGui::ColorConvertU32ToFloat4(vertex.col);
-        color.w *= fade;
-        vertex.col = ImGui::ColorConvertFloat4ToU32(color);
-      }
+  if(ImGui::Begin("##motogp_player_card",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoSavedSettings|
+      ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoNavInputs|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse)) {
+    ImGui::SetScrollY(0);
+    Canvas c{ImGui::GetWindowDrawList(),ImGui::GetWindowPos(),scale,font?font:ImGui::GetFont()};
+    c.draw->AddRectFilledMultiColor(c.Point(0,0),c.Point(1100,64),
+        ImGui::GetColorU32(overlay::AccentTint(.10f)),ImGui::GetColorU32(overlay::ink),
+        ImGui::GetColorU32(overlay::ink),ImGui::GetColorU32(overlay::ink));
+    Stripes(c);
+    c.Text(96,21,24,kWhite,Tr(tr,"RIDER LICENSE","PİLOT LİSANSI"),900);
+    c.draw->AddLine(c.Point(0,64),c.Point(1100,64),ImGui::GetColorU32(kAccent),scale);
+    c.Line(260,84,260,496);
+    Portrait(c,texture,196);
+    const auto name=state.status==Status::Ready?state.player.name:
+        Tr(tr,state.status==Status::Loading?"Loading...":"Player unavailable",state.status==Status::Loading?"Yükleniyor...":"Oyuncu bilgisi alınamadı");
+    const float name_width=c.Text(32,310,26,kAccent,name,154);
+    if(flag_atlas&&!state.player.country.empty()){
+      ImGui::SetCursorScreenPos(c.Point(32+name_width+12,315));Flag(flag_atlas,state.player.country,scale);
     }
-    ImGui::SetCursorPos({86.f * scale, 14.f * scale});
-    if (heading) ImGui::PushFont(heading, 30.f * scale);
-    ImGui::TextUnformatted(Tr(tr, "PLAYER CARD", "OYUNCU KARTI"));
-    if (heading) ImGui::PopFont();
-    ImGui::SetCursorPos({24.f * scale, header + 18.f * scale});
-    const float avatar = 104.f * scale;
-    if (texture) {
-      // Fit the complete photo rather than stretching/cropping a non-square
-      // response. The site's normal avatars are already square.
-      const auto position=ImGui::GetCursorScreenPos();
-      draw->AddRectFilled(position,{position.x+avatar,position.y+avatar},Color(12,15,20));
-      const float fit=avatar/std::max(texture->width,texture->height);
-      const ImVec2 dimensions(texture->width*fit,texture->height*fit);
-      const ImVec2 first(position.x+(avatar-dimensions.x)*.5f,position.y+(avatar-dimensions.y)*.5f);
-      draw->AddImage(reinterpret_cast<ImTextureID>(texture),first,{first.x+dimensions.x,first.y+dimensions.y},
-          {0,0},{1,1},ImGui::GetColorU32(ImVec4(1,1,1,1)));
-      draw->AddRect(position,{position.x+avatar,position.y+avatar},Color(49,54,66));
-    } else Helmet(draw, ImGui::GetCursorScreenPos(), avatar);
-    ImGui::Dummy({avatar, avatar}); ImGui::SameLine(0, 24.f * scale);
-    ImGui::BeginGroup();
-    ImGui::TextDisabled("NOBK ONLINE");
-    ImGui::PushTextWrapPos(size.x - 24.f * scale);
-    if (heading) ImGui::PushFont(heading, 30.f * scale);
-    ImGui::TextColored(kAccent,"%s",state.status == Status::Ready ? state.player.name.c_str() :
-        Tr(tr, state.status == Status::Loading ? "Loading player..." : "Player unavailable",
-            state.status == Status::Loading ? "Oyuncu yükleniyor..." : "Oyuncu bilgisi alınamadı"));
-    if (heading) ImGui::PopFont();
-    if(!state.player.country.empty()&&flag_atlas) {
-      ImGui::SameLine(0,12.f*scale);
-      ImGui::SetCursorPosY(ImGui::GetCursorPosY()+5.f*scale);
-      Flag(flag_atlas,state.player.country,scale);
-    }
-    ImGui::TextDisabled("%s",Membership(state.player.member_since,tr).c_str());
-    ImGui::TextDisabled("MotoGP 09/10");
-    ImGui::PopTextWrapPos(); ImGui::EndGroup();
-    ImGui::SetCursorPos({24.f*scale,header+144.f*scale});
-    ImGui::BeginDisabled(!ready);
+    c.Text(32,365,15,kMuted,Tr(tr,"Member since","Üyelik tarihi"),196);
+    auto membership=Membership(state.player.member_since,tr);
+    if(state.player.member_since) {
+      if(tr)membership.erase(membership.find(" tarihinden"));
+      else membership.erase(0,std::string_view("Member since ").size());
+    } else membership="-";
+    c.Text(32,389,15,kMuted,membership,196);
+    constexpr float content_x=292.f,content_width=776.f;
     for(int tab=0;tab<2;++tab) {
-      if(tab)ImGui::SameLine();
-      ImGui::PushStyleColor(ImGuiCol_Button,view.tab==tab?overlay::AccentTint(.18f):overlay::card);
-      ImGui::PushStyleColor(ImGuiCol_Text,view.tab==tab?kAccent:kMuted);
-      if(ImGui::Button(tab==0?Tr(tr,"Overview","Genel bilgiler"):Tr(tr,"Records","Tur kayıtları"),{150.f*scale,36.f*scale})) {
-        view.tab=tab;view.reset_scroll=true;
-      }
-      ImGui::PopStyleColor(2);
+      ImGui::SetCursorScreenPos(c.Point(content_x+tab*170,84));
+      ImGui::BeginDisabled(!ready);
+      ImGui::PushID(tab);
+      if(ImGui::InvisibleButton("license_tab",{164*scale,38*scale})){view.tab=tab;view.reset_scroll=true;}
+      ImGui::PopID();
+      ImGui::EndDisabled();
+      c.Text(content_x+tab*170+32,92,18,view.tab==tab?kAccent:kMuted,tab?Tr(tr,"Records","Tur kayıtları"):Tr(tr,"Overview","Genel bilgiler"),135);
     }
-    ImGui::EndDisabled();ImGui::SameLine();ImGui::TextDisabled("LB / RB · Q / E");
-    ImGui::SetCursorPos({24.f*scale,header+194.f*scale});
-    const float body_height=std::max(20.f*scale,size.y-ImGui::GetCursorPosY()-96.f*scale);
-    if(ImGui::BeginChild("##player_card_body",{0,body_height},ImGuiChildFlags_None,ImGuiWindowFlags_NoNavInputs)) {
-      if(state.status!=Status::Ready)ImGui::TextWrapped("%s",state.status==Status::Loading?
-          Tr(tr,"Loading player...","Oyuncu yükleniyor..."):Tr(tr,"Could not load this player's profile. Close and try again.","Oyuncunun profili yüklenemedi. Kapatıp tekrar dene."));
-      else if(view.tab==0)Overview(state,tr,heading,scale);
-      else Records(state,view,tr,scale,ready);
-    }
-    ImGui::EndChild();
-    ImGui::SetCursorPos({24.f * scale, size.y - 76.f * scale});
-    ImGui::Separator();
-    ImGui::BeginDisabled(!ready || state.status != Status::Ready);
-    action.profile = ImGui::Button(Tr(tr, "Open NOBK profile", "NOBK profilini aç"));
-    ImGui::EndDisabled(); ImGui::SameLine();
-    ImGui::BeginDisabled(!ready);
-    action.close = ImGui::Button(Tr(tr, "Back", "Geri"));
+    c.Line(content_x,124,content_x+content_width,124);
+    c.draw->AddLine(c.Point(content_x+view.tab*170,124),c.Point(content_x+view.tab*170+164,124),ImGui::GetColorU32(kAccent),3*scale);
+    if(state.status!=Status::Ready)c.Text(content_x,170,16,kMuted,state.status==Status::Loading?
+        Tr(tr,"Loading player...","Oyuncu yükleniyor..."):Tr(tr,"Could not load this profile. Close and try again.","Profil yüklenemedi. Kapatıp tekrar dene."),content_width);
+    else if(view.tab==0)Overview(state,c,content_x,content_width,tr);
+    else Records(state,view,c,content_x,content_width,505,tr,ready);
+    c.Line(32,516,1068,516);
+    ImGui::SetCursorScreenPos(c.Point(32,534));
+    ImGui::BeginDisabled(!ready||state.status!=Status::Ready);
+    action.profile=ImGui::Button(Tr(tr,"Open NOBK profile","NOBK profilini aç"));
     ImGui::EndDisabled();
-    ImGui::SetCursorPos({24.f * scale, size.y - 24.f * scale});
-    ImGui::TextDisabled("%s", Tr(tr, "A / Enter: Profile   B / Esc: Back   D-pad / Arrows: Scroll", "A / Enter: Profil   B / Esc: Geri   Yön tuşları: Kaydır"));
+    c.Text(474,543,12,kMuted,view.tab==1?
+        Tr(tr,"LB / RB: Tabs   A / Enter: Profile   B / Esc: Back   D-pad: Scroll","LB / RB: Sekmeler   A / Enter: Profil   B / Esc: Geri   Yön: Kaydır"):
+        Tr(tr,"LB / RB: Tabs   A / Enter: Profile   B / Esc: Back","LB / RB: Sekmeler   A / Enter: Profil   B / Esc: Geri"),594);
   }
   ImGui::End();
-  ImGui::PopStyleColor(8); ImGui::PopStyleVar(6);
-  if (font) ImGui::PopFont();
+  ImGui::PopStyleColor(10);ImGui::PopStyleVar(6);ImGui::PopFont();
   return action;
 }
+
 
 class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputListener {
  public:

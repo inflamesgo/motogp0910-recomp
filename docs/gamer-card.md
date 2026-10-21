@@ -1,16 +1,25 @@
-# In-game player card
+# In-game rider license
 
-The native **Gamer Card** action in Online lobbies and leaderboards now opens a
+The native **View profile** action in Online lobbies and leaderboards now opens a
 player card using the launcher's dark palette and orange accent (`#ff6a13`).
-It has **Overview** and **Records** tabs. The selected player's avatar, orange
-account name, country flag and membership date remain above both tabs, with
-shared **Open NOBK profile** and **Back** actions. A 180 ms fade-in covers
+It is titled **RIDER LICENSE** (**PİLOT LİSANSI**) and has **Overview** and
+**Records** tabs. A persistent left sidebar holds the selected player's avatar,
+orange account name, country flag and membership date. The right pane holds the
+tabs and their contents. A compact **Open NOBK profile** action remains in the
+shared footer; **B / Esc** closes the card without a separate Back button.
+A 180 ms fade-in covers
 the panel, backdrop, text and photo; Windows' reduced-animation preference is
-respected. The three title stripes also have a permanent left-to-right opacity
-gradient, matching the native title motif independently of the opening animation.
+respected. Each title stripe fades along its diagonal from the lower-left to the
+upper-right, with a smoothstep opacity ramp subdivided into 24 seamless bands.
+This permanent gradient is independent of the opening animation.
 The user confirmed that account data and avatars load in game. The stripe gradient
 and new tabs still require native visual review; no automated or gameplay tests
-were run for this update.
+were run for this update. The approved concepts are implemented on an 1100 by
+580 design canvas, scaled uniformly to fit the display. Text and hit targets
+share that canvas; the outer window has no scroll state. Overview fits without
+scrolling. Records draws complete rows with a dedicated row-based scrollbar,
+keeping its tabs, filter, headings, sidebar and footer fixed. At 1920 by 1080,
+normal body text is approximately 18–19 pixels and six records fit at once.
 
 ## Identity and public data
 
@@ -20,6 +29,12 @@ calls `8239C430`. That wrapper passes `r3 = local user index`, `r4 = selected
 XUID` and `r5 = 0` to `XamShowGamerCardUIForXUID`. The SDK's previous stub for
 that import is replaced by the client hook; original game data and generated
 functions are unchanged.
+
+The existing message getter hook replaces native bank-0 IDs 1137 and 1433
+(formerly "Gamer Card") and 1416 (formerly "View gamer card") with **View profile**
+or **Profili incele**, according to the game's written language. Menu action IDs
+and the original message banks are preserved. The Turkish source catalogue is
+kept consistent with these labels.
 
 The community service encodes a player as `0x0009000000000000 | id`, with a
 nonzero 24-bit ID. This ID is resolved through the existing public endpoint
@@ -76,13 +91,15 @@ site's older 17-track catalogue and its ranking metric of **tracks led**. The
 first card statistic is **tracks recorded**, not tracks led; **records held**
 counts first places, not all personal bests.
 
-Records lists personal best results, rank and board population, circuit, class,
-bike/season and stored game mode. Results use the site's `display.text`; season
-and game mode come from uploaded properties 13 and 6. Unknown data shows a dash.
-The current public response has no explicit `bike`/`manufacturer` label, so that
-field remains unavailable unless supplied by the API. Packed rider IDs are not
-guessed into manufacturers. Class labels follow published metadata, preserving
-the existing server-side Moto2/season integration limits.
+Records has four columns: rank/board population on one line, circuit with
+class/2009 underneath, best lap, and stored mode. Results use the site's
+`display.text`; game mode comes from uploaded property 6. Unknown data uses an
+ASCII hyphen to avoid a missing-glyph diamond. The empty bike column is removed.
+Class labels follow published metadata, preserving the existing server-side
+Moto2 integration limits. As requested, this initial view is scoped to 2009:
+known 2010 rows (property 13 = 1) are excluded from the list, filters and summary;
+legacy rows without a season remain in the initial 2009 presentation. The source
+season property is retained for the later server integration.
 
 The class filter is built from returned records. Empty records and failed lookups
 have separate messages. Sorting uses rank, then latest update. A card opened
@@ -134,17 +151,18 @@ then share the newest game log from the install's `logs/` directory. Search for
 whose public profile explicitly reports no photo.
 
 If the player name cannot be resolved, the card explains the failure and keeps
-**Back** available; its profile button is disabled. It never opens a guessed
+**B / Esc** available; its profile button is disabled. It never opens a guessed
 username. There is no new modal error box.
 
 ## Controls and lifecycle
 
 - **A / Enter** opens the selected player's general NOBK profile in the browser.
-- **B / Esc** or the **Back** button closes the card.
+- **B / Esc** closes the card; there is no visible Back button.
 - **LB / RB** or **Q / E** changes tabs.
 - **X / F** cycles the Records class filter.
 - **D-pad / Up / Down** scrolls Records; a held D-pad repeats at a bounded rate.
-- Mouse controls support tabs, filter, wheel scrolling and the shared actions.
+- Mouse controls support tabs, the class dropdown, wheel/scrollbar navigation
+  and the compact profile action. Only the Records rows scroll.
 
 The card uses a separate instance of the existing settings input gate. Opening
 F1 and the card is serialized so concurrent requests cannot acquire both gates.

@@ -23,7 +23,7 @@ anti-cheat: a modified client can submit fabricated records for its own identity
 
 ## Player setup
 
-The native Gamer Card action has a local implementation for the production
+The native View profile action (previously Gamer Card) opens a rider license for the production
 NOBK service: selected-player name, country flag/avatar, membership date,
 Overview/Records tabs and a link to the general NOBK account profile.
 See [player card behavior and validation status](gamer-card.md).
