@@ -5,8 +5,8 @@ player card using the launcher's dark palette and orange accent (`#ff6a13`).
 It is titled **RIDER LICENSE** (**PİLOT LİSANSI**) and has **Overview** and
 **Records** tabs. A persistent left sidebar holds the selected player's avatar,
 orange account name, country flag and membership date. The right pane holds the
-tabs and their contents. A compact **Open NOBK profile** action remains in the
-shared footer; **B / Esc** closes the card without a separate Back button.
+tabs and their contents. A compact **Open NOBK Online profile** action remains
+in the shared footer; **B / Esc** closes the card without a separate Back button.
 A 180 ms fade-in covers
 the panel, backdrop, text and photo; Windows' reduced-animation preference is
 respected. Each title stripe fades along its diagonal from the lower-left to the
@@ -42,7 +42,7 @@ nonzero 24-bit ID. This ID is resolved through the existing public endpoint
 the selection before its account name is used. The current launcher account,
 leaderboard rank and the site's independent account ID are never substituted.
 
-**Open NOBK profile** opens
+**Open NOBK Online profile** opens
 `https://nobkonline.com/profile/?u=<percent-encoded-name>`, as requested, rather
 than the MotoGP-only rider page. The general profile page itself uses
 `/api/fifa09/player?name=<percent-encoded-name>` for shared account metadata,
@@ -113,10 +113,42 @@ or other groups are not represented as if they were returned.
 
 ## Avatar loading and fallback
 
-Name lookup starts only when the card opens, on one worker. The account name
-and profile action become available before the optional avatar download ends.
-There is no periodic network refresh. Stale responses from a closed card or
-another selected player cannot replace the current card's name or image.
+Name lookup starts only when the card opens, on one worker. The account name,
+records and profile action become available before the optional account metadata
+and avatar download end. There is no periodic network refresh. Stale responses
+from a closed card or another selected player cannot replace the current card's
+name or image.
+
+The worker reuses a WinHTTP session and connection across identity, metadata,
+avatar and subsequent player requests, allowing HTTPS keep-alive instead of
+recreating the entire session for each download. Requests use asynchronous
+WinHTTP completion callbacks with a cancellable worker wait. Closing the card,
+selecting another player or shutting down cancels the current request; the next
+player does not wait for a closed card's network timeout. Request context and
+read buffers remain alive until the final handle-closing callback. Each HTTP
+exchange has a five-second deadline shared by send, headers and body reads,
+instead of accumulating a separate timeout for every stage.
+
+The two supplied native logs show the first identity request timing out, followed
+by a successful manual reopen of the same player; later lookups in the second
+log complete in roughly 0.3 seconds including metadata and photo. This points to
+an initial-request problem, but the old combined send/receive timing cannot
+identify DNS, proxy discovery, TLS or server response as the cause. The first
+identity request now gets a two-second initial attempt and one automatic retry
+for transient transport failures, using only the remainder of the same
+five-second total budget. Cancellation, HTTP error responses, identity mismatch
+and malformed JSON do not trigger this retry. Later player lookups do not add
+retries, and there is no background warm-up or polling request.
+
+A bounded, memory-only cache retains up to eight profiles. A complete profile
+reopened within 60 seconds is shown immediately without HTTP. An older or partial
+cached profile can be shown for up to five minutes while the worker refreshes it
+in the background. The selected leaderboard view is always taken from the new
+opening, never from the cached card. Refresh failures keep the available cached
+profile visible; a verified account rename clears the previous account's photo.
+Partial or failed loads are eligible for another attempt on reopening. The cache
+does not survive game shutdown, and a first visit still depends on network and
+server response time. These changes have not been built or tested locally.
 
 Avatar downloads are limited to 512 KiB and image dimensions to 1024 by 1024
 before decoding. HTTP errors, missing photos, invalid or oversized images leave
@@ -141,9 +173,14 @@ number that connects the selected XUID/player ID to these stages:
 - `flags`: embedded atlas decode/upload failures.
 
 HTTP events include the fixed host/path, status, content type, byte count,
-duration and Windows error code when relevant. Logs distinguish an account with
-no photo, HTTP errors, decode failures and responses discarded after closing or
-changing cards. They do not record response bodies, passwords, tokens or cookies.
+duration and Windows error code when relevant. `http_phase` events report
+cumulative setup, send-completion and response-header timings; `http_result`
+reports total time through the final body read. `cache` records immediate hits and freshness, and
+`cancelled` distinguishes dismissal from a network failure. `http_retry` records
+the single initial-connection retry and its remaining time budget. Logs distinguish
+an account with no photo, HTTP errors, decode failures and responses discarded after
+closing or changing cards. They do not record response bodies, passwords, tokens
+or cookies.
 
 For a missing avatar/country, open that player's card, wait for loading to finish,
 then share the newest game log from the install's `logs/` directory. Search for

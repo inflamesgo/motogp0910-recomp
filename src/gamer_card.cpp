@@ -24,6 +24,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <stop_token>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -171,50 +172,167 @@ std::shared_ptr<const Results> ReadResults(const nlohmann::json& json,uint64_t s
   return results;
 }
 
-PublicReply PublicGet(std::string_view relative_path, size_t max_body,
-    uint64_t serial, std::string_view stage) {
+struct RequestCancelled : std::runtime_error {
+  RequestCancelled() : std::runtime_error("Player card request cancelled") {}
+};
+struct PublicHttpFailure : std::runtime_error {
+  uint32_t code;
+  PublicHttpFailure(const char* operation,uint32_t error)
+      : std::runtime_error(std::string("Public profile request failed at ")+operation),code(error) {}
+};
+
+// Owned by the profile worker, so all requests can reuse the session and its
+// keep-alive connection. Only request cancellation crosses threads. These are
+// public read-only endpoints; no launcher token or account password is sent.
+class PublicClient {
 #ifdef _WIN32
-  // This is the site's public read-only API, not the authenticated launcher
-  // endpoint. No password, launcher token or community credential is sent.
   struct Handle {
-    HINTERNET value;
-    ~Handle() { if (value) WinHttpCloseHandle(value); }
+    HINTERNET value=nullptr;
+    Handle()=default;
+    Handle(const Handle&)=delete;
+    Handle& operator=(const Handle&)=delete;
+    void Close() { if(value)WinHttpCloseHandle(std::exchange(value,nullptr)); }
+    ~Handle() { Close(); }
   };
+  struct Exchange {
+    std::mutex mutex;
+    std::condition_variable_any changed;
+    DWORD status=0,error=0,bytes=0;
+    bool closed=false,callbacks=false;
+    Handle request;
+
+    static void CALLBACK Notify(HINTERNET,DWORD_PTR context,DWORD status,
+        void* information,DWORD length) {
+      if(!context)return;
+      auto& self=*reinterpret_cast<Exchange*>(context);
+      std::lock_guard lock(self.mutex);
+      if(status==WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING)self.closed=true;
+      else if(status==WINHTTP_CALLBACK_STATUS_REQUEST_ERROR) {
+        self.error=static_cast<WINHTTP_ASYNC_RESULT*>(information)->dwError;
+      } else {
+        self.status=status;
+        if(status==WINHTTP_CALLBACK_STATUS_READ_COMPLETE)self.bytes=length;
+      }
+      self.changed.notify_all();
+    }
+    bool Wait(DWORD expected,std::stop_token cancel,
+        std::chrono::steady_clock::time_point deadline) {
+      std::unique_lock lock(mutex);
+      changed.wait_until(lock,cancel,deadline,[&]{return status==expected||error;});
+      if(cancel.stop_requested())throw RequestCancelled();
+      if(error) { SetLastError(error);return false; }
+      if(status!=expected) { SetLastError(ERROR_WINHTTP_TIMEOUT);return false; }
+      status=0;
+      return true;
+    }
+    ~Exchange() {
+      request.Close();
+      // HANDLE_CLOSING is the last callback. Its context and read buffer must
+      // outlive it, including when a card closes during an unfinished read.
+      if(callbacks) {
+        std::unique_lock lock(mutex);
+        changed.wait(lock,[&]{return closed;});
+      }
+    }
+  };
+  Handle session_,connection_;
+#endif
+  bool first_request_=true;
+ public:
+  PublicReply Get(std::string_view relative_path,size_t max_body,uint64_t serial,
+      std::string_view stage,std::stop_token cancel) {
+    const auto started=std::chrono::steady_clock::now();
+    const auto deadline=started+std::chrono::seconds(5);
+    // The observed first-connection timeout recovered immediately when the
+    // same profile was reopened. Retry that read-only identity request once,
+    // within the original budget, instead of requiring a manual reopen.
+    const bool cold=std::exchange(first_request_,false)&&stage=="identity";
+    try {
+      return GetOnce(relative_path,max_body,serial,stage,cancel,
+          cold?started+std::chrono::seconds(2):deadline);
+    } catch(const PublicHttpFailure& error) {
+#ifdef _WIN32
+      const bool transient=error.code==ERROR_WINHTTP_TIMEOUT||error.code==ERROR_WINHTTP_CANNOT_CONNECT||
+          error.code==ERROR_WINHTTP_CONNECTION_ERROR||error.code==ERROR_WINHTTP_NAME_NOT_RESOLVED||
+          error.code==ERROR_WINHTTP_RESEND_REQUEST;
+      if(cancel.stop_requested())throw RequestCancelled();
+      const auto remaining=std::chrono::duration_cast<std::chrono::milliseconds>(
+          deadline-std::chrono::steady_clock::now()).count();
+      if(!cold||!transient||remaining<250)throw;
+      REXLOG_INFO("PLAYER_CARD request={} stage={} event=http_retry attempt=2 reason=initial_connection win_error={} remaining_ms={}",
+          serial,stage,error.code,remaining);
+      return GetOnce(relative_path,max_body,serial,stage,cancel,deadline);
+#else
+      throw;
+#endif
+    }
+  }
+ private:
+  PublicReply GetOnce(std::string_view relative_path,size_t max_body,uint64_t serial,
+      std::string_view stage,std::stop_token cancel,
+      std::chrono::steady_clock::time_point deadline) {
+#ifdef _WIN32
+  if(cancel.stop_requested())throw RequestCancelled();
   const auto started=std::chrono::steady_clock::now();
+  // Unlike separate resolve/connect/read timeouts, this bounds the entire
+  // HTTP exchange. Optional metadata cannot occupy the worker indefinitely.
   const auto elapsed=[&] { return std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now()-started).count(); };
   const auto failure=[&](const char* operation) {
     const auto error=GetLastError();
     REXLOG_WARN("PLAYER_CARD request={} stage={} event=http_failed operation={} win_error={} elapsed_ms={}",
         serial,stage,operation,error,elapsed());
-    return std::runtime_error(std::string("Public profile request failed at ")+operation);
+    return PublicHttpFailure(operation,error);
   };
   REXLOG_INFO("PLAYER_CARD request={} stage={} event=http_start host=www.nobkonline.com path={}",
       serial,stage,relative_path);
-  Handle session{WinHttpOpen(L"MotoGP0910-PlayerCard/1",
+  if(!session_.value) {
+    session_.value=WinHttpOpen(L"MotoGP0910-PlayerCard/1",
       WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
-      WINHTTP_NO_PROXY_BYPASS, 0)};
-  if (!session.value) session.value = WinHttpOpen(L"MotoGP0910-PlayerCard/1",
+      WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC);
+    if(!session_.value)session_.value=WinHttpOpen(L"MotoGP0910-PlayerCard/1",
       WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
-      WINHTTP_NO_PROXY_BYPASS, 0);
-  if (!session.value || !WinHttpSetTimeouts(session.value, 3000, 4000, 4000, 4000))
-    throw failure("session");
-  Handle connection{WinHttpConnect(session.value, L"www.nobkonline.com",
-      INTERNET_DEFAULT_HTTPS_PORT, 0)};
+      WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC);
+    if(!session_.value)throw failure("session");
+    if(!WinHttpSetTimeouts(session_.value,3000,4000,4000,4000)) {
+      const auto error=failure("session_timeouts");session_.Close();throw error;
+    }
+  }
+  if(!connection_.value)connection_.value=WinHttpConnect(session_.value,
+      L"www.nobkonline.com",INTERNET_DEFAULT_HTTPS_PORT,0);
+  if(!connection_.value)throw failure("connect");
   // Paths are built locally or validated against the site's avatar prefix.
   // Server-returned hosts and redirects are never followed.
   const std::wstring path(relative_path.begin(), relative_path.end());
-  Handle request{connection.value ? WinHttpOpenRequest(connection.value,
+  std::string body;
+  char chunk[4096];
+  Exchange exchange;
+  auto& request=exchange.request;
+  request.value=WinHttpOpenRequest(connection_.value,
       L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
-      WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr};
+      WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
   if (!request.value) throw failure("open");
+  DWORD_PTR context=reinterpret_cast<DWORD_PTR>(&exchange);
+  if(!WinHttpSetOption(request.value,WINHTTP_OPTION_CONTEXT_VALUE,&context,sizeof(context)))throw failure("context");
+  if(WinHttpSetStatusCallback(request.value,&Exchange::Notify,
+      WINHTTP_CALLBACK_FLAG_SENDREQUEST_COMPLETE|WINHTTP_CALLBACK_FLAG_HEADERS_AVAILABLE|
+      WINHTTP_CALLBACK_FLAG_READ_COMPLETE|WINHTTP_CALLBACK_FLAG_REQUEST_ERROR|
+      WINHTTP_CALLBACK_FLAG_HANDLES,0)==WINHTTP_INVALID_STATUS_CALLBACK)throw failure("callback");
+  exchange.callbacks=true;
+  const auto complete=[&](BOOL initiated,DWORD expected,const char* operation) {
+    if(!initiated&&GetLastError()!=ERROR_IO_PENDING)throw failure(operation);
+    if(!exchange.Wait(expected,cancel,deadline))throw failure(operation);
+    REXLOG_INFO("PLAYER_CARD request={} stage={} event=http_phase operation={} elapsed_ms={}",
+        serial,stage,operation,elapsed());
+  };
   DWORD redirects = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
   if (!WinHttpSetOption(request.value, WINHTTP_OPTION_REDIRECT_POLICY,
-      &redirects, sizeof(redirects)) ||
-      !WinHttpSendRequest(request.value, WINHTTP_NO_ADDITIONAL_HEADERS,
-          0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
-      !WinHttpReceiveResponse(request.value, nullptr))
-    throw failure("send_receive");
+      &redirects, sizeof(redirects)))throw failure("redirect_policy");
+  REXLOG_INFO("PLAYER_CARD request={} stage={} event=http_phase operation=setup elapsed_ms={}",
+      serial,stage,elapsed());
+  complete(WinHttpSendRequest(request.value,WINHTTP_NO_ADDITIONAL_HEADERS,
+      0,WINHTTP_NO_REQUEST_DATA,0,0,context),WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE,"send");
+  complete(WinHttpReceiveResponse(request.value,nullptr),WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE,"headers");
   DWORD status = 0, size = sizeof(status);
   if (!WinHttpQueryHeaders(request.value,
       WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
@@ -235,22 +353,15 @@ PublicReply PublicGet(std::string_view relative_path, size_t max_body,
     return {status,{}};
   }
 
-  std::string body;
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
   for (;;) {
-    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-        deadline - std::chrono::steady_clock::now()).count();
-    if (remaining <= 0) {
-      REXLOG_WARN("PLAYER_CARD request={} stage={} event=http_failed reason=body_deadline elapsed_ms={}",serial,stage,elapsed());
-      throw std::runtime_error("Public profile response timed out");
+    if(cancel.stop_requested())throw RequestCancelled();
+    if(std::chrono::steady_clock::now()>=deadline) {
+      SetLastError(ERROR_WINHTTP_TIMEOUT);throw failure("read");
     }
-    DWORD timeout = static_cast<DWORD>(std::min<int64_t>(remaining, 4000));
-    if (!WinHttpSetOption(request.value, WINHTTP_OPTION_RECEIVE_TIMEOUT,
-        &timeout, sizeof(timeout)))
-      throw failure("receive_timeout");
-    char chunk[4096]; DWORD received = 0;
-    if (!WinHttpReadData(request.value, chunk, sizeof(chunk), &received))
+    if(!WinHttpReadData(request.value,chunk,sizeof(chunk),nullptr)&&GetLastError()!=ERROR_IO_PENDING)
       throw failure("read");
+    if(!exchange.Wait(WINHTTP_CALLBACK_STATUS_READ_COMPLETE,cancel,deadline))throw failure("read");
+    const DWORD received=exchange.bytes;
     if (!received) break;
     if (body.size() + received > max_body) {
       REXLOG_WARN("PLAYER_CARD request={} stage={} event=http_failed reason=body_limit limit={}",serial,stage,max_body);
@@ -262,13 +373,15 @@ PublicReply PublicGet(std::string_view relative_path, size_t max_body,
       serial,stage,status,content_type,body.size(),elapsed());
   return {status,std::move(body)};
 #else
-  (void)relative_path; (void)max_body; (void)serial; (void)stage;
+  (void)relative_path; (void)max_body; (void)serial; (void)stage; (void)cancel; (void)deadline;
   throw std::runtime_error("Player cards currently target Windows");
 #endif
-}
+  }
+};
 
-Player ReadPlayer(uint32_t id,uint64_t serial,std::shared_ptr<const Results>& results) {
-  const auto response=PublicGet("/api/motogp/player?id="+std::to_string(id),256*1024,serial,"identity");
+Player ReadPlayer(PublicClient& client,uint32_t id,uint64_t serial,
+    std::shared_ptr<const Results>& results,std::stop_token cancel) {
+  const auto response=client.Get("/api/motogp/player?id="+std::to_string(id),256*1024,serial,"identity",cancel);
   if(response.status!=200) throw std::runtime_error("Player identity endpoint did not return HTTP 200");
   const auto json = nlohmann::json::parse(response.body,nullptr,false);
   if(json.is_discarded())throw std::runtime_error("Player identity response is not valid JSON");
@@ -312,11 +425,11 @@ std::optional<std::string> AvatarPath(std::string value) {
   return value;
 }
 
-Player ReadAccount(Player player,uint64_t serial) {
+Player ReadAccount(PublicClient& client,Player player,uint64_t serial,std::stop_token cancel) {
   // The general /profile/?u= page itself uses this shared public endpoint,
   // even for accounts whose only game is MotoGP. It is not a FIFA stats lookup
   // by MotoGP numeric ID: the already resolved account name is the query key.
-  const auto response=PublicGet("/api/fifa09/player?name="+EncodeName(player.name),256*1024,serial,"account");
+  const auto response=client.Get("/api/fifa09/player?name="+EncodeName(player.name),256*1024,serial,"account",cancel);
   if(response.status!=200)throw std::runtime_error("Shared account endpoint did not return HTTP 200");
   const auto json=nlohmann::json::parse(response.body,nullptr,false);
   if(json.is_discarded())throw std::runtime_error("Shared account response is not valid JSON");
@@ -352,15 +465,19 @@ template<class T> struct ComObject {
 };
 #endif
 
-std::shared_ptr<const Avatar> ReadAvatar(const Player& player,uint64_t serial) {
+std::shared_ptr<const Avatar> ReadAvatar(PublicClient& client,const Player& player,
+    uint64_t serial,std::stop_token cancel,bool& complete) {
+  complete=false;
   if(player.avatar_path&&player.avatar_path->empty()) {
     REXLOG_INFO("PLAYER_CARD request={} stage=avatar event=fallback reason=account_has_no_photo",serial);
+    complete=true;
     return {};
   }
   const auto path=player.avatar_path.value_or("/api/avatar/u/"+EncodeName(player.name));
-  auto response=PublicGet(path,512*1024,serial,"avatar");
+  auto response=client.Get(path,512*1024,serial,"avatar",cancel);
   if(response.status!=200) {
     REXLOG_INFO("PLAYER_CARD request={} stage=avatar event=fallback reason=http_status status={}",serial,response.status);
+    complete=response.status==404;
     return {};
   }
 #ifdef _WIN32
@@ -410,6 +527,7 @@ std::shared_ptr<const Avatar> ReadAvatar(const Player& player,uint64_t serial) {
   std::vector<uint8_t> pixels(size_t(width)*height*4);
   if(failed(converter->CopyPixels(nullptr,width*4,static_cast<UINT>(pixels.size()),pixels.data()),"pixels"))return {};
   REXLOG_INFO("PLAYER_CARD request={} stage=avatar event=decoded format={} width={} height={}",serial,jpeg?"JPEG":"PNG",width,height);
+  complete=true;
   return std::make_shared<Avatar>(Avatar{width,height,std::move(pixels)});
 #else
   return {};
@@ -466,12 +584,30 @@ class State {
     if (!worker_.joinable()) worker_ = std::thread([this] { Run(); });
     gate->Open();
     if (!gate->IsOpen()) return 170;
-    snapshot_ = {snapshot_.serial + 1, Status::Loading, {}, {}};
+    cancellation_.request_stop();
+    cancellation_=std::stop_source{};
+    requested_id_.reset();
+    const auto id=static_cast<uint32_t>(xuid&0xFFFFFF);
+    const auto serial=snapshot_.serial+1;
+    snapshot_={};
+    snapshot_.serial=serial;
     snapshot_.preferred_view=preferred_view;
-    requested_id_ = static_cast<uint32_t>(xuid & 0xFFFFFF);
-    request_serial_ = snapshot_.serial;
+    bool cached=false,fresh=false;
+    const auto now=std::chrono::steady_clock::now();
+    for(const auto& entry:cache_) {
+      if(entry.id!=id||now-entry.stored>std::chrono::minutes(5))continue;
+      snapshot_=entry.data;
+      snapshot_.serial=serial;
+      snapshot_.preferred_view=preferred_view;
+      cached=true;
+      fresh=entry.complete&&now-entry.stored<std::chrono::seconds(60);
+      break;
+    }
+    request_serial_=serial;
+    if(!fresh)requested_id_=id;
     REXLOG_INFO("PLAYER_CARD request={} event=open user={} xuid={:016X} player_id={} preferred_view={}",
-        request_serial_,user,xuid,*requested_id_,preferred_view);
+        request_serial_,user,xuid,id,preferred_view);
+    REXLOG_INFO("PLAYER_CARD request={} event=cache hit={} fresh={}",serial,cached,fresh);
     kernel_->BroadcastNotification(0x9, true); // XN_SYS_UI
     notified_ = true;
     changed_.notify_one();
@@ -485,12 +621,15 @@ class State {
     std::lock_guard lock(mutex_);
     if(gate->IsOpen())REXLOG_INFO("PLAYER_CARD request={} event=close",snapshot_.serial);
     gate->Close();
+    cancellation_.request_stop();
+    requested_id_.reset();
     if (notified_) { kernel_->BroadcastNotification(0x9, false); notified_ = false; }
   }
   void Stop() {
     {
       std::lock_guard lock(mutex_);
       stopping_ = true;
+      cancellation_.request_stop();
       requested_id_.reset();
       gate->Close();
       if (notified_) { kernel_->BroadcastNotification(0x9, false); notified_ = false; }
@@ -501,7 +640,21 @@ class State {
   const std::shared_ptr<settings::InputGate> gate;
 
  private:
+  struct CachedProfile {
+    uint32_t id;
+    Snapshot data;
+    std::chrono::steady_clock::time_point stored;
+    bool complete;
+  };
+  // mutex_ protects the cache and visible snapshot together. Shared immutable
+  // image/record data is retained for at most eight players; nothing hits disk.
+  void Remember(uint32_t id,bool complete) {
+    std::erase_if(cache_,[&](const auto& entry){return entry.id==id;});
+    if(cache_.size()>=8)cache_.erase(cache_.begin());
+    cache_.push_back({id,snapshot_,std::chrono::steady_clock::now(),complete});
+  }
   void Run() {
+    PublicClient client;
     std::shared_ptr<const Avatar> flag_atlas;
     try { flag_atlas=ReadFlags(); }
     catch(const std::exception&) { REXLOG_WARN("PLAYER_CARD stage=flags event=decode_failed"); }
@@ -511,46 +664,73 @@ class State {
       if (stopping_) break;
       const auto id = *requested_id_;
       const auto serial = request_serial_;
+      const auto cancel=cancellation_.get_token();
       requested_id_.reset();
       lock.unlock();
       Player player; bool loaded = false;
       std::shared_ptr<const Results> results;
-      try { player = ReadPlayer(id,serial,results); loaded = true; }
+      try { player = ReadPlayer(client,id,serial,results,cancel); loaded = true; }
+      catch(const RequestCancelled&) {
+        REXLOG_INFO("PLAYER_CARD request={} stage=identity event=cancelled",serial);
+      }
       catch (const std::exception& error) {
         REXLOG_WARN("PLAYER_CARD request={} stage=identity event=failed reason={}",serial,error.what());
       }
       lock.lock();
       // Closing/reopening or selecting another player must not publish an
       // older response into the new card.
-      if (!stopping_ && serial == snapshot_.serial && gate->IsOpen()) {
-        snapshot_.player = player;
-        snapshot_.results=std::move(results);
+      if (!stopping_ && !cancel.stop_requested() && serial == snapshot_.serial && gate->IsOpen()) {
         snapshot_.flags=flag_atlas;
-        snapshot_.status = loaded ? Status::Ready : Status::Unavailable;
+        if(loaded) {
+          // A cached photo can remain visible during a same-player refresh.
+          // A renamed account must never inherit its old account artwork.
+          if(!SameName(snapshot_.player.name,player.name))snapshot_.avatar.reset();
+          else {
+            if(player.country.empty())player.country=snapshot_.player.country;
+            player.member_since=snapshot_.player.member_since;
+            player.avatar_path=snapshot_.player.avatar_path;
+          }
+          snapshot_.player=player;
+          snapshot_.results=std::move(results);
+          snapshot_.status=Status::Ready;
+          Remember(id,false);
+        } else if(snapshot_.status!=Status::Ready)snapshot_.status=Status::Unavailable;
         if (loaded) {
           // Publish the name first. An absent or slow picture must not delay
           // the profile action or return stale artwork for another player.
           lock.unlock();
           // Metadata is optional. A missing shared profile must not disable a
           // valid MotoGP identity or prevent the legacy avatar-by-name route.
-          try { player=ReadAccount(player,serial); }
+          bool account_loaded=false;
+          try { player=ReadAccount(client,player,serial,cancel);account_loaded=true; }
+          catch(const RequestCancelled&) {
+            REXLOG_INFO("PLAYER_CARD request={} stage=account event=cancelled",serial);
+          }
           catch(const std::exception& error) {
             REXLOG_WARN("PLAYER_CARD request={} stage=account event=failed reason={}",serial,error.what());
           }
           lock.lock();
-          if(stopping_||serial!=snapshot_.serial||!gate->IsOpen()) {
+          if(stopping_||cancel.stop_requested()||serial!=snapshot_.serial||!gate->IsOpen()) {
             REXLOG_INFO("PLAYER_CARD request={} stage=account event=discarded reason=card_changed_or_closed",serial);
             continue;
           }
           snapshot_.player=player;
+          Remember(id,false);
           lock.unlock();
           std::shared_ptr<const Avatar> avatar;
-          try { avatar=ReadAvatar(player,serial); }
+          bool avatar_loaded=false;
+          try { avatar=ReadAvatar(client,player,serial,cancel,avatar_loaded); }
+          catch(const RequestCancelled&) {
+            REXLOG_INFO("PLAYER_CARD request={} stage=avatar event=cancelled",serial);
+          }
           catch (const std::exception& error) {
             REXLOG_WARN("PLAYER_CARD request={} stage=avatar event=fallback reason={}",serial,error.what());
           }
           lock.lock();
-          if (!stopping_ && serial==snapshot_.serial && gate->IsOpen()) snapshot_.avatar=std::move(avatar);
+          if (!stopping_ && !cancel.stop_requested() && serial==snapshot_.serial && gate->IsOpen()) {
+            if(avatar_loaded)snapshot_.avatar=std::move(avatar);
+            Remember(id,account_loaded&&avatar_loaded);
+          }
           else REXLOG_INFO("PLAYER_CARD request={} stage=avatar event=discarded reason=card_changed_or_closed",serial);
         }
       } else REXLOG_INFO("PLAYER_CARD request={} stage=identity event=discarded reason=card_changed_or_closed",serial);
@@ -561,6 +741,8 @@ class State {
   std::mutex mutex_;
   std::condition_variable changed_;
   std::thread worker_;
+  std::stop_source cancellation_;
+  std::vector<CachedProfile> cache_;
   Snapshot snapshot_;
   std::optional<uint32_t> requested_id_;
   uint64_t request_serial_ = 0;
@@ -924,7 +1106,7 @@ Action DrawCard(const Snapshot& state, rex::ui::ImmediateTexture* texture,
     c.Line(32,516,1068,516);
     ImGui::SetCursorScreenPos(c.Point(32,534));
     ImGui::BeginDisabled(!ready||state.status!=Status::Ready);
-    action.profile=ImGui::Button(Tr(tr,"Open NOBK profile","NOBK profilini aç"));
+    action.profile=ImGui::Button(Tr(tr,"Open NOBK Online profile","NOBK Online profilini aç"));
     ImGui::EndDisabled();
     c.Text(474,543,12,kMuted,view.tab==1?
         Tr(tr,"LB / RB: Tabs   A / Enter: Profile   B / Esc: Back   D-pad: Scroll","LB / RB: Sekmeler   A / Enter: Profil   B / Esc: Geri   Yön: Kaydır"):
