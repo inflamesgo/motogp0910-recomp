@@ -13,8 +13,8 @@
 namespace launcher::updates {
 struct Configuration {
   std::string current_version;
-  // The service operator supplies a MotoGP-specific manifest endpoint.
-  // An optional {version} placeholder is replaced with major.minor.patch.
+  // Same version endpoint contract as FIFA 09's Updater.VersionUrl.
+  // The request appends ?v=major.minor.patch (or &v= after an existing query).
   std::wstring manifest_url;
 };
 
@@ -42,6 +42,7 @@ struct StagedUpdate {
 using Progress = std::function<void(uint64_t received, uint64_t total)>;
 
 bool Configured(const Configuration& configuration);
+std::wstring VersionRequestUrl(const Configuration& configuration);
 bool IsNewer(std::string_view candidate, std::string_view installed);
 Release ParseManifest(std::string_view json);
 

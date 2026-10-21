@@ -110,7 +110,7 @@
     RefreshSteam();
     RefreshDlc();
     if(!update_panel||!update_release)return;
-    SetWindowTextW(update_notice,T(L"Launcher update",L"Başlatıcı güncellemesi"));
+    SetWindowTextW(update_notice,T(L"Launcher update",L"Launcher güncellemesi"));
     SetWindowTextW(update_close,T(L"Close update panel",L"Güncelleme panelini kapat"));
     Tip(update_close,L"Close update panel",L"Güncelleme panelini kapat");
     auto notes=update_release->NotesFor(turkish?"tr":"en");
@@ -131,7 +131,7 @@
     EnableWindow(update_action,!dlc_busy&&!steam_busy&&!update_finishing&&!update_busy&&!importing_iso&&!verifying&&!game&&(update_preview||update_release->CanInstall()));
     SetWindowTextW(update_cancel,T(L"Cancel",L"İptal"));
     ShowWindow(update_cancel,update_busy?SW_SHOW:SW_HIDE);EnableWindow(update_cancel,!update_preparing&&!update_cancelled);
-    EnableWindow(play,!dlc_busy&&!steam_busy&&!update_finishing&&!update_busy&&!process&&!verifying&&!importing_iso);
+    EnableWindow(play,game_ready&&!dlc_busy&&!steam_busy&&!update_finishing&&!update_busy&&!process&&!verifying&&!importing_iso);
     LayoutUpdatePanel();
     InvalidateRect(update_panel,nullptr,FALSE);
   }
@@ -190,7 +190,7 @@
         auto full=bounds;full.bottom=app.S(kUpdateHeight);app.Rounded(target,full,kCard,kBorder,10);
         SetBkMode(target,TRANSPARENT);SetTextColor(target,kText);SelectObject(target,app.bold);
         RECT title{app.S(16),app.S(12),app.S(kUpdateWidth-52),app.S(46)};
-        auto text=std::wstring(app.T(L"New launcher version: v",L"Yeni başlatıcı sürümü: v"))+(app.update_release?Wide(app.update_release->version):L"");
+        auto text=std::wstring(app.T(L"New launcher version: v",L"Yeni Launcher sürümü: v"))+(app.update_release?Wide(app.update_release->version):L"");
         DrawTextW(target,text.c_str(),-1,&title,DT_WORDBREAK|DT_NOPREFIX|DT_END_ELLIPSIS);
       });EndPaint(control,&ps);return 0;
     }
@@ -201,7 +201,7 @@
     return DefSubclassProc(control,message,wp,lp);
   }
   void BuildUpdatePanel(){
-    update_notice=Control(L"BUTTON",T(L"Launcher update",L"Başlatıcı güncellemesi"),WS_TABSTOP|BS_PUSHBUTTON,kWidth-138,-kCaptionHeight,46,kCaptionHeight,kUpdateNotice);
+    update_notice=Control(L"BUTTON",T(L"Launcher update",L"Launcher güncellemesi"),WS_TABSTOP|BS_PUSHBUTTON,kWidth-138,-kCaptionHeight,46,kCaptionHeight,kUpdateNotice);
     ShowWindow(update_notice,SW_HIDE);
     WNDCLASSW cls{};cls.lpfnWndProc=DefWindowProcW;cls.hInstance=GetModuleHandleW(nullptr);cls.lpszClassName=L"MotoGPUpdatePanel";cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);
     if(!GetClassInfoW(cls.hInstance,cls.lpszClassName,&cls)&&!RegisterClassW(&cls))throw std::runtime_error("Cannot create update panel class");
@@ -224,7 +224,7 @@
     if(update_preview){
       update_release=updates::Release{"1.1.11",{}, {},{
           {"en","UPDATE PREVIEW\n\nSample release notes\n\n• Updated launcher interface.\n• Improved controller and focus handling.\n• Added ISO import and clearer title-update warnings.\n\nThis is a visual preview. No update is downloaded or installed."},
-          {"tr","GÜNCELLEME ÖNİZLEMESİ\n\nÖrnek değişiklik notları\n\n• Başlatıcı arayüzü güncellendi.\n• Kontrolcü ve odak geçişleri iyileştirildi.\n• ISO çıkarma ve belirgin oyun güncellemesi uyarıları eklendi.\n\nBu görsel bir önizlemedir. Güncelleme indirilmez veya kurulmaz."}}};
+          {"tr","GÜNCELLEME ÖNİZLEMESİ\n\nÖrnek değişiklik notları\n\n• Launcher arayüzü güncellendi.\n• Kontrolcü ve odak geçişleri iyileştirildi.\n• ISO çıkarma ve belirgin oyun güncellemesi uyarıları eklendi.\n\nBu görsel bir önizlemedir. Güncelleme indirilmez veya kurulmaz."}}};
       ShowWindow(update_notice,SW_SHOWNOACTIVATE);RefreshUpdatePanel();return;
     }
     update_finishing=updates::InstallationActive(exe,false);
@@ -249,7 +249,7 @@
   void PollUpdates(){
     try{
       if(update_finishing&&!updates::InstallationActive(exe,false)){
-        update_finishing=false;EnableWindow(play,!dlc_busy&&!steam_busy&&!update_busy&&!process&&!verifying&&!importing_iso);
+        update_finishing=false;EnableWindow(play,game_ready&&!dlc_busy&&!steam_busy&&!update_busy&&!process&&!verifying&&!importing_iso);
         if(!update_check.valid()&&!update_release){KillTimer(window,4);return;}
       }
       if(update_check.valid()&&update_check.wait_for(std::chrono::seconds(0))==std::future_status::ready){
@@ -265,7 +265,7 @@
           if(UpdateGameRunning())throw std::runtime_error("Close the game before installing this update");
           SaveSettings();SetUpdatePreparation(true);
           auto staged=*update_staged;const auto root=exe;
-          std::vector<fs::path> protected_roots{GameRoot(),AchievementRoot()};
+          std::vector<fs::path> protected_roots{GameRoot(),AchievementRoot(),motogp::dlc::ContentRoot(exe)};
           auto metadata=achievements::MetadataRoot(exe,Get(config.table,"metadata_root",std::string{}));if(!metadata.empty())protected_roots.push_back(metadata);
           for(auto key:{"cache_root","update_data_root","metadata_root"}){
             auto value=Get(config.table,key,std::string{});if(!value.empty()){auto p=fs::path(Wide(value));protected_roots.push_back(p.is_absolute()?p:exe/p);}
@@ -283,7 +283,7 @@
     }catch(const std::exception& e){
       update_installation.reset();if(update_staged){updates::DiscardStaged(*update_staged);update_staged.reset();}
       update_busy=false;SetUpdatePreparation(false);
-      if(!update_cancelled)MessageBoxW(window,(std::wstring(T(L"Could not update the launcher.\n",L"Başlatıcı güncellenemedi.\n"))+ErrorDetails(e)).c_str(),T(L"Launcher update",L"Başlatıcı güncellemesi"),MB_OK|MB_ICONERROR);
+      if(!update_cancelled)MessageBoxW(window,(std::wstring(T(L"Could not update the launcher.\n",L"Launcher güncellenemedi.\n"))+ErrorDetails(e)).c_str(),T(L"Launcher update",L"Launcher güncellemesi"),MB_OK|MB_ICONERROR);
     }
     RefreshUpdatePanel();
   }

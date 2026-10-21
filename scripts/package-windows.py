@@ -72,6 +72,12 @@ def main():
     shutil.copy2(ROOT / "resources/localization/tr/manifest.json", STAGE / "resources/localization/tr/manifest.json")
     (STAGE / "resources/ui").mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "third_party/open-sans/OpenSans-Semibold.ttf", STAGE / "resources/ui/OpenSans-Semibold.ttf")
+    steam_target = STAGE / "resources/steam"
+    steam_target.mkdir(parents=True, exist_ok=True)
+    for name in ("icon.png", "logo.png", "banner.png", "cover.png", "wide.png"):
+        source = ROOT / "resources/steam" / name
+        if source.is_file():
+            shutil.copy2(source, steam_target / name)
     archive_reader = ROOT / "third_party/7zip"
     archive_target = STAGE / "resources/archive"
     archive_target.mkdir(parents=True, exist_ok=True)
@@ -87,6 +93,7 @@ def main():
     # Runtime resources and legal notices are always included. User-facing
     # instructions are opt-in so development builds contain no README files.
     (STAGE / "game").mkdir()
+    (STAGE / "dlc").mkdir()
     if args.include_one_pc_test:
         shutil.copy2(ROOT / "scripts/test-lan-one-pc.ps1", STAGE / "test-lan-one-pc.ps1")
     if args.include_readmes:
@@ -307,8 +314,9 @@ def main():
     shutil.rmtree(STAGE / "licenses")
     archive = DIST / args.archive
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:
-        # Preserve the player's game-data destination even without a README.
+        # Preserve empty setup destinations without including any player content.
         package.writestr("game/", b"")
+        package.writestr("dlc/", b"")
         for file in sorted(p for p in STAGE.rglob("*") if p.is_file()):
             package.write(file, file.relative_to(STAGE))
     with zipfile.ZipFile(archive) as package:

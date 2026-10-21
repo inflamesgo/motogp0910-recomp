@@ -18,11 +18,13 @@ void Put32(uint8_t* p,uint32_t value){rex::memory::store_and_swap<uint32_t>(p,va
 void Put64(uint8_t* p,uint64_t value){rex::memory::store_and_swap<uint64_t>(p,value);}
 constexpr uint32_t Error(uint32_t code){return 0x80070000u|code;}
 std::mutex enumerator_mutex;std::map<const rex::system::XEnumerator*,uint32_t> enumerators;
-bool LapTimesDisplay(const Spec& spec){
- // 8223C9D8 selects group 0 for Lap Times; 82300248/822FEEC8 request
- // these eight UI columns. Keep score/ghost views and internal rating reads raw.
+bool TimedDisplay(const Spec& spec){
+ // 8223C9D8 selects Lap Times or the two ghost categories. 82300088 maps
+ // their class/track offsets to bases 1, 127 and 316; 82300248/822FEEC8
+ // request the same eight display columns. Arcade and internal reads stay raw.
  constexpr std::array<uint16_t,8> columns{3,1,2,4,5,6,7,0xFFFA};
- return spec.view>=1 && spec.view<=63 && spec.columns.size()==columns.size() &&
+ const bool timed=(spec.view>=1&&spec.view<=63)||(spec.view>=127&&spec.view<=189)||(spec.view>=316&&spec.view<=378);
+ return timed && spec.columns.size()==columns.size() &&
   std::all_of(columns.begin(),columns.end(),[&](auto id){return std::find(spec.columns.begin(),spec.columns.end(),id)!=spec.columns.end();});
 }
 Column ReadColumn(const Row& row,uint16_t id,bool lap_times,uint32_t view){
@@ -99,7 +101,7 @@ void WriteResults(uint8_t* base,uint32_t output,const std::vector<Spec>& specs,c
  size_t size=8+specs.size()*16;for(size_t i=0;i<specs.size();++i){if(pages[i].rows.size()>100)throw std::runtime_error("Statistics row count too large");size+=pages[i].rows.size()*(48+specs[i].columns.size()*24);}
  std::memset(base+output,0,size);Put32(base+output,static_cast<uint32_t>(specs.size()));Put32(base+output+4,output+8);
  uint32_t cursor=output+8+static_cast<uint32_t>(specs.size())*16;
- for(size_t i=0;i<specs.size();++i){const auto& page=pages[i];const auto& spec=specs[i];const bool lap_times=LapTimesDisplay(spec);auto* view=base+output+8+i*16;
+ for(size_t i=0;i<specs.size();++i){const auto& page=pages[i];const auto& spec=specs[i];const bool lap_times=TimedDisplay(spec);auto* view=base+output+8+i*16;
   Put32(view,spec.view);Put32(view+4,page.total);Put32(view+8,static_cast<uint32_t>(page.rows.size()));Put32(view+12,page.rows.empty()?0:cursor);
   const auto rows=cursor;cursor+=static_cast<uint32_t>(page.rows.size())*48;
   for(size_t j=0;j<page.rows.size();++j){const auto& source=page.rows[j];auto* row=base+rows+j*48;Put64(row,source.peer);Put32(row+8,source.rank);

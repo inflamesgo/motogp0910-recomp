@@ -58,7 +58,11 @@ The sharpening control also covers CAS, so its Turkish label is now
 “Görüntü keskinliği”. The Online tab retains its English name in Turkish, as
 requested; instructions referring to that tab use “Online” too.
 
-Turkish prose consistently uses “başlatıcı”, “günlük” and “oyun güncellemesi”.
+Turkish UI retains the product term “Launcher”, including its language label,
+version footer, tooltips and update messages. Other prose uses “günlük” and
+“oyun güncellemesi”. Footer action buttons preserve the English horizontal
+padding and spacing, growing with translated text using the rendered button
+font. Layout is refreshed after language and DPI changes without shrinking text.
 Actual filenames/folders (`default.xex`, `default.xexp`, `game`, `logs`), setting
 keys, key-binding tokens and product names such as NOBK Online, Steam, DualSense,
 PlayStation and AMD FSR stay unchanged. The update-file picker remains unrestricted

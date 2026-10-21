@@ -57,8 +57,9 @@ struct App {
        adapter{},msaa{},post_effect{},shader_cache{},render_resolution{},effect{},sharpness{},sharp_value{},
        anisotropic{},letterbox{},dither{},volume{},volume_value{},prompt_style{},game_language{},refresh_rate{},fps_limit{},fsr_quality{},aspect{},display_monitor{};
   HWND network_mode{},network_player{},network_room{},network_adapter{},network_host{},network_server{};
-  HWND account_label{},account_status{},account_user{},account_pass{},account_signin{},account_register{},account_signout{};
-  std::optional<NobkAccount> account=LoadAccount();
+  HWND account_label{},account_status{},account_country{},account_intro{},account_note{},account_user{},account_pass{},account_remember{},account_signin{},account_register{},account_forgot{},account_manage{},account_signout{};
+  bool remember_account=Get(config.table,"launcher_remember_me",true);
+  std::optional<NobkAccount> account=remember_account?LoadAccount():std::nullopt;
   Tooltips help;
   std::map<HWND,HWND> help_labels;
   std::array<HWND,7> navigation{};
@@ -85,7 +86,7 @@ struct App {
   HWND pointer_focus{};
   unsigned localization_generation=0;
   bool capturing=false;
-  HFONT font{},heading{},small_font{},bold{},logo{},play_font{};
+  HFONT font{},heading{},small_font{},bold{},logo{},play_font{},account_name_font{};
   std::array<HANDLE,3> private_fonts{};
   HBRUSH background=CreateSolidBrush(kBackground),card=CreateSolidBrush(kCard),field=CreateSolidBrush(kField);
   HANDLE process{};
@@ -98,7 +99,7 @@ struct App {
   ~App(){StopDlc();StopIsoImport();StopUpdates();verify_cancel=true;if(verify_future.valid())verify_future.wait();if(catalog_future.valid())catalog_future.wait();if(steam_future.valid())steam_future.wait();if(process)CloseHandle(process);DeleteFonts();DeleteObject(paint_background_bitmap);for(auto handle:private_fonts)if(handle)RemoveFontMemResourceEx(handle);DeleteObject(background);DeleteObject(card);DeleteObject(field);}
   const wchar_t* T(const wchar_t* en,const wchar_t* tr)const{return turkish?tr:en;}
   int S(int value)const{return static_cast<int>(value*scale+0.5);}
-  void DeleteFonts(){for(auto f:{font,heading,small_font,bold,logo,play_font})if(f)DeleteObject(f);}
+  void DeleteFonts(){for(auto f:{font,heading,small_font,bold,logo,play_font,account_name_font})if(f)DeleteObject(f);}
   void CreateFonts(){
     // Process-private fonts make Win10/11 and the test fixture use the same
     // metrics. Register once, rather than leaking registrations on DPI changes.
@@ -110,6 +111,7 @@ struct App {
     auto make=[&](int size,int weight,const wchar_t* face=L"Open Sans"){return CreateFontW(-S(size),0,0,0,weight,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
         OUT_TT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,face);};
     font=make(14,FW_NORMAL);heading=make(28,FW_BOLD);small_font=make(12,FW_NORMAL);bold=make(14,FW_SEMIBOLD,L"Open Sans SemiBold");logo=make(36,FW_BOLD);play_font=make(20,FW_SEMIBOLD,L"Open Sans SemiBold");
+    account_name_font=make(32,FW_BOLD);
   }
   HWND Control(const wchar_t* cls,const wchar_t* text,DWORD style,int x,int y,int w,int h,int id=0,HWND parent=nullptr){
     bool button=std::wstring_view(cls)==L"BUTTON";
@@ -167,8 +169,9 @@ struct App {
     // The footer has one purpose: readiness. Progress belongs on the action
     // button, and errors retain their full detail in the error dialog/report.
     status_positive=game_ready;InvalidateRect(window,nullptr,FALSE);
-    status_en=game_ready?L"Ready to play · Title update 0.0.1.1":L"Game is not ready";
-    status_tr=game_ready?L"Başlatmaya hazır · Oyun güncellemesi 0.0.1.1":L"Oyun hazır değil";
+    const auto version=Wide(updates::kConfiguration.current_version);
+    status_en=std::wstring(game_ready?L"Ready to play":L"Game is not ready")+L" · Launcher v"+version;
+    status_tr=std::wstring(game_ready?L"Başlatmaya hazır":L"Oyun hazır değil")+L" · Launcher v"+version;
     SetWindowTextW(status,(turkish?status_tr:status_en).c_str());
   }
   void ErrorBox(const std::exception& error){
@@ -321,7 +324,7 @@ struct App {
     SetWindowTextW(folder_label,T(L"GAME FOLDER",L"OYUN KLASÖRÜ"));SetWindowTextW(browse,T(L"Browse",L"Gözat"));
     for(auto& label:labels)SetWindowTextW(label.control,T(label.en,label.tr));
     for(size_t i=0;i<navigation.size();++i)SetWindowTextW(navigation[i],i==0?T(L"Graphics",L"Grafik"):i==1?T(L"Audio",L"Ses"):i==2?T(L"Controls",L"Kontroller"):i==3?T(L"General",L"Genel"):i==4?T(L"Advanced",L"Gelişmiş"):i==6?L"Online":T(L"Achievements",L"Başarımlar"));
-    FillCombo(network_mode,{T(L"Offline",L"Çevrim dışı"),L"LAN",T(L"Online",L"Çevrim içi")});
+    FillCombo(network_mode,{T(L"Offline",L"Çevrim dışı"),L"LAN",L"Online"});
     UpdateNetworkMode();
     LayoutNavigation();
     LocalizeHelp();
@@ -338,6 +341,7 @@ struct App {
     SetWindowTextW(save,T(L"Save settings",L"Ayarları kaydet"));
     SetWindowTextW(defaults,T(L"Restore defaults",L"Varsayılanlara dön"));
     SetWindowTextW(logs,T(L"Open logs",L"Günlükleri aç"));SetWindowTextW(report,T(L"Error report",L"Hata raporu"));
+    LayoutFooterActions();
     RefreshGameFilesAction();
     SetWindowTextW(play,T(process?L"GAME RUNNING":L"PLAY",process?L"OYUN ÇALIŞIYOR":L"OYUNU BAŞLAT"));
     FillCombo(post_effect,{T(L"Off",L"Kapalı"),L"FXAA",L"FXAA Extreme"});
@@ -358,6 +362,7 @@ struct App {
     FillRenderPresets();
     auto fps_selection=SendMessageW(fps_limit,CB_GETCURSEL,0,0);SendMessageW(fps_limit,CB_RESETCONTENT,0,0);
     for(auto rate:fps_limits){auto label=rate?std::to_wstring(rate)+L" FPS":T(L"Unlimited",L"Sınırsız");SendMessageW(fps_limit,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label.c_str()));}
+    SendMessageW(fps_limit,CB_SETMINVISIBLE,static_cast<WPARAM>(fps_limits.size()),0);
     SendMessageW(fps_limit,CB_SETCURSEL,fps_selection<0?0:fps_selection,0);
     auto gpu=SendMessageW(adapter,CB_GETCURSEL,0,0);SendMessageW(adapter,CB_RESETCONTENT,0,0);
     SendMessageW(adapter,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(T(L"Automatic (recommended)",L"Otomatik (önerilen)")));
@@ -483,7 +488,7 @@ struct App {
   }
   void ReadyStatus(){
     RefreshGameFilesAction();game_ready=false;
-    if(!importing_iso){try{Validate(exe,GameRoot());game_ready=true;}catch(const std::exception&){}}
+    if(!importing_iso&&!dlc_busy&&dlc_complete){try{Validate(exe,GameRoot());game_ready=true;}catch(const std::exception&){}}
     RefreshDlc();Status({},{});
   }
   #include "compact_layout.inc"
@@ -505,6 +510,7 @@ struct App {
     const bool key_button=item.CtlID>=kCaptureBase&&item.CtlID<kCaptureBase+static_cast<int>(kBindings.size());
     auto hdc=item.hDC;if(c==update_notice){DrawUpdateNotice(hdc,c,pressed);return;}if(c==update_close){DrawUpdateClose(hdc,c,pressed,(item.itemState&ODS_FOCUS)!=0);return;}SetBkMode(hdc,TRANSPARENT);SelectObject(hdc,c==play?play_font:key_button?font:bold);
     if(is_check){
+      if(c==account_remember)SelectObject(hdc,font);
       DrawSurface(hdc,c);
       RECT box{r.left+S(1),r.top+S(5),r.left+S(19),r.top+S(23)};
       PaintCheckbox(hdc,box,Checked(c),!disabled,pressed);
@@ -558,10 +564,11 @@ struct App {
     for(auto& p:placements){MoveWindow(p.control,S(p.x),S(p.y+(GetParent(p.control)==window?kCaptionHeight:0)),S(p.w),S(p.h),TRUE);SendMessageW(p.control,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);
       wchar_t cls[32];GetClassNameW(p.control,cls,32);if(lstrcmpiW(cls,L"COMBOBOX")==0){SendMessageW(p.control,CB_SETITEMHEIGHT,0,S(32));SendMessageW(p.control,CB_SETITEMHEIGHT,WPARAM(-1),S(24));}}
     ScrollPage(page_scroll[current_page],true);
-    LayoutNavigation();LayoutUpdatePanel();
+    LayoutNavigation();LayoutFooterActions();LayoutUpdatePanel();
     SendMessageW(title,WM_SETFONT,reinterpret_cast<WPARAM>(heading),TRUE);
     SendMessageW(title_update_notice,WM_SETFONT,reinterpret_cast<WPARAM>(bold),TRUE);
-    for(auto c:{folder_label,status,achievement_note})SendMessageW(c,WM_SETFONT,reinterpret_cast<WPARAM>(small_font),TRUE);
+    for(auto c:{folder_label,status,achievement_note,dlc_missing})SendMessageW(c,WM_SETFONT,reinterpret_cast<WPARAM>(small_font),TRUE);
+    ApplyAccountFonts();
     RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN);
   }
   void BindingMenu(HWND control,POINT){
@@ -573,7 +580,10 @@ struct App {
     settings=GetControls(); settings.Store(config.table);
     Put(config.table,"game_data_root",Utf8(GameRoot().wstring()));
     config.table["launcher"].as_table()->insert_or_assign("crash_monitor",Checked(crash_diagnostics));
+    Put(config.table,"launcher_remember_me",Checked(account_remember));
     config.Save();
+    remember_account=Checked(account_remember);
+    if(!remember_account)ForgetAccount();
     Status(L"Settings saved. They will be used on the next launch.",L"Ayarlar kaydedildi. Sonraki açılışta kullanılacak.");
   }
   void Browse() {
@@ -682,17 +692,25 @@ struct App {
           case kClearBinding:CancelCapture();SetBinding(binding_index,{});break;
           case kResetBinding:CancelCapture();SetBinding(binding_index,kBindings[binding_index].defaults);break;
           case kResetBindings:CancelCapture();for(size_t i=0;i<kBindings.size();++i)SetBinding(i,kBindings[i].defaults);break;
-          case kVerifyFiles:if(importing_iso)StartIsoImport();else if(verifying)StartVerification();else{RefreshGameFilesAction();if(!disk_files_present)StartIsoImport();else if(!title_update_valid)StartTitleUpdateImport();else StartVerification();}break;
+          case kVerifyFiles:if(dlc_busy)StartDlcImport();else if(importing_iso)StartIsoImport();else if(verifying)StartVerification();else{RefreshGameFilesAction();if(!disk_files_present)StartIsoImport();else if(!title_update_valid)StartTitleUpdateImport();else if(!dlc_complete)StartDlcImport();else StartVerification();}break;
           case kAddToSteam:AddToSteam();break;
           case kInstallDlc:StartDlcImport();break;
           case kSignIn:AccountSignIn();break;
           case kSignOut:AccountSignOut();break;
+          case kMyAccount:
+            if(reinterpret_cast<INT_PTR>(ShellExecuteW(window,L"open",kAccountMyAccount,nullptr,nullptr,SW_SHOWNORMAL))<=32)
+              throw Error(L"Could not open your account page in your browser.",L"Hesap sayfan tarayıcıda açılamadı.");
+            break;
           case kRegister:ShellExecuteW(window,L"open",kAccountRegister,nullptr,nullptr,SW_SHOWNORMAL);break;
+          case kForgotPassword:
+            if(reinterpret_cast<INT_PTR>(ShellExecuteW(window,L"open",kAccountForgotPassword,nullptr,nullptr,SW_SHOWNORMAL))<=32)
+              throw Error(L"Could not open the password reset page in your browser.",L"Şifre sıfırlama sayfası tarayıcıda açılamadı.");
+            break;
           case kBrowse:Browse();break;case kSave:SaveSettings();break;
           case kDefaults:settings=Settings{};SetControls(settings);Status(L"Defaults selected. Save or press PLAY to apply.",L"Varsayılan ayarlar seçildi. Uygulamak için kaydet veya oyunu başlat.");break;
           case kLogs:OpenFolder(exe/L"logs");break;case kReport:CreateReport();break;
-          case kPlay:if(process || verifying || importing_iso || update_busy || update_finishing || steam_busy || dlc_busy)break;Validate(exe,GameRoot());PrepareOnlineLaunch();SaveSettings();process=Start(exe,Arguments(GameRoot(),settings,config.table),Checked(crash_diagnostics));Running(true);SetTimer(window,1,700,nullptr);
-            Status(L"Game running. Closing the launcher leaves the game open.",L"Oyun çalışıyor. Başlatıcıyı kapatsan da oyun çalışmaya devam eder.");break;
+          case kPlay:if(process || verifying || importing_iso || update_busy || update_finishing || steam_busy || dlc_busy)break;dlc_checked=false;ReadyStatus();if(!dlc_complete){ShowPage(3);SetFocus(verify_files);break;}Validate(exe,GameRoot());PrepareOnlineLaunch();SaveSettings();process=Start(exe,Arguments(GameRoot(),settings,config.table),Checked(crash_diagnostics));Running(true);SetTimer(window,1,700,nullptr);
+            Status(L"Game running. Closing the launcher leaves the game open.",L"Oyun çalışıyor. Launcher'ı kapatsan da oyun çalışmaya devam eder.");break;
         }
       }
     }catch(const std::exception& e){ErrorBox(e);}
@@ -731,8 +749,9 @@ LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam
     case kApplyLauncherLanguage:try{app->ApplyLanguage();}catch(const std::exception& e){app->ErrorBox(e);}return 0;
     case WM_CONTEXTMENU:app->BindingMenu(reinterpret_cast<HWND>(wparam),{static_cast<short>(LOWORD(lparam)),static_cast<short>(HIWORD(lparam))});return 0;
     case WM_TIMER:if(wparam==9)app->PollDlc();else if(wparam==8)app->PollSteam();else if(wparam==4)app->PollUpdates();else if(wparam==5)app->AnimateUpdatePanel();else if(wparam==6)app->PollIsoImport();else if(wparam==7){KillTimer(window,7);if(!app->importing_iso&&!app->verifying)app->ReadyStatus();}else if(wparam==2)app->PollAchievements();else if(wparam==3)app->PollVerification();else app->Poll();return 0;
-    case WM_DRAWITEM:{auto& draw=*reinterpret_cast<DRAWITEMSTRUCT*>(lparam);if(draw.CtlType==ODT_BUTTON)app->PaintControl(draw.hDC,draw.hwndItem,&draw);else if(draw.CtlType==ODT_COMBOBOX)app->DrawCombo(draw);return TRUE;}
-    case WM_MEASUREITEM:reinterpret_cast<MEASUREITEMSTRUCT*>(lparam)->itemHeight=app->S(32);return TRUE;
+    case WM_DRAWITEM:{auto& draw=*reinterpret_cast<DRAWITEMSTRUCT*>(lparam);if(draw.CtlType==ODT_BUTTON)app->PaintControl(draw.hDC,draw.hwndItem,&draw);else if(draw.CtlType==ODT_COMBOBOX)app->DrawCombo(draw);
+      else if(draw.CtlType==ODT_MENU)DrawPopupText(draw.hDC,draw.rcItem,reinterpret_cast<const wchar_t*>(draw.itemData),app->font,app->scale,bool(draw.itemState&ODS_SELECTED),bool(draw.itemState&(ODS_DISABLED|ODS_GRAYED)));return TRUE;}
+    case WM_MEASUREITEM:{auto& measure=*reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);measure.itemHeight=app->S(32);if(measure.CtlType==ODT_MENU)measure.itemWidth=app->S(184);return TRUE;}
     case WM_NOTIFY:{auto* n=reinterpret_cast<NMHDR*>(lparam);if(n->code==NM_CUSTOMDRAW && (n->hwndFrom==app->sharpness || n->hwndFrom==app->volume))return app->DrawSlider(*reinterpret_cast<NMCUSTOMDRAW*>(lparam));return 0;}
     case WM_VSCROLL:if(app->achievement_list && (!lparam||reinterpret_cast<HWND>(lparam)==app->achievement_list))return SendMessageW(app->achievement_list,WM_VSCROLL,wparam,lparam);break;
     case WM_MOUSEWHEEL:return SendMessageW(app->page_view,message,wparam,lparam);
@@ -741,7 +760,8 @@ LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam
         if(mode==2||mode==3||mode==4)app->settings.fsr_reduction=2.0-value/50.0;if(mode==1)app->settings.cas_sharpness=value/100.0;app->UpdateSharpness();}return 0;}
     case WM_CTLCOLORLISTBOX:SetTextColor(reinterpret_cast<HDC>(wparam),kText);SetBkColor(reinterpret_cast<HDC>(wparam),kPopupBackground);SetDCBrushColor(reinterpret_cast<HDC>(wparam),kPopupBackground);return reinterpret_cast<LRESULT>(GetStockObject(DC_BRUSH));
     case WM_CTLCOLOREDIT:SetTextColor(reinterpret_cast<HDC>(wparam),kText);SetBkColor(reinterpret_cast<HDC>(wparam),kField);return reinterpret_cast<LRESULT>(app->field);
-    case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:{auto c=reinterpret_cast<HWND>(lparam);auto bg=app->BackgroundFor(c);SetTextColor(reinterpret_cast<HDC>(wparam),c==app->title_update_notice?kUpdateWarning:c==app->title?kText:c==app->status&&app->status_positive?RGB(107,205,132):kMuted);
+    case WM_CTLCOLORSTATIC:case WM_CTLCOLORBTN:{auto c=reinterpret_cast<HWND>(lparam);auto bg=app->BackgroundFor(c);SetTextColor(reinterpret_cast<HDC>(wparam),c==app->account_status?kAccent:c==app->title_update_notice?kUpdateWarning:c==app->title?kText:
+        ((c==app->status&&app->status_positive)||(c==app->steam_status&&app->steam_added))?RGB(107,205,132):kMuted);
       SetBkColor(reinterpret_cast<HDC>(wparam),bg);return reinterpret_cast<LRESULT>(bg==kCard?app->card:app->background);}
     case WM_ERASEBKGND:return 1;
     case WM_PAINT:{PAINTSTRUCT paint;auto dc=BeginPaint(window,&paint);app->Paint(dc);EndPaint(window,&paint);return 0;}
@@ -775,7 +795,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
     }
     App app;auto mutex_name=L"Local\\MotoGP0910Launcher-"+std::to_wstring(std::hash<std::wstring>{}(app.exe.wstring()));
     HANDLE mutex=CreateMutexW(nullptr,FALSE,mutex_name.c_str());if(!mutex)throw std::runtime_error("Cannot initialize launcher lock");
-    if(GetLastError()==ERROR_ALREADY_EXISTS){CloseHandle(mutex);MessageBoxW(nullptr,app.T(L"The launcher is already open.",L"Başlatıcı zaten açık."),L"MotoGP 09/10",MB_OK);Gdiplus::GdiplusShutdown(gdip_token);CoUninitialize();return 0;}
+    if(GetLastError()==ERROR_ALREADY_EXISTS){CloseHandle(mutex);MessageBoxW(nullptr,app.T(L"The launcher is already open.",L"Launcher zaten açık."),L"MotoGP 09/10",MB_OK);Gdiplus::GdiplusShutdown(gdip_token);CoUninitialize();return 0;}
     RECT work{};SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
     app.scale=std::max(0.55,std::min({GetDpiForSystem()/96.0,(work.right-work.left-40)/double(kWidth),(work.bottom-work.top-50)/double(kHeight+kCaptionHeight)}));
     WNDCLASSW cls{};cls.lpfnWndProc=WindowProc;cls.hInstance=instance;cls.lpszClassName=L"MotoGP0910Launcher";cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);cls.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(motogp::kIconResource));RegisterClassW(&cls);

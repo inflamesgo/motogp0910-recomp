@@ -67,12 +67,15 @@ validation remain pending.
 The subsequent All files picker and immediate TU-patch extraction changes are
 local source edits only; no new build or tests were run for that revision.
 
-## Optional DLC
+## Required DLC
 
-Optional Xbox 360 DLC import is documented in [DLC installation](dlc.md).
-When game files and the supported title update are present, **Install DLC**
-appears beside **Verify game files**. It accepts a ZIP/RAR/7z archive or the main
-extracted folder and installs the supported packages together into user data.
+Xbox 360 DLC import is documented in [DLC installation](dlc.md).
+The single game-files action follows **Select ISO → Select title update →
+Install DLC → Verify game files**. All three supported packages are required
+before PLAY in Offline, LAN or Online; missing packages are listed inline.
+**Install DLC** replaces verification while installation is incomplete. It accepts a ZIP/RAR/7z archive or the main
+extracted folder and installs the supported packages together into
+`dlc/434307F0` beside the public launcher, without a zero-XUID parent directory.
 This is independent of the title-update import and preserves the original game.
 
 ## Add to Steam
@@ -85,7 +88,12 @@ normal saved settings. Moving the installation requires adding its new path.
 
 Steam must be closed while its shortcuts file is edited. If it is running, the
 button asks before closing it and restarting it afterwards. Cancellation changes
-nothing. The operation runs in a worker; launching the game and installing a
+nothing. The General form uses tighter vertical spacing so Steam's button,
+hint and result remain within the existing viewport without a General scrollbar.
+One text area shows the hint, progress or result. After a successful addition,
+the green **Added to Steam** result replaces the hint for the rest of the launcher
+session, including when switching pages or languages.
+The operation runs in a worker; launching the game and installing a
 launcher update are blocked while it runs. No Steam password or network API is
 used, and no Steam game/content files are modified.
 
@@ -95,10 +103,20 @@ rejected. An existing `shortcuts.vdf` receives a unique `.motogp-….bak` backup
 replacement uses a flushed temporary file and Windows atomic replacement after
 checking that Steam stayed closed and the original file did not change.
 
-Library cover, wide and hero images are generated from the existing launcher
-background. Optional `resources/steam/cover.png`, `wide.png`, `banner.png`,
-`logo.png`, `icon.png` and `icon.ico` override or supplement those images.
-Existing artwork is preserved. Artwork failure does not undo a valid shortcut.
+Steam artwork is read only from five editable loose files in `resources/steam`:
+`icon.png`, `logo.png`, `banner.png`, `cover.png` and `wide.png`. The icon is the
+same game icon used by `motogp0910.exe`, rather than the launcher icon. Cover
+maps to Steam's portrait grid, wide to its horizontal grid, banner to the hero
+background and logo to its separate foreground logo. The supplied logo has a
+transparent background. The supplied portrait cover uses a 2:3 canvas, with
+the orange design extended into the top margin and white space below, so Steam
+can display its full width without cropping. The horizontal cover has a separate
+1840×860 composition for Steam's 92:43 library tile. No Steam images are
+embedded in an executable, cropped automatically or generated from the launcher
+background. Replacing a file and pressing **Add to Steam** again refreshes this
+shortcut's artwork. Other games' artwork is preserved. Missing optional PNGs
+are reported without generating substitutes; the loose icon remains required.
+Artwork failure does not undo a valid shortcut.
 The interface and results are localized in English and Turkish.
 
 Source reference and MIT attribution are recorded in
@@ -386,3 +404,31 @@ These CPU checks do not prove every GPU rendering effect visually correct.
 FSR 2/3 experimental providers and horizontal-plus ultrawide are now available.
 See [the implementation, sources and practical limitations](experimental-rendering.md).
 Frame generation remains excluded.
+
+## Online account presentation and persistence
+
+The signed-in Online page is unframed: an orange account name, optional country
+code, **My account** and **Sign out**. The account button follows FIFA 09's
+`MyAccount_Click` and opens `https://nobkonline.com/hesabim/` in the browser.
+Country comes only from the account API's optional `country` field on login or
+token refresh; absent or invalid codes are hidden. Existing saved sign-ins without
+a country continue to load, and a successful refresh can fill it in.
+
+Username and password retain the original side-by-side 281-by-30 logical-pixel
+fields. The sign-in form adds **Remember me (sign in automatically next time)**,
+enabled by default, plus the account explanation and an accurate Online launch
+requirement. Online still refuses PLAY without a signed-in account; it does not
+fall back to Offline. Offline and LAN retain their existing account-free behavior.
+
+Remember me follows FIFA's lifetime semantics. Checked saves a token protected
+with the existing Windows DPAPI storage; unchecked keeps it only in launcher
+memory, including token refresh and account linking before PLAY. Passwords are
+never persisted. The preference is retained for subsequent sign-ins. Signing out
+clears the cached token and returns to the form. Forgot password has no hover
+help. Room name appears below the signed-in account actions in Online; LAN keeps
+its original room-name layout, and tab/mode changes preserve field values.
+
+The footer displays the configured launcher version instead of the title-update
+version. The FPS selector has room for all nine presets, including 240 FPS.
+These edits are local. No game/launcher build or gameplay test is run for this
+revision; compiler syntax checking is separate from native Windows UI validation.

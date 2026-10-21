@@ -27,3 +27,15 @@ same binary KeyValues format, shortcut ID calculation and Steam artwork naming.
 MotoGP preserves existing unrelated shortcuts and user-customized fields, chooses
 one identifiable Steam account, and backs up an existing shortcuts file before
 replacing it. No FIFA game files, images, credentials or server addresses are used.
+
+Launcher update backend reference: `launcher/Updater.cs` at the same revision.
+MotoGP uses its version-query, manifest, notes, numeric comparison and ZIP/hash
+contract, retaining the existing native rollback as a documented client-side
+fallback mechanism. The service URL stays unconfigured pending the MotoGP
+operator's endpoint. This backend adaptation does not change the update UI.
+
+The Online-page **Forgot password?** action follows `Forgot_Click` in
+`launcher/MainWindow.xaml.cs` at the recorded revision: open
+`https://nobkonline.com/sifremi-unuttum/` in the default browser. Account recovery
+stays on the shared NOBK Online website; no reset request or password is sent by
+the button itself.

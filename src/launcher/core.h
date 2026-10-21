@@ -110,7 +110,7 @@ class Config {
   void Save() {
     if (ReadFile(path) != original) throw Error(
         L"Settings changed outside the launcher. Close and reopen it before saving.",
-        L"Ayar dosyası başka bir uygulama tarafından değiştirildi. Kaydetmeden önce başlatıcıyı yeniden aç.");
+        L"Ayar dosyası başka bir uygulama tarafından değiştirildi. Kaydetmeden önce Launcher'ı yeniden aç.");
     auto bytes = motogp::config::Serialize(table,path);
     // Keep the exact pre-launcher file once; never overwrite an existing backup.
     const fs::path backup(path.wstring() + L".bak");
@@ -121,7 +121,7 @@ class Config {
         CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) throw Error(
         L"Cannot save settings. Use a writable folder; close other launcher instances.",
-        L"Ayarlar kaydedilemiyor. Yazma iznin olan bir klasör kullan ve başlatıcının diğer açık pencerelerini kapat.");
+        L"Ayarlar kaydedilemiyor. Yazma iznin olan bir klasör kullan ve Launcher'ın diğer açık pencerelerini kapat.");
     DWORD written = 0;
     bool ok = WriteFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &written, nullptr)
         && written == bytes.size() && FlushFileBuffers(file);

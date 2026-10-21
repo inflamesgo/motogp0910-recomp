@@ -1,7 +1,10 @@
 # Launcher updates
 
-The Windows updater adapts the supplied FIFA09 launcher's NOBK manifest and
-numeric version comparison to this C++/Win32 launcher. It includes a notification
+The Windows updater adapts the public FIFA09 launcher's NOBK backend protocol
+and numeric version comparison to this C++/Win32 launcher. The source reference
+is `ChunchunQ/fifa09-recomp`, revision
+`711da3941d81879db06ea4f2c36c3a519ac826d9`, `launcher/Updater.cs`.
+It includes a notification
 panel, background download, an independent installation helper, rollback and a
 restart acknowledgement. These are source changes; native execution has not yet
 been validated.
@@ -9,12 +12,14 @@ been validated.
 The manifest endpoint is deliberately empty in
 `src/launcher/updates.h::kConfiguration`. An empty endpoint prevents all update
 network requests and leaves the notification button hidden. The launcher
-release version is **1.1.10**, approved by the user, and is separate from the
-game's title update version `0.0.1.1`. Historical commits are grouped as
-1.1.0–1.1.9; the updater constitutes the 1.1.10 feature milestone. These groups
-do not create historical Git tags or rewrite commits. Related fixes stay with
+version constant remains **1.1.10**, the earlier approved updater milestone,
+and is separate from the game's title update version `0.0.1.1`. Historical
+commits were grouped as 1.1.0–1.1.9, with the updater as milestone 1.1.10.
+Later feature additions have not been assigned final version placeholders;
+1.1.10 is not a fresh calculation for this complete delivery. These groups do
+not create historical Git tags or rewrite commits. Related fixes stay with
 their feature group; CI and documentation alone do not increment the product
-version.
+version. Agree on the delivery version before activating the real manifest.
 
 ## Approved launcher behavior
 
@@ -41,12 +46,15 @@ version.
 ## Service connection and manifest
 
 The NOBK operator must supply a documented **MotoGP-specific HTTPS manifest
-endpoint**. Set it in `kConfiguration`; an optional `{version}` URL placeholder
-expands to the installed launcher's major/minor/build. Keep the version accurate
+endpoint**. Set it in `kConfiguration`. Following FIFA's `CheckAsync`,
+`VersionRequestUrl` appends `?v=<major.minor.build>` to the endpoint (or `&v=`
+when the operator's endpoint already has a query). A URL template is not needed.
+Keep the version accurate
 in every release. Leaving either the endpoint empty or version at the unset
 placeholder `0.0.0` disables checks.
 
-The request is GET with `User-Agent: NOBK-Launcher/<major.minor.build>`, without
+The request is GET with the same `v` query and
+`User-Agent: NOBK-Launcher/<major.minor.build>` as FIFA, without
 an account token or request body. A successful endpoint returns HTTP 200 and
 these lowercase JSON fields:
 
@@ -87,6 +95,15 @@ The supplied MotoGP ZIP URL separately returned HTTP 206 and a ZIP signature for
 a four-byte range request. This verifies the route at that time, not its full
 contents, authoritative release version or SHA-256. The endpoint remains blank
 until the service operator provides the MotoGP contract.
+
+### Handoff and fallback mechanism
+
+Set the MotoGP endpoint in `updates.h::kConfiguration`; requests and JSON match
+FIFA's `Updater.cs`. The UI is unchanged. MotoGP additionally retains a local
+**fallback mechanism** in `update_helper.cpp`: failed installation/startup
+restores the previous program files. Backups are removed only after healthy
+startup; game files, DLC, saves and settings are excluded. No extra server fields
+are needed. The endpoint stays blank until configured by the operator.
 
 ## Installation transaction
 

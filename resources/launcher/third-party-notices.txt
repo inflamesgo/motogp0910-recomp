@@ -1670,7 +1670,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
-FIFA 09 launcher Steam shortcut integration
+FIFA 09 launcher Steam shortcut and update-protocol integration
 Adapted from ChunchunQ/fifa09-recomp, revision 711da3941d81879db06ea4f2c36c3a519ac826d9.
 Source: https://github.com/ChunchunQ/fifa09-recomp
 

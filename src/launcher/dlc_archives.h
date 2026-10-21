@@ -25,7 +25,7 @@ inline fs::path ArchiveTool(const fs::path& app){
   for(auto [name,hash]:{std::pair{L"7z.exe","95fff19b73eff77c87c0d7bd32822e43fb90dd2932459f962eb532d8dfb6ba53"},
       std::pair{L"7z.dll","899cd73d7fc60e1c1c35c7de0f5bed3dc69bfe2cecbd48014d868a347970a0b1"}}){
     if(!fs::is_regular_file(folder/name)||Sha256(folder/name)!=hash)
-      throw Error(L"The archive reader is missing or invalid. Extract the complete launcher package.",L"Arşiv okuyucusu eksik veya geçersiz. Başlatıcı paketini eksiksiz çıkar.");
+      throw Error(L"The archive reader is missing or invalid. Extract the complete launcher package.",L"Arşiv okuyucusu eksik veya geçersiz. Launcher paketini eksiksiz çıkar.");
   }
   return folder/L"7z.exe";
 }

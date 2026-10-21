@@ -8,7 +8,7 @@
   void StopIsoImport(){iso_cancel=true;if(iso_future.valid())iso_future.wait();}
   void RefreshGameFilesAction(){
     if(!verify_files||!path)return;
-    if(!importing_iso&&!verifying){
+    if(!importing_iso&&!verifying&&!dlc_busy){
       disk_files_present=false;title_update_valid=false;title_update_present=false;
       try{const auto root=GameRoot();disk_files_present=fs::is_regular_file(root/L"default.xex")&&
           fs::is_directory(root/L"xenondata")&&!fs::is_empty(root/L"xenondata")&&Sha256(root/L"default.xex")==kXexHash;
@@ -17,6 +17,7 @@
       }catch(...){game_ready=false;}
     }
     if(!disk_files_present||!title_update_valid)game_ready=false;
+    RefreshDlc();
     std::wstring action;
     if(importing_iso){
       if(iso_cancel)action=T(L"Cancelling…",L"İptal ediliyor…");
@@ -28,23 +29,30 @@
     }else if(verifying){
       action=T(L"Cancel check",L"Kontrolü iptal et");
       if(verify_total)action=std::wstring(T(L"Cancel (",L"İptal (%"))+std::to_wstring(std::min<size_t>(100,verify_progress.load()*100/verify_total))+(turkish?L")":L"%)");
-    }else action=!disk_files_present?T(L"Select ISO",L"ISO seç"):!title_update_valid?T(L"Select title update",L"Oyun güncellemesi seç"):T(L"Verify game files",L"Dosyaları doğrula");
+    }else if(dlc_busy||(disk_files_present&&title_update_valid&&!dlc_complete))action=DlcAction();
+    else action=!disk_files_present?T(L"Select ISO",L"ISO seç"):!title_update_valid?T(L"Select title update",L"Oyun güncellemesi seç"):T(L"Verify game files",L"Dosyaları doğrula");
     SetWindowTextW(verify_files,action.c_str());
+    EnableWindow(verify_files,!process&&!steam_busy&&!update_busy&&!update_finishing&&
+        (!dlc_busy||(!dlc_cancel&&dlc_progress.phase!=2))&&
+        (!importing_iso||!iso_cancel)&&(!verifying||!verify_cancel));
     if(importing_iso||!disk_files_present)Tip(verify_files,L"Extract your original Xbox 360 ISO directly into this launcher's game folder. Click again to cancel.",
-        L"Özgün Xbox 360 ISO'nun içeriğini doğrudan başlatıcının game klasörüne çıkarır. İptal etmek için yeniden tıkla.");
+        L"Özgün Xbox 360 ISO'nun içeriğini doğrudan Launcher'ın game klasörüne çıkarır. İptal etmek için yeniden tıkla.");
     else if(!title_update_valid)Tip(verify_files,L"Select your supported title-update file or default.xexp patch. It is installed into the selected game folder.",
         L"Desteklenen oyun güncellemesi dosyanı veya default.xexp yamasını seç. Seçili oyun klasörüne kurulur.");
+    else if(dlc_busy||!dlc_complete)Tip(verify_files,L"Install all three Xbox 360 DLC packages from ZIP, RAR or 7z archives, or extracted folders. Required in every connection mode. Game files and saves are preserved.",
+        L"Üç Xbox 360 DLC paketini ZIP, RAR veya 7z arşivlerinden ya da çıkarılmış klasörlerden kur. Tüm bağlantı modlarında gereklidir. Oyun dosyaları ve kayıtları korunur.");
     else Tip(verify_files,L"Check original game files against the supported hashes. No files are changed or downloaded. Click again to cancel.",
         L"Özgün oyun dosyalarının bütünlüğünü doğrular. Dosyaları değiştirmez veya indirmez. İptal etmek için yeniden tıkla.");
     if(title_update_notice){
       SetWindowTextW(title_update_notice,!disk_files_present?T(L"Game files are missing",L"Oyun dosyaları eksik"):
-          title_update_present&&!title_update_valid?T(L"Title update is invalid",L"Oyun güncellemesi geçersiz"):T(L"Title update is missing",L"Oyun güncellemesi eksik"));
+          title_update_present&&!title_update_valid?T(L"Title update is invalid",L"Oyun güncellemesi geçersiz"):!title_update_valid?T(L"Title update is missing",L"Oyun güncellemesi eksik"):
+          (std::wstring(T(L"DLC packages missing: ",L"Eksik DLC paketi: "))+std::to_wstring(std::count(dlc_installed.begin(),dlc_installed.end(),false))+L" / 3").c_str());
       SendMessageW(title_update_notice,WM_SETFONT,reinterpret_cast<WPARAM>(bold),TRUE);
-      ShowWindow(title_update_notice,(!disk_files_present||!title_update_valid)&&current_page==3?SW_SHOW:SW_HIDE);
-      Tip(title_update_notice,L"Select ISO to install the base game, then Select title update. Verify game files becomes available when both are ready.",
-          L"Temel oyunu kurmak için ISO seç, ardından Oyun güncellemesi seç düğmesini kullan. İkisi de hazır olduğunda Dosyaları doğrula düğmesi kullanılabilir.");
+      ShowWindow(title_update_notice,(!disk_files_present||!title_update_valid||!dlc_complete)&&current_page==3?SW_SHOW:SW_HIDE);
+      Tip(title_update_notice,L"Select ISO, then Select title update, then Install DLC. All three DLC packages are required before playing in any connection mode.",
+          L"Sırayla ISO seç, Oyun güncellemesi seç ve DLC kur düğmelerini kullan. Oyunu herhangi bir bağlantı modunda açmak için üç DLC paketi de gereklidir.");
     }
-    RefreshDlc();Status({},{});
+    Status({},{});
   }
   fs::path PickGameSource(bool update){
     IFileOpenDialog* raw=nullptr;

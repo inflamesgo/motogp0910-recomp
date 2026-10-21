@@ -42,11 +42,12 @@ void Initialize(rex::Runtime* runtime){
 }
 
 REX_HOOK_RAW(sub_8223CF40){
- // Base leaderboard draw: +24 is the category selected by 8223C9D8.
+ // Base leaderboard draw: +24 selects Lap Times (0), Arcade (1),
+ // All Time Ghost (2) or Monthly Ghost (3). All timed rows share the getter.
  // Scope the override to this call, so another board/thread cannot inherit it.
  const bool previous=motogp::online::lap_times::drawing;
- motogp::online::lap_times::drawing=ctx.r3.u32 &&
-  rex::memory::load_and_swap<uint32_t>(base+ctx.r3.u32+24)==0;
+ const auto category=ctx.r3.u32?rex::memory::load_and_swap<uint32_t>(base+ctx.r3.u32+24):UINT32_MAX;
+ motogp::online::lap_times::drawing=category==0||category==2||category==3;
  struct Restore {bool value;~Restore(){motogp::online::lap_times::drawing=value;}} restore{previous};
  __imp__sub_8223CF40(ctx,base);
 }

@@ -1,3 +1,5 @@
+// NOBK version/download contract adapted from ChunchunQ/fifa09-recomp
+// launcher/Updater.cs (MIT). See third_party/fifa09-launcher-LICENSE.txt.
 #include "updates.h"
 #include "update_protocol.h"
 #include "../../third_party/nlohmann/json.hpp"
@@ -196,6 +198,15 @@ bool Configured(const Configuration& configuration) {
 
 bool IsNewer(std::string_view candidate, std::string_view installed) { return Version(candidate) > Version(installed); }
 
+std::wstring VersionRequestUrl(const Configuration& configuration) {
+  if (!Configured(configuration)) return {};
+  HttpsUrl(configuration.manifest_url);
+  auto address = configuration.manifest_url;
+  address += address.find(L'?') == std::wstring::npos ? L"?v=" :
+      address.ends_with(L'?') || address.ends_with(L'&') ? L"v=" : L"&v=";
+  return address + CurrentText(configuration.current_version);
+}
+
 Release ParseManifest(std::string_view json) {
   if (json.size() > kManifestLimit) throw std::runtime_error("Update manifest exceeds the size limit");
   const auto document = nlohmann::json::parse(json, nullptr, false);
@@ -227,11 +238,7 @@ Release ParseManifest(std::string_view json) {
 CheckResult CheckForUpdate(const Configuration& configuration, const std::atomic_bool* cancelled) {
   if (!Configured(configuration)) return {};
   try {
-    const auto current = CurrentText(configuration.current_version);
-    auto address = configuration.manifest_url;
-    const std::wstring placeholder = L"{version}";
-    for (auto pos = address.find(placeholder); pos != std::wstring::npos; pos = address.find(placeholder, pos + current.size()))
-      address.replace(pos, placeholder.size(), current);
+    const auto address = VersionRequestUrl(configuration);
     Request request(address, configuration, false, cancelled);
     if (request.length > kManifestLimit) throw std::runtime_error("Update manifest exceeds the size limit");
     std::string body; std::array<char, 32768> buffer{};

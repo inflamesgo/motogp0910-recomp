@@ -56,12 +56,12 @@ int main(){try{
   auto spec=display;spec.view=view;auto record=original;
   for(auto& c:record.columns)if(c.id==7)c.bits=(view-1)%21;
   const Encoded encoded(spec,record);
-  if(view<=63){
-   Check(encoded.Int(3)==6308 && encoded.Int(5)==10,"Every Lap Times class/track projects the display fields");
-   Check(encoded.Int(6)==(view-1)%21 && encoded.Int(7)==1,"Lap Times track and season metadata are correctly mapped");
+  if(view<=63||(view>=127&&view<=189)||view>=316){
+   Check(encoded.Int(3)==6308 && encoded.Int(5)==10,"Every Lap Times and ghost class/track projects the display fields");
+   Check(encoded.Int(6)==(view-1)%21 && encoded.Int(7)==1,"Timed-board track and season metadata are correctly mapped");
   }else{
    const auto* rating=encoded.Column(3);
-   Check(rating[8]==2 && static_cast<int64_t>(U64(rating+16))==-630800,"Arcade and ghost categories retain raw int64 column 3");
+   Check(rating[8]==2 && static_cast<int64_t>(U64(rating+16))==-630800,"Unrelated Arcade/monthly-lap categories retain raw int64 column 3");
    Check(encoded.Int(5)==0 && encoded.Int(6)==10 && encoded.Int(7)==(view-1)%21,"Other categories retain their existing metadata");
   }
  }

@@ -44,15 +44,15 @@
     Tip(backend,L"SDL supports native PlayStation and other controllers. DualSense adaptive triggers require SDL.",L"SDL, PlayStation ve diğer kontrolcüleri doğrudan destekler. DualSense adaptif tetikleri için SDL gerekir.");
     Tip(keyboard,L"Enable keyboard input in addition to your controller. Edit individual keys below.",L"Kontrolcünün yanında klavye girişini etkinleştirir. Tuşları aşağıdan düzenleyebilirsin.");
     Tip(adaptive_triggers,L"Experimental fixed trigger resistance for DualSense / Edge using SDL. Other controllers keep their normal triggers.",L"SDL kullanan DualSense / Edge için deneysel sabit tetik direnci. Diğer kontrolcülerin tetikleri normal çalışır.");
-    Tip(reset_bindings,L"Restore only the keyboard bindings. Other launcher settings are preserved.",L"Yalnızca klavye tuş atamalarını varsayılanlara döndürür. Başlatıcının diğer ayarları korunur.");
+    Tip(reset_bindings,L"Restore only the keyboard bindings. Other launcher settings are preserved.",L"Yalnızca klavye tuş atamalarını varsayılanlara döndürür. Launcher'ın diğer ayarları korunur.");
     for(size_t i=0;i<binding_buttons.size();++i){
       Tip(binding_buttons[i],L"Click, then press a key or key combination. Esc cancels. Right-click to clear this binding.",L"Tıkla, ardından bir tuşa veya tuş birleşimine bas. Esc iptal eder. Atamayı silmek için sağ tıkla.");
     }
-    Tip(save,L"Save launcher settings for the next game launch. During play, F1 opens settings that can change immediately.",L"Başlatıcı ayarlarını sonraki oyun açılışı için kaydeder. Oyun sırasında F1 ile bazı ayarları oyunu kapatmadan değiştirebilirsin.");
-    Tip(defaults,L"Restore launcher settings to their defaults. Game saves and achievements are kept.",L"Başlatıcı ayarlarını varsayılanlara döndürür. Oyun kayıtları ve başarımlar korunur.");
+    Tip(save,L"Save launcher settings for the next game launch. During play, F1 opens settings that can change immediately.",L"Launcher ayarlarını sonraki oyun açılışı için kaydeder. Oyun sırasında F1 ile bazı ayarları oyunu kapatmadan değiştirebilirsin.");
+    Tip(defaults,L"Restore launcher settings to their defaults. Game saves and achievements are kept.",L"Launcher ayarlarını varsayılanlara döndürür. Oyun kayıtları ve başarımlar korunur.");
     Tip(logs,L"Open the local log and crash-report folder.",L"Yerel günlüklerin ve çökme raporlarının bulunduğu klasörü açar.");
     Tip(report,L"Create a local diagnostic report with settings and recent logs. Nothing is uploaded.",L"Ayarları ve son günlükleri içeren yerel bir tanılama raporu oluşturur. İnternete hiçbir şey gönderilmez.");
-    Tip(play,L"Save the current launcher settings and start MotoGP 09/10.",L"Başlatıcının geçerli ayarlarını kaydedip MotoGP 09/10'u başlatır.");
+    Tip(play,L"Save the current launcher settings and start MotoGP 09/10.",L"Launcher'ın geçerli ayarlarını kaydedip MotoGP 09/10'u başlatır.");
     LocalizeNetworkHelp();
     LocalizeUpscalerHelp();
   }

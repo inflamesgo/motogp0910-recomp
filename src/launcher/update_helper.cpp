@@ -111,6 +111,7 @@ bool PackageOwned(const fs::path& relative){
   if(name==L"resources/controller/ps3-controls.bin"||name==L"resources/controller/ps3-controls.json"||name==L"resources/controller/ps3-prompts.bin"||name==L"resources/controller/ps3-prompts.json")return true;
   if(name==L"resources/localization/tr/manifest.json"||name==L"resources/ui/opensans-semibold.ttf")return true;
   if(name==L"resources/archive/7z.exe"||name==L"resources/archive/7z.dll"||name==L"resources/archive/7zip-source.tar.xz")return true;
+  if(name==L"resources/steam/icon.png"||name==L"resources/steam/logo.png"||name==L"resources/steam/banner.png"||name==L"resources/steam/cover.png"||name==L"resources/steam/wide.png")return true;
   return name.starts_with(L"resources/localization/tr/overlay/")&&(name.ends_with(L".font")||name.ends_with(L".lua")||name.ends_with(L".msg"));
 }
 struct File {fs::path relative;bool existed=false;bool attempted=false;};
@@ -151,6 +152,7 @@ Restart Launch(const fs::path& root,std::wstring_view token){
   return {std::move(process),std::move(health),std::move(permission)};
 }
 bool Healthy(Restart& restart){
+  // Missing startup acknowledgement or an early exit triggers the fallback.
   HANDLE handles[]{restart.health.value,restart.process.value};
   const auto deadline=GetTickCount64()+30000;
   bool acknowledged=false;
@@ -254,11 +256,13 @@ void Install(const fs::path& job_path){
       if(FileHash(root/file.relative)!=FileHash(payload/file.relative))throw std::runtime_error("Installed update file verification failed");
       Progress(std::wstring(turkish?L"Güncelleme kuruluyor… ":L"Installing update… ")+std::to_wstring((i+1)*100/std::max<size_t>(1,files.size()))+L"%");
     }
-    Progress(turkish?L"Başlatıcı yeniden açılıyor…":L"Restarting launcher…");
+    Progress(turkish?L"Launcher yeniden açılıyor…":L"Restarting launcher…");
     auto restart=Launch(root,token);
     if(!Healthy(restart)){StopFailedRestart(restart);throw std::runtime_error("The updated launcher did not start successfully");}
     success=true;
   }catch(...){
+    // Fallback mechanism: restore the previous program files if installation
+    // or restart fails. Game data, DLC, saves and settings are excluded.
     const auto failure=std::current_exception();
     if(modified){
       Progress(turkish?L"Önceki sürüm geri yükleniyor…":L"Restoring previous version…");
@@ -273,10 +277,12 @@ void Install(const fs::path& job_path){
         try{auto restart=Launch(root,token);if(!Healthy(restart))StopFailedRestart(restart);}catch(...){}
       }
     }else if(WaitForSingleObject(parent.value,0)==WAIT_OBJECT_0){try{auto restart=Launch(root,token);Healthy(restart);}catch(...) {}}
+    // If fallback itself fails, retain the backup for manual recovery.
     std::error_code error;if(rollback_complete)fs::remove_all(backup,error);
     if(!rollback_complete)throw std::runtime_error("Automatic rollback could not finish. Your previous files are preserved in the .motogp-update backup directory. Close the launcher and restore that backup");
     std::rethrow_exception(failure);
   }
+  // Remove the fallback backup only after confirmed healthy startup.
   if(success){std::error_code error;fs::remove_all(backup,error);}
   // The running helper image itself can remain in TEMP until a later cleanup;
   // remove the potentially large archive, payload, script and job now.

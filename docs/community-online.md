@@ -250,7 +250,8 @@ gave the UI a signed int64 rating; its int32 read saw the leading `FFFFFFFF`
 word and displayed `--:--.--`. Display column 5 similarly received property 5
 instead of the game-mode bits in property 6, resulting in an Arcade label.
 
-`src/online/stats.cpp` now projects only group-0 views `1..63` with the complete
+`src/online/stats.cpp` now projects Lap Times views `1..63`, All Time Ghost views `127..189`
+and Monthly Ghost views `316..378`, with the complete
 native UI specification (`1,2,3,4,5,6,7,0xFFFA`, independent of order):
 
 | Native display column | Stored write property | Meaning |
@@ -261,9 +262,10 @@ native UI specification (`1,2,3,4,5,6,7,0xFFFA`, independent of order):
 | 7 | 13 | Season selector used by the native 2009/2010 label |
 
 The separate int64 rating at native row offset `+16` is preserved. Internal
-best-rating reads with a different column specification remain raw. The other
-315 views, including Arcade Time Left and the ghost categories, retain their
-previous column behavior. Uploads, persistent records, rank ordering and website
+best-rating reads with a different column specification remain raw. The remaining
+189 views retain their previous column behavior, including both Arcade groups.
+Native selector `82300088` confirms base IDs 1/127/316 for the three supported
+timed categories, before adding the class-times-21 and track offsets. Uploads, persistent records, rank ordering and website
 time conversion are unchanged; no database migration or server deployment is
 needed. Existing records benefit if their associated properties were retained.
 Absent/invalid lap ticks stay unavailable instead of displaying a zero time.
@@ -271,7 +273,7 @@ An invalid track index falls back to the selected view's track because the
 native track-name lookup does not bounds-check its index. Missing mode/season
 data is not guessed.
 
-`src/online/leaderboard_display.cpp` scopes mode-label changes to category 0
+`src/online/leaderboard_display.cpp` scopes mode-label changes to categories 0, 2 and 3
 inside native draw routine `8223CF40`, and to its mode-text call site
 `8223DD14`. The original localized Championship, Career, Arcade and Time Trial
 labels remain in use. Quick Race, split screen, online split screen, LAN and
@@ -332,3 +334,10 @@ Internet race, live leaderboard UI after a real lap, and native Windows GPU
 behavior still require the deployed endpoint and two players. Previous user
 confirmation of LAN/Radmin racing remains valid evidence for the original LAN
 path, not for the new Internet relay.
+
+
+The ghost-category extension repairs row presentation only. It does not implement
+uploading/downloading a ghost replay or validate that the live service rolls
+Monthly records over by calendar period. Replay transfers are intentionally
+outside the current scope. This revision was syntax-checked without a build or
+gameplay test; earlier Lap Times probe results do not validate the extension.

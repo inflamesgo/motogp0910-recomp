@@ -93,7 +93,8 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: MotoGP0910-Windows-x64 - ${{ steps.package.outputs.title }}
-          path: out/package-windows/
+          # Upload the prepared ZIP so empty game/ and dlc/ folders survive.
+          path: out/dist/*.zip
           if-no-files-found: error
           retention-days: 7
           compression-level: 6

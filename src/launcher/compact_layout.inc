@@ -173,10 +173,18 @@
       PaintBuffered(target,bounds,[&](HDC dc,RECT){const int saved=SaveDC(dc);
       app.DrawSurface(dc,control);SetBkMode(dc,TRANSPARENT);
       SelectObject(dc,reinterpret_cast<HFONT>(SendMessageW(control,WM_GETFONT,0,0)));
-      SetTextColor(dc,control==app.title_update_notice?kUpdateWarning:control==app.title?kText:control==app.status&&app.status_positive?RGB(107,205,132):kMuted);
+      SetTextColor(dc,control==app.account_status?kAccent:control==app.title_update_notice?kUpdateWarning:control==app.title?kText:
+          ((control==app.status&&app.status_positive)||(control==app.steam_status&&app.steam_added))?RGB(107,205,132):kMuted);
       RECT r;GetClientRect(control,&r);const auto text=app.Text(control);const bool right=(GetWindowLongPtrW(control,GWL_STYLE)&SS_TYPEMASK)==SS_RIGHT;
       const bool centered=(GetWindowLongPtrW(control,GWL_STYLE)&SS_CENTERIMAGE)!=0;
-      DrawTextW(dc,text.c_str(),-1,&r,(centered?DT_SINGLELINE|DT_VCENTER:DT_WORDBREAK)|DT_NOPREFIX|(right?DT_RIGHT:DT_LEFT));RestoreDC(dc,saved);});
+      const UINT flags=(centered?DT_SINGLELINE|DT_VCENTER:DT_WORDBREAK)|DT_NOPREFIX|(right?DT_RIGHT:DT_LEFT);
+      const auto version=control==app.status?text.find(L" · "):std::wstring::npos;
+      if(version!=std::wstring::npos){
+        auto ready=r;DrawTextW(dc,text.c_str(),static_cast<int>(version),&ready,flags);
+        SIZE extent{};GetTextExtentPoint32W(dc,text.c_str(),static_cast<int>(version),&extent);
+        r.left+=extent.cx;SetTextColor(dc,kMuted);DrawTextW(dc,text.c_str()+version,-1,&r,flags);
+      }else DrawTextW(dc,text.c_str(),-1,&r,flags);
+      RestoreDC(dc,saved);});
       if(message==WM_PAINT)EndPaint(control,&ps);return 0;
     }
     return DefSubclassProc(control,message,wparam,lparam);
@@ -193,6 +201,25 @@
     // into different gaps. Keep logical placements only for generic rescaling.
     for(int i:order){SetWindowPos(navigation[i],nullptr,x,S(94+kCaptionHeight),widths[i],S(32),SWP_NOZORDER|SWP_NOACTIVATE);x+=widths[i]+gap;}
   }
+  void LayoutFooterActions(){
+    const std::array<HWND,4> controls{save,defaults,logs,report};
+    constexpr std::array<int,4> widths{108,128,88,104};
+    constexpr std::array<const wchar_t*,4> english{L"Save settings",L"Restore defaults",L"Open logs",L"Error report"};
+    if(!save||!defaults||!logs||!report)return;
+    const auto dc=GetDC(window);const auto previous=SelectObject(dc,bold);
+    int x=S(kPageX);
+    // Preserve the English padding and gaps as translated labels grow. Measure
+    // with the actual button font and repeat after language or DPI changes.
+    for(size_t i=0;i<controls.size();++i){
+      const auto text=Text(controls[i]);SIZE current{},reference{};
+      GetTextExtentPoint32W(dc,text.c_str(),static_cast<int>(text.size()),&current);
+      GetTextExtentPoint32W(dc,english[i],lstrlenW(english[i]),&reference);
+      const int width=S(widths[i])+std::max<LONG>(0,current.cx-reference.cx);
+      SetWindowPos(controls[i],nullptr,x,S(kActionsY+kCaptionHeight),width,S(32),SWP_NOZORDER|SWP_NOACTIVATE);
+      x+=width+S(10);
+    }
+    SelectObject(dc,previous);ReleaseDC(window,dc);
+  }
   void BuildControls(){
     CreateFonts();LoadCover();help.Create(window,scale);
     title=Control(L"STATIC",L"",0,28,68,1,1);subtitle=Control(L"STATIC",L"",0,30,70,1,1);
@@ -207,7 +234,11 @@
     page_content=Control(L"STATIC",L"",WS_CLIPCHILDREN,0,0,kPageWidth-22,kPageHeight,0,page_view);
     SetWindowLongPtrW(page_content,GWL_EXSTYLE,GetWindowLongPtrW(page_content,GWL_EXSTYLE)|WS_EX_CONTROLPARENT);
     SetWindowSubclass(page_content,ContentProc,1,reinterpret_cast<DWORD_PTR>(this));
-    auto combo=[&](int page,int x,int y,int w,int id){return PageControl(page,L"COMBOBOX",L"",WS_TABSTOP|CBS_DROPDOWNLIST,x,y,w,310,id);};
+    auto combo=[&](int page,int x,int y,int w,int id){
+      // Fit every FPS preset, including 240, without scrolling the last row.
+      const int height=id==kFpsLimit?40+32*static_cast<int>(fps_limits.size()):310;
+      return PageControl(page,L"COMBOBOX",L"",WS_TABSTOP|CBS_DROPDOWNLIST,x,y,w,height,id);
+    };
     auto edit=[&](int page,int x,int y,int w,int id,int limit){auto c=PageControl(page,L"EDIT",L"",WS_TABSTOP|ES_AUTOHSCROLL|WS_BORDER,x,y,w,30,id);SendMessageW(c,EM_SETLIMITTEXT,limit,0);return c;};
     auto check=[&](int page,int x,int y,int w,int id){return PageControl(page,L"BUTTON",L"",WS_TABSTOP|BS_AUTOCHECKBOX,x,y,w,28,id);};
     auto field=[&](int page,const wchar_t* en,const wchar_t* tr,int x,int y,int id){auto label=LabelControl(page,en,tr,x,y,kColumnWidth,24);auto control=combo(page,x,y+26,kColumnWidth,id);help_labels[control]=label;return control;};
@@ -217,10 +248,10 @@
     verify_files=PageControl(3,L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,0,74,184,32,kVerifyFiles);
     title_update_notice=PageControl(3,L"STATIC",L"",SS_CENTERIMAGE,196,74,kFormWidth-196,32);
     BuildDlc();
-    language=field(3,L"Launcher language",L"Başlatıcı dili",0,128,kLanguage);
+    language=field(3,L"Launcher language",L"Launcher dili",0,128,kLanguage);
     SendMessageW(language,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(L"English"));SendMessageW(language,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(L"Türkçe"));
-    game_language=field(3,L"Game language",L"Oyun dili",0,210,kGameLanguage);FillCombo(game_language,{L"English",L"Français",L"Deutsch",L"Español",L"Italiano",L"Türkçe"});
-    prompt_style=field(3,L"Button prompts",L"Tuş simgeleri",0,292,kPromptStyle);
+    game_language=field(3,L"Game language",L"Oyun dili",0,198,kGameLanguage);FillCombo(game_language,{L"English",L"Français",L"Deutsch",L"Español",L"Italiano",L"Türkçe"});
+    prompt_style=field(3,L"Button prompts",L"Tuş simgeleri",0,268,kPromptStyle);
     BuildSteam();
     adapter=field(0,L"Graphics adapter",L"Ekran kartı",0,0,kAdapter);
     render_resolution=field(0,L"Internal resolution",L"İşleme çözünürlüğü",kColumnX,0,kRenderResolution);

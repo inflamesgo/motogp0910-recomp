@@ -1,5 +1,6 @@
 #pragma once
 #include "dlc_archives.h"
+#include "../dlc_installation.h"
 #include <rex/system/xam/content_manager.h>
 #include <rex/system/xam/content_device.h>
 
@@ -18,7 +19,7 @@ struct ContentLock {
     const auto name=L"Local\\MotoGP0910Dlc-"+std::to_wstring(hash);
     handle=CreateMutexW(nullptr,TRUE,name.c_str());
     if(!handle)throw std::runtime_error("Could not lock DLC storage");
-    if(GetLastError()==ERROR_ALREADY_EXISTS){CloseHandle(handle);handle=nullptr;throw Error(L"Another launcher is already importing DLC into this user-data folder.",L"Başka bir başlatıcı bu kullanıcı verisi klasörüne zaten DLC kuruyor.");}
+    if(GetLastError()==ERROR_ALREADY_EXISTS){CloseHandle(handle);handle=nullptr;throw Error(L"Another launcher is already importing DLC into this installation.",L"Başka bir Launcher bu kurulumun DLC klasörüne zaten içerik kuruyor.");}
   }
   ~ContentLock(){if(handle){ReleaseMutex(handle);CloseHandle(handle);}}
   ContentLock(const ContentLock&)=delete;ContentLock& operator=(const ContentLock&)=delete;
@@ -36,7 +37,7 @@ inline fs::path CreateStage(const fs::path& root){
 inline void CheckDestination(const fs::path& root,const fs::path& target){
   auto current=root;
   for(const auto& component:target.lexically_relative(root)){
-    if(component==L"..")throw std::runtime_error("DLC path is outside user data");
+    if(component==L"..")throw std::runtime_error("DLC path is outside the content folder");
     current/=component;
     if(iso::Reparse(current))throw Error(L"A DLC destination folder is a filesystem link. No files were changed.",L"DLC hedefindeki bir klasör dosya sistemi bağlantısı. Hiçbir dosya değiştirilmedi.");
     if(fs::exists(current)&&!fs::is_directory(current)&&current!=target)throw std::runtime_error("A file blocks the DLC destination");
@@ -50,8 +51,8 @@ inline void CopyPackage(const fs::path& source,const fs::path& destination,Cance
   for(;;){Check(cancel);if(!::ReadFile(input.value,buffer.data(),buffer.size(),&read,nullptr))throw std::runtime_error("Could not read the DLC package");if(!read)break;output.write(reinterpret_cast<char*>(buffer.data()),read);if(!output)throw std::runtime_error("Could not write staged DLC package");}
   output.close();if(!output)throw std::runtime_error("Could not finish staged DLC package");
 }
-inline std::vector<const Package*> CopyFolder(const fs::path& folder,const fs::path& stage,Cancel cancel){
-  fs::create_directory(stage/L"packages");std::vector<const Package*> result;std::set<std::string> found;size_t entries=0;
+inline std::vector<const Package*> CopyFolder(const fs::path& folder,const fs::path& stage,Cancel cancel,std::set<std::string>& found){
+  std::vector<const Package*> result;size_t entries=0;
   for(auto it=fs::recursive_directory_iterator(folder);it!=fs::recursive_directory_iterator();++it){
     Check(cancel);if(++entries>20000||it.depth()>32)throw Error(L"Select the extracted DLC folder, rather than a drive or your entire game library.",L"Bir sürücü veya tüm oyun arşivin yerine çıkarılmış DLC klasörünü seç.");
     if(it->path()==stage||iso::Reparse(it->path())){it.disable_recursion_pending();continue;}
@@ -133,18 +134,33 @@ inline void RequireSamePayload(const fs::path& existing,const fs::path& staged,C
       throw Error(L"An existing DLC installation differs and was kept. No game or save files were changed.",L"Mevcut DLC kurulumu farklı olduğu için korundu. Oyun ve kayıt dosyaları değiştirilmedi.");
   }
 }
-inline Result Import(const fs::path& source,const fs::path& app,const fs::path& user_root,Cancel cancel,Progress& progress){
-  const auto root=fs::weakly_canonical(user_root);ContentLock storage_lock(root);Stage stage{CreateStage(root)};progress.phase=0;
-  std::vector<const Package*> selected;
-  if(fs::is_directory(source))selected=CopyFolder(source,stage.path,cancel);
-  else for(const auto& entry:UnpackArchive(source,app,stage.path,cancel))selected.push_back(entry.package);
+inline Result Import(const std::vector<fs::path>& sources,const fs::path& app,Cancel cancel,Progress& progress){
+  if(sources.empty()||sources.size()>64)throw std::runtime_error("Select between one and 64 DLC sources");
+  const auto destination=motogp::dlc::ContentRoot(app);
+  if(iso::Reparse(destination))throw Error(L"The DLC folder cannot be a filesystem link.",L"DLC klasörü dosya sistemi bağlantısı olamaz.");
+  const auto root=fs::weakly_canonical(destination);ContentLock storage_lock(root);Stage stage{CreateStage(root)};progress.phase=0;
+  fs::create_directory(stage.path/L"packages");
+  std::vector<const Package*> selected;std::set<std::string> found;unsigned index=0;
+  for(const auto& source:sources){
+    Check(cancel);
+    if(fs::is_directory(source)){
+      const auto packages=CopyFolder(source,stage.path,cancel,found);selected.insert(selected.end(),packages.begin(),packages.end());
+    }else{
+      const auto archive_stage=stage.path/(L"archive-"+std::to_wstring(index++));fs::create_directory(archive_stage);
+      for(const auto& entry:UnpackArchive(source,app,archive_stage,cancel)){
+        if(!found.insert(entry.package->id).second)throw Error(L"The selection contains the same DLC package more than once. Select each package only once.",L"Seçimde aynı DLC paketi birden fazla kez bulunuyor. Her paketi yalnızca bir kez seç.");
+        fs::rename(archive_stage/L"packages"/entry.package->id,stage.path/L"packages"/entry.package->id);selected.push_back(entry.package);
+      }
+    }
+  }
   for(const auto* p:selected)progress.total.fetch_add(p->payload_bytes);
+  if(fs::space(stage.path).available<progress.total.load()+96*1024*1024)throw Error(L"There is not enough free space to extract all selected DLC packages.",L"Seçilen tüm DLC paketlerini çıkarmak için yeterli boş alan yok.");
   fs::create_directory(stage.path/L"payload");fs::create_directory(stage.path/L"headers");progress.phase=1;
   for(const auto* p:selected){
     ExtractPayload(stage.path/L"packages"/p->id,stage.path/L"payload"/p->id,stage.path/L"headers"/(std::string(p->id)+".header"),*p,cancel,progress);
     fs::remove(stage.path/L"packages"/p->id);
   }
-  const auto base=root/L"0000000000000000"/L"434307F0",packages=base/L"00000002",headers=base/L"Headers"/L"00000002";
+  const auto packages=motogp::dlc::Packages(root),headers=motogp::dlc::Headers(root);
   struct Move{fs::path from,to;bool directory;};std::vector<Move> moves;Result result;
   for(const auto* p:selected){
     Check(cancel);const auto target=packages/p->id,header=headers/(std::string(p->id)+".header");

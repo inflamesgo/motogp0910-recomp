@@ -2,15 +2,12 @@
 #include "../src/quit_menu.h"
 #include "../src/localization.h"
 #include <rex/runtime.h>
+#include <rex/system/function_dispatcher.h>
+#include <rex/ui/window.h>
 #include <rex/graphics/xenos.h>
 #include <rex/kernel/init.h>
 #include <rex/input/input_system.h>
 #include <rex/input/mnk/mnk_input_driver.h>
-#include <rex/ui/imgui_drawer.h>
-#include <rex/ui/window.h>
-#include <rex/ui/windowed_app_context.h>
-#include <imgui.h>
-#include <imgui_internal.h>
 #include <array>
 #include <cstring>
 #include <filesystem>
@@ -36,7 +33,23 @@ struct Driver final:InputDriver {
  X_RESULT SetDeviceVibration(DeviceId,X_INPUT_VIBRATION*)override{return X_ERROR_SUCCESS;}
  X_RESULT GetDeviceKeystroke(DeviceId,uint32_t,X_INPUT_KEYSTROKE*)override{return X_ERROR_EMPTY;}
 };
-class UIContext final:public rex::ui::WindowedAppContext {void NotifyUILoopOfPendingFunctions()override{}void PlatformQuitFromUIThread()override{}};
+uint32_t fixture_record=0,fixture_question=0;
+int native_opens=0;
+void FixtureQuestion(PPCContext& ctx,uint8_t*){
+ const auto handle=ctx.r3.u32;ctx.r3.u64=fixture_question+(handle==0x8288C870?32:handle==0x8288C874?40:0);
+}
+void FixtureNativeOpen(PPCContext& ctx,uint8_t* base){
+ const auto read=[&](uint32_t p){return rex::memory::load_and_swap<uint32_t>(base+p);};
+ const auto write=[&](uint32_t p,uint32_t v){rex::memory::store_and_swap<uint32_t>(base+p,v);};
+ Check(ctx.r7.u32==4&&ctx.r8.s32==-1,"Native confirmation uses the original modal layer and input owner");
+ Check(read(ctx.r3.u32)==fixture_question,"Native body comes from the localized game question");
+ Check(read(ctx.r5.u32)==fixture_question+32&&read(ctx.r5.u32+4)==fixture_question+40,"Explicit native Yes/No labels replace default Accept/Cancel");
+ Check(read(ctx.r5.u32+12)==13,"Native flags preserve Back navigation");
+ write(fixture_record+4,ctx.r6.u32);
+ std::memcpy(base+fixture_record+8,base+ctx.r3.u32,20);
+ write(fixture_record+8+16,ctx.r9.u32);write(fixture_record+8+28,1);
+ write(0x8336F4C0,fixture_record);++native_opens;
+}
 }
 int main(int argc,char** argv){try{
  Check(argc==3,"Usage: quit_menu_probe GAME_ROOT FONT_TTF");
@@ -116,69 +129,85 @@ int main(int argc,char** argv){try{
  base[menu+0x245]=1;Check(!motogp::quit::IsQuitSelection(base,menu,screen,0x400),"Second native transition blocks quitting");base[menu+0x245]=0;
  for(unsigned i=0;i<6;++i){write(screen+0x18,i);Check(!motogp::quit::IsQuitSelection(base,menu,screen,0x400),"Original choices stay original choices");}write(screen+0x18,6);
  write(menu,0);Check(!motogp::quit::AppendItem(base,menu,label),"Unknown menu layout untouched");write(menu,motogp::quit::kMainMenuVtable);
- motogp::quit::Confirmation model;model.Open(X_INPUT_GAMEPAD_B);Check(!model.exit_selected(),"Cancel is selected by default");
- Check(!model.Update(X_INPUT_GAMEPAD_B).cancel,"Opening B press cannot dismiss its own prompt");model.Update(0);auto decision=model.Update(X_INPUT_GAMEPAD_A);Check(decision.cancel&&!decision.accept,"Default A cancels");
- model.Open(0);model.Update(0);model.Update(X_INPUT_GAMEPAD_DPAD_RIGHT);Check(model.exit_selected(),"Controller navigation selects exit");model.Update(0);decision=model.Update(X_INPUT_GAMEPAD_A);Check(decision.accept&&!decision.cancel,"A confirms explicit exit choice");
- model.Open(0);model.Update(0);Check(model.Update(X_INPUT_GAMEPAD_B).cancel,"Fresh B cancels");
  pad->state.gamepad.buttons=X_INPUT_GAMEPAD_A;PPCContext ctx{};ctx.r1.u64=stack;ctx.lr=0x12345678;ctx.r3.u32=menu;ctx.r4.u32=screen;ctx.r5.u32=0x400;ctx.r23.u64=0xAABBCCDD;ctx.r31.u64=0xDEADBEEF;
  sub_821FCCA8(ctx,base);Check(motogp::quit::Pending()&&ctx.r3.s32==-1,"Actual MainMenu hook consumes new action");Check(ctx.r1.u32==stack&&ctx.lr==0x12345678&&ctx.r23.u64==0xAABBCCDD&&ctx.r31.u64==0xDEADBEEF,"Hook preserves nonvolatile state");
  X_INPUT_STATE state{};auto* input=static_cast<InputSystem*>(runtime.input_system());input->GetState(0,&state);Check(state.gamepad.buttons==0,"Guest input is neutral while confirmation owns it");input->GetStateForUI(0,&state);Check(state.gamepad.buttons&X_INPUT_GAMEPAD_A,"UI can still read actual pad");
  ctx.r3.u32=menu;sub_821FCCA8(ctx,base);Check(ctx.r3.s32==-1,"Pending modal blocks original menu actions");
- {
- UIContext context;auto window=rex::ui::Window::Create(context,"Quit menu probe");ImFont* font=nullptr;
- rex::ui::ImGuiDrawer drawer(window.get(),10,[&](ImFontAtlas* atlas){static const ImWchar range[]={0x20,0x1ff,0};font=atlas->AddFontFromFileTTF(argv[2],17,nullptr,range);});
- auto& io=drawer.GetIO();io.DisplaySize=ImVec2(1280,720);io.DeltaTime=1.f/60;unsigned char* pixels;int w,h;io.Fonts->GetTexDataAsRGBA32(&pixels,&w,&h);io.Fonts->SetTexID(1);
- int exits=0;auto dialog=motogp::quit::CreateConfirmationDialog(&drawer,font,false,[&]{++exits;});
- auto frame=[&]{drawer.GetIO();ImGui::NewFrame();dialog->Draw();ImGui::Render();};
- frame();frame();Check(exits==0,"Opening controller press cannot auto-exit");
- io.AddKeyEvent(ImGuiKey_Escape,true);frame();Check(!motogp::quit::Pending()&&exits==0,"Esc cancels actual dialog");io.AddKeyEvent(ImGuiKey_Escape,false);frame();
- // Check the title-only source with actual native game mode property layout.
- motogp::quit::PollFrontendInput();input->GetState(0,&state);Check(state.gamepad.buttons==0,"Dismissal A remains consumed until release");
- pad->state.gamepad.buttons=0;motogp::quit::PollFrontendInput();input->GetState(0,&state);pad->state.gamepad.buttons=X_INPUT_GAMEPAD_A;input->GetState(0,&state);Check(state.gamepad.buttons&X_INPUT_GAMEPAD_A,"Fresh press reaches game after release");
- const uint32_t mode_ptr=0x8292710C,mode_value=0x82927110;const auto saved_ptr=read(mode_ptr),saved_value=read(mode_value);
- write(mode_ptr,0);Check(!motogp::quit::IsTitleMode(base),"Uninitialized startup property cannot open exit");
- write(mode_ptr,mode_value);write(mode_value,15);Check(motogp::quit::IsTitleMode(base),"Original mode 15 identifies title renderer path");
- Check(!motogp::quit::ObserveTitleDraw(base,0,1.0),"In-game Press Start overlay never arms title exit");
- Check(!motogp::quit::ObserveTitleDraw(base,1,.5,0x822AE94C),"Startup fade cannot arm title exit");
- write(mode_value,3);Check(!motogp::quit::ObserveTitleDraw(base,1,1.0,0x822AE94C),"Other game modes never arm title exit");write(mode_value,15);
- Check(motogp::quit::ObserveTitleDraw(base,1,1.0,0x822AE94C),"Visible secondary title prompt arms native Back path");
- // Boot's application phase is separate from the frontend menu property.
- // Drive the ORIGINAL transition function instead of inventing a fixture mode.
- const auto saved_boot=read(0x828DA060);write(mode_value,11);
- Check(!motogp::quit::ObserveTitleDraw(base,0,0,0x8229CA24),"Frontend property 11 cannot impersonate real boot phase");write(mode_value,15);PPCContext phase{};phase.r1.u32=stack;phase.lr=0x12345678;phase.r3.u32=11;
+ // These observers verify native-service arguments and callback/input lifetime,
+ // not the title's renderer or visual appearance. Native Windows review remains necessary.
+ auto* dispatcher=runtime.function_dispatcher();
+ auto* original_question=dispatcher->GetFunction(0x826EDB38);
+ auto* original_open=dispatcher->GetFunction(0x82356E40);
+ fixture_record=allocation+0x3000;fixture_question=allocation+0x3100;
+ std::memcpy(base+fixture_question,"Are you sure?",14);
+ std::memcpy(base+fixture_question+32,"Yes",4);std::memcpy(base+fixture_question+40,"No",3);
+ const auto saved_popup=read(0x8336E274),saved_current=read(0x8336F4C0),saved_closing=read(0x8336F4E0);
+ write(0x8336E274,allocation+0x3200);write(0x8336F4C0,0);write(0x8336F4E0,0);
+ dispatcher->SetFunction(0x826EDB38,FixtureQuestion);dispatcher->SetFunction(0x82356E40,FixtureNativeOpen);
+ int exits=0;motogp::quit::SetExitHandler([&]{++exits;});
+ motogp::quit::TickConfirmation(ctx,base);
+ Check(native_opens==0,"Held opening A cannot open and accept its own native prompt");
+ pad->state.gamepad.buttons=0;motogp::quit::PollFrontendInput();motogp::quit::TickConfirmation(ctx,base);
+ Check(native_opens==1&&motogp::quit::Pending(),"Released input opens the native confirmation exactly once");
+ Check(read(fixture_record+8+28)==0&&rex::memory::load_and_swap<float>(base+fixture_record+8+48)==0.f,"Native quit starts on Yes with matching animation state");
+ input->GetState(0,&state);pad->state.gamepad.buttons=X_INPUT_GAMEPAD_A;input->GetState(0,&state);
+ Check(state.gamepad.buttons&X_INPUT_GAMEPAD_A,"Native dialog receives guest controls instead of an ImGui blocker");
+ auto result=[&](int choice){PPCContext callback{};callback.r3.u32=fixture_record+8;callback.r4.s64=choice;dispatcher->GetFunction(read(fixture_record+4))(callback,base);};
+ result(1);write(0x8336F4C0,0);
+ Check(!motogp::quit::Pending()&&exits==0,"Native No returns to the menu without exiting");
+ input->GetState(0,&state);Check(!(state.gamepad.buttons&X_INPUT_GAMEPAD_A),"Native dismissal masks held controls");
+ pad->state.gamepad.buttons=0;motogp::quit::PollFrontendInput();motogp::quit::Request();
+ write(0x8336F4E0,fixture_record);motogp::quit::TickConfirmation(ctx,base);
+ Check(native_opens==1,"Another closing native popup is not replaced");
+ write(0x8336F4E0,0);motogp::quit::TickConfirmation(ctx,base);
+ Check(native_opens==2,"Native confirmation opens after the existing fade finishes");
+ write(fixture_record+8+28,0);motogp::quit::SetFocused(false);motogp::quit::TickConfirmation(ctx,base);
+ Check(read(fixture_record+8+28)==1,"Focus loss restores the safe native No selection");
+ motogp::quit::SetFocused(true);pad->state.gamepad.buttons=X_INPUT_GAMEPAD_A;motogp::quit::PollFrontendInput();
+ motogp::quit::TickConfirmation(ctx,base);input->GetState(0,&state);
+ Check(!(state.gamepad.buttons&X_INPUT_GAMEPAD_A),"Held input on refocus cannot confirm a native exit");
+ pad->state.gamepad.buttons=0;motogp::quit::PollFrontendInput();motogp::quit::TickConfirmation(ctx,base);
+ const auto cookie=read(fixture_record+8+16);write(fixture_record+8+16,0);result(0);
+ Check(exits==0&&motogp::quit::Pending(),"A stale or unrelated native result cannot exit");
+ write(fixture_record+8+16,cookie);result(-2);write(0x8336F4C0,0);
+ Check(!motogp::quit::Pending()&&exits==0,"Native Back cancels exit");
+ // Keep boot/frontend coverage separate from the native-dialog observers.
+ const uint32_t mode_ptr=0x8292710C,mode_value=0x82927110;
+ const auto saved_ptr=read(mode_ptr),saved_value=read(mode_value),saved_boot=read(0x828DA060);
+ write(mode_ptr,0);Check(!motogp::quit::IsTitleMode(base),"An uninitialized frontend property cannot identify title mode");
+ write(mode_ptr,mode_value);write(mode_value,15);
+ Check(motogp::quit::IsTitleMode(base),"Original frontend mode 15 identifies the secondary title");
+ Check(!motogp::quit::ObserveTitleDraw(base,0,1.0),"An unrelated in-game Press Start draw cannot arm exit");
+ Check(!motogp::quit::ObserveTitleDraw(base,1,.5,0x822AE94C),"Secondary title fade cannot arm exit");
+ write(mode_value,3);Check(!motogp::quit::ObserveTitleDraw(base,1,1.0,0x822AE94C),"Other frontend modes cannot arm exit");
+ write(mode_value,11);write(0x828DA060,3);
+ Check(!motogp::quit::ObserveTitleDraw(base,0,0,0x8229CA24),"Frontend property 11 cannot impersonate the separate boot phase");
+ write(mode_value,15);PPCContext phase{};phase.r1.u32=stack;phase.lr=0x12345678;phase.r3.u32=11;
  sub_821E4EE0(phase,base);
- Check(read(0x828DA060)==11&&read(mode_value)==15,"Original boot transition leaves frontend property distinct from application phase");
+ Check(read(0x828DA060)==11&&read(mode_value)==15,"Original boot transition preserves the distinct frontend property");
  Check(read(0x8229CA18)==0x38800000&&read(0x8229CA20)==0x4BFFF759,"Original boot Press Start draw passes flag 0");
- write(mode_ptr,0);Check(motogp::quit::ObserveTitleDraw(base,0,0,0x8229CA24),"Real boot title works before the frontend property pointer is initialized");write(mode_ptr,mode_value);
- Check(!motogp::quit::ObserveTitleDraw(base,0,0,0x12345678),"Unrelated flag-0 draw cannot arm exit");
- Check(motogp::quit::ObserveTitleDraw(base,0,0,0x8229CA24),"Actual boot caller in mode 11 arms exit without a false fade requirement");
- rex::cvar::SetFlagByName("mnk_mode","true");rex::cvar::SetFlagByName("keybind_b","Quote,Backspace");pad->state.gamepad.buttons=0;
- Check(!motogp::quit::PollTitleInput(base,11),"Neutral native poll between draw and Back does not request or consume title exit");
- rex::ui::KeyEvent backspace(nullptr,rex::ui::VirtualKey::kBack,1,false,false,false,false,false);keyboard->OnKeyDown(backspace);
- input->GetStateForUI(0,&state);Check(state.gamepad.buttons&X_INPUT_GAMEPAD_B,"Actual Backspace binding reaches the same title B input channel");
-
- Check(read(0x8229C630)==0x3D00822B && read(0x8229C640)==0x3868E9F8,"Original boot transition installs the live frontend update callback");
- pad->state.gamepad.buttons=X_INPUT_GAMEPAD_B;ctx.r3.u64=0xBEEF;sub_8229C2C0(ctx,base);Check(motogp::quit::Pending(),"Actual boot title-update hook opens confirmation on fresh B");
- frame();frame();Check(motogp::quit::Pending()&&exits==0,"Held title B cannot immediately dismiss confirmation");
- io.AddKeyEvent(ImGuiKey_Escape,true);frame();Check(!motogp::quit::Pending()&&exits==0,"Title cancellation returns without exit");io.AddKeyEvent(ImGuiKey_Escape,false);frame();
- motogp::quit::PollFrontendInput();motogp::quit::Request();Check(!motogp::quit::Pending(),"UI-first dismissal cannot reopen title prompt before B release");input->GetState(0,&state);Check(!(state.gamepad.buttons&X_INPUT_GAMEPAD_B),"Title dismissal B stays masked for guest");
- keyboard->OnKeyUp(backspace);
+ write(mode_ptr,0);Check(motogp::quit::ObserveTitleDraw(base,0,0,0x8229CA24),"Boot title works before the frontend property exists");
+ write(mode_ptr,mode_value);
+ Check(!motogp::quit::ObserveTitleDraw(base,0,0,0x12345678),"Unknown flag-0 callers cannot arm title exit");
+ rex::cvar::SetFlagByName("mnk_mode","true");rex::cvar::SetFlagByName("keybind_b","Quote,Backspace");
+ pad->state.gamepad.buttons=0;motogp::quit::PollFrontendInput();
+ Check(!motogp::quit::PollTitleInput(base,11),"A neutral poll preserves the observed boot draw for a later Back edge");
+ rex::ui::KeyEvent backspace(nullptr,rex::ui::VirtualKey::kBack,1,false,false,false,false,false);
+ keyboard->OnKeyDown(backspace);input->GetStateForUI(0,&state);
+ Check(state.gamepad.buttons&X_INPUT_GAMEPAD_B,"Actual Backspace binding supplies native B");
+ Check(read(0x8229C630)==0x3D00822B&&read(0x8229C640)==0x3868E9F8,"Boot installs the actual secondary frontend updater");
+ sub_8229C2C0(ctx,base);Check(motogp::quit::Pending(),"Boot update consumes fresh Back and requests native confirmation");
+ const auto before_title=native_opens;motogp::quit::TickConfirmation(ctx,base);
+ Check(native_opens==before_title,"Held title Back cannot immediately dismiss the new native prompt");
+ keyboard->OnKeyUp(backspace);motogp::quit::PollFrontendInput();motogp::quit::TickConfirmation(ctx,base);
+ Check(native_opens==before_title+1,"Releasing title Back opens the native confirmation");
+ result(-2);write(0x8336F4C0,0);
+ Check(!motogp::quit::Pending()&&exits==0,"Native cancellation returns to boot without exiting");
  write(mode_ptr,saved_ptr);write(mode_value,saved_value);write(0x828DA060,saved_boot);
- motogp::quit::SetFocused(false);motogp::quit::Request();Check(!motogp::quit::Pending(),"Unfocused window cannot request exit");
- motogp::quit::SetFocused(true);pad->state.gamepad.buttons=X_INPUT_GAMEPAD_A;motogp::quit::PollFrontendInput();motogp::quit::Request();Check(!motogp::quit::Pending(),"Held input on focus regain cannot open confirmation");
- pad->state.gamepad.buttons=0;motogp::quit::PollFrontendInput();motogp::quit::Request();motogp::quit::PollFrontendInput();frame();frame();Check(motogp::quit::Pending()&&exits==0,"Fresh neutral input rearms safe confirmation");
- io.AddKeyEvent(ImGuiKey_Escape,true);frame();io.AddKeyEvent(ImGuiKey_Escape,false);frame();
- // Drain a guest blocker on the guest thread before returning to title.
- pad->state.gamepad.buttons=X_INPUT_GAMEPAD_A;ctx.r3.u32=menu;ctx.r4.u32=screen;ctx.r5.u32=0;motogp::quit::Request();sub_821FCCA8(ctx,base);
- frame();frame();Check(exits==0,"Held A does not confirm a new dialog");
- pad->state.gamepad.buttons=0;motogp::quit::PollFrontendInput();frame();
- io.AddKeyEvent(ImGuiKey_RightArrow,true);frame();
- // A Shift+Arrow virtual D-pad sample can reach the next UI frame, rather than the key event's frame.
- pad->state.gamepad.buttons=X_INPUT_GAMEPAD_DPAD_RIGHT;motogp::quit::PollFrontendInput();frame();
- io.AddKeyEvent(ImGuiKey_RightArrow,false);pad->state.gamepad.buttons=0;motogp::quit::PollFrontendInput();frame();
- io.AddKeyEvent(ImGuiKey_Enter,true);frame();Check(exits==1,"Delayed virtual D-pad does not double-apply keyboard navigation");frame();Check(exits==1,"Exit callback never repeats");
- Check(ImGui::GetCurrentContext()->ColorStack.Size==0&&ImGui::GetCurrentContext()->StyleVarStack.Size==0,"Dialog style remains scoped");dialog.reset();Check(!drawer.HasDialogs(),"App-owned dialog detaches without self-deletion");
- }
+ pad->state.gamepad.buttons=0;motogp::quit::PollFrontendInput();motogp::quit::Request();motogp::quit::TickConfirmation(ctx,base);
+ result(0);result(0);Check(exits==1,"Native Yes schedules the existing exit handler only once");
+ dispatcher->SetFunction(0x826EDB38,original_question);dispatcher->SetFunction(0x82356E40,original_open);
+ write(0x8336E274,saved_popup);write(0x8336F4C0,saved_current);write(0x8336F4E0,saved_closing);
  motogp::quit::Stop();memory->SystemHeapFree(allocation);
  rex::cvar::SetFlagByName("game_text_language","turkish");motogp::quit::Initialize(&runtime);
  Check(std::string(reinterpret_cast<char*>(base+motogp::quit::LabelAddress()))=="OYUNDAN ÇIK","Native added menu label follows Turkish written language");

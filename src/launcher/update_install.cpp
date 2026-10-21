@@ -36,6 +36,8 @@ std::unique_ptr<Installation> PrepareInstallation(const StagedUpdate& staged,
     const std::filesystem::path& root,const std::vector<std::filesystem::path>& protected_roots,
     bool turkish,const std::atomic_bool* cancelled){
   using namespace detail;
+  // FIFA's NOBK protocol is unchanged. This helper adds a local rollback
+  // fallback; it requires no extra server fields or endpoints.
   if(GameRunning(root))throw std::runtime_error("Close the game before updating");
   const auto token=StageToken(staged.directory);
   const auto helper_source=root/L"bin"/kHelper;

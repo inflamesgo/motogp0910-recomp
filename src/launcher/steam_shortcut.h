@@ -7,6 +7,7 @@
 #include <shlwapi.h>
 #include <gdiplus.h>
 #include <chrono>
+#include <array>
 #include <map>
 #include <memory>
 #include <cwchar>
@@ -125,50 +126,43 @@ inline void CommitShortcuts(const fs::path& path,std::span<const uint8_t> before
   throw Error(L"Could not update Steam's shortcuts. Your existing file was kept.",L"Steam kısayolları güncellenemedi. Mevcut dosyan korundu.");
  }
 }
-inline bool Artwork(const fs::path& grid,const fs::path& optional,std::span<const uint8_t> background,uint32_t id){
+// All Steam artwork is read from editable loose files. Never crop, render or
+// fall back to the embedded launcher background or executable icon.
+inline constexpr std::array<const wchar_t*,5> kArtworkFiles{
+ L"icon.png",L"logo.png",L"banner.png",L"cover.png",L"wide.png"};
+inline fs::path ArtworkFolder(const fs::path& root){return root/L"resources"/L"steam";}
+inline void RequireArtwork(const fs::path& folder){
+ for(const auto* name:kArtworkFiles){
+  const auto path=folder/name;
+  if(!fs::exists(path)&&std::wstring_view(name)!=L"icon.png")continue;
+  if(!fs::is_regular_file(path)||!fs::file_size(path)||fs::file_size(path)>32*1024*1024)
+   throw Error(L"Steam artwork is missing or invalid. Keep icon.png, logo.png, banner.png, cover.png and wide.png in resources/steam.",
+       L"Steam görselleri eksik veya geçersiz. icon.png, logo.png, banner.png, cover.png ve wide.png dosyalarını resources/steam klasöründe tut.");
+ }
+}
+inline bool Artwork(const fs::path& grid,const fs::path& folder,uint32_t id){
  try{
-  fs::create_directories(grid);
-  const auto prefix=std::to_wstring(id);
-  struct Art {const wchar_t* source;std::wstring destination;int w,h;};
-  const std::array<Art,3> art{{{L"cover.png",prefix+L"p.png",600,900},{L"wide.png",prefix+L".png",920,430},{L"banner.png",prefix+L"_hero.png",1920,620}}};
-  IStream* stream=SHCreateMemStream(background.data(),static_cast<UINT>(background.size()));
-  if(!stream)return false;
-  struct StreamRelease{IStream* stream;~StreamRelease(){stream->Release();}} release{stream};
-  auto source=std::unique_ptr<Gdiplus::Bitmap>(Gdiplus::Bitmap::FromStream(stream));
-  if(!source||source->GetLastStatus()!=Gdiplus::Ok)return false;
-  UINT count=0,size=0;Gdiplus::GetImageEncodersSize(&count,&size);std::vector<uint8_t> codecs(size);
-  if(!size||Gdiplus::GetImageEncoders(count,size,reinterpret_cast<Gdiplus::ImageCodecInfo*>(codecs.data()))!=Gdiplus::Ok)return false;
-  CLSID encoder{};bool found=false;const auto* info=reinterpret_cast<Gdiplus::ImageCodecInfo*>(codecs.data());
-  for(UINT i=0;i<count;++i)if(wcscmp(info[i].MimeType,L"image/png")==0){encoder=info[i].Clsid;found=true;break;}
-  if(!found)return false;
-  for(const auto& item:art){
-   const auto target=grid/item.destination;if(fs::exists(target))continue;
-   if(fs::is_regular_file(optional/item.source)){fs::copy_file(optional/item.source,target);continue;}
-   Gdiplus::Bitmap image(item.w,item.h,PixelFormat32bppARGB);
-   {
-    Gdiplus::Graphics g(&image);g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
-    const double scale=std::max(double(item.w)/source->GetWidth(),double(item.h)/source->GetHeight());
-    const float w=static_cast<float>(source->GetWidth()*scale),h=static_cast<float>(source->GetHeight()*scale);
-    g.DrawImage(source.get(),Gdiplus::RectF((item.w-w)/2,(item.h-h)/2,w,h));
-   }
-   const auto temp=grid/(item.destination+L".motogp-"+std::to_wstring(GetCurrentProcessId())+L".tmp");
-   if(fs::exists(temp))return false;
+  RequireArtwork(folder);fs::create_directories(grid);const auto prefix=std::to_wstring(id);
+  const std::array<std::pair<const wchar_t*,std::wstring>,5> art{{
+   {L"icon.png",prefix+L"_icon.png"},{L"logo.png",prefix+L"_logo.png"},
+   {L"banner.png",prefix+L"_hero.png"},{L"cover.png",prefix+L"p.png"},{L"wide.png",prefix+L".png"}}};
+  bool complete=true;
+  for(const auto& [source,destination]:art){
+   if(!fs::is_regular_file(folder/source)){complete=false;continue;}
+   const auto target=grid/destination;
+   const auto temp=grid/(destination+L".motogp-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64())+L".tmp");
    struct Cleanup{fs::path path;~Cleanup(){std::error_code ec;fs::remove(path,ec);}} cleanup{temp};
-   if(image.Save(temp.c_str(),&encoder,nullptr)!=Gdiplus::Ok)return false;
-   const bool moved=MoveFileExW(temp.c_str(),target.c_str(),MOVEFILE_WRITE_THROUGH)!=FALSE;
-   if(!moved){std::error_code ec;fs::remove(temp,ec);if(!fs::exists(target))return false;}
+   fs::copy_file(folder/source,temp);
+   // An explicit Add to Steam refreshes this shortcut's five pictures so edits
+   // in resources/steam take effect. Other games' artwork is never touched.
+   if(!MoveFileExW(temp.c_str(),target.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))return false;
   }
-  for(const auto* name:{L"logo.png",L"icon.png",L"icon.ico"}){
-   const auto source_path=optional/name;
-   const auto suffix=std::wstring(name)==L"logo.png"?L"_logo.png":std::wstring(name)==L"icon.png"?L"_icon.png":L"_icon.ico";
-   const auto target=grid/(prefix+suffix);
-   if(fs::is_regular_file(source_path)&&!fs::exists(target))fs::copy_file(source_path,target);
-  }
-  return true;
+  return complete;
  }catch(const std::exception&){return false;}
 }
 struct Result {bool artwork=false,restarted=true;};
-inline Result Add(const fs::path& root,const fs::path& steam_path,bool restart,std::span<const uint8_t> background){
+inline Result Add(const fs::path& root,const fs::path& steam_path,bool restart){
+ RequireArtwork(ArtworkFolder(root));
  const auto user=UserDirectory(steam_path);
  if(user.empty())throw Error(L"No active Steam account was found. Sign in to Steam once, then try again.",L"Etkin Steam hesabı bulunamadı. Steam'de bir kez oturum açıp yeniden dene.");
  struct Restart{fs::path path;bool enabled;~Restart(){if(enabled)try{Launch(path,L"");}catch(...){}}} restart_on_error{steam_path,false};
@@ -184,9 +178,9 @@ inline Result Add(const fs::path& root,const fs::path& steam_path,bool restart,s
  if(!fs::is_regular_file(launcher))throw Error(L"Keep MotoGP09-10Launcher.exe beside the bin folder.",L"MotoGP09-10Launcher.exe dosyasını bin klasörünün yanında tut.");
  const auto config=user/L"config";fs::create_directories(config);const auto path=config/L"shortcuts.vdf";
  const auto before=ReadBinary(path);const auto exe="\""+Utf8(fs::absolute(launcher).wstring())+"\"";
- const auto after=AddShortcut(before,exe,"\""+Utf8(fs::absolute(root).wstring())+"\"",Utf8(launcher.wstring()));
+ const auto after=AddShortcut(before,exe,"\""+Utf8(fs::absolute(root).wstring())+"\"",Utf8((ArtworkFolder(root)/L"icon.png").wstring()));
  CommitShortcuts(path,before,after);
- Result result;result.artwork=Artwork(config/L"grid",root/L"resources"/L"steam",background,ShortcutId(exe,kName));
+ Result result;result.artwork=Artwork(config/L"grid",ArtworkFolder(root),ShortcutId(exe,kName));
  if(restart_on_error.enabled){result.restarted=Launch(steam_path,L"");restart_on_error.enabled=false;}
  return result;
 }
