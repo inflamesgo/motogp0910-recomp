@@ -2,12 +2,15 @@
 
 The native **Gamer Card** action in Online lobbies and leaderboards now opens a
 player card using the launcher's dark palette and orange accent (`#ff6a13`).
-It shows the selected player's account name, country when available and NOBK
-avatar, with **Open NOBK profile** and **Back** actions. A 180 ms fade-in covers
+It has **Overview** and **Records** tabs. The selected player's avatar, orange
+account name, country flag and membership date remain above both tabs, with
+shared **Open NOBK profile** and **Back** actions. A 180 ms fade-in covers
 the panel, backdrop, text and photo; Windows' reduced-animation preference is
-respected. The initial Windows build was reviewed by the user in game. The
-subsequent metadata, JPEG, theme, animation and logging changes still require
-native Windows review; no automated or gameplay tests were run for this update.
+respected. The three title stripes also have a permanent left-to-right opacity
+gradient, matching the native title motif independently of the opening animation.
+The user confirmed that account data and avatars load in game. The stripe gradient
+and new tabs still require native visual review; no automated or gameplay tests
+were run for this update.
 
 ## Identity and public data
 
@@ -29,7 +32,7 @@ leaderboard rank and the site's independent account ID are never substituted.
 than the MotoGP-only rider page. The general profile page itself uses
 `/api/fifa09/player?name=<percent-encoded-name>` for shared account metadata,
 including MotoGP users. The card follows that existing public contract to read
-`country` and `avatar`, requiring the returned `player` name to match the
+`country`, `member_since` and `avatar`, requiring the returned `player` name to match the
 resolved MotoGP account. It never treats a MotoGP ID as a FIFA or site account ID.
 
 A supplied avatar path must belong to `/api/avatar/` on NOBK's HTTPS host.
@@ -48,6 +51,48 @@ A valid two-letter country from the shared profile is displayed when available.
 The current MotoGP endpoint does not supply country. If the optional shared
 lookup fails, an otherwise valid MotoGP identity and its profile action remain
 available. Country is not inferred from the current user, language or IP.
+
+Country codes select flags in an embedded 768 by 544 PNG atlas; no flag download
+or emoji/font support is required at runtime. The atlas is rasterized from
+[flag-icons](https://github.com/lipis/flag-icons/tree/ac7e0eb3259eb62aa6100c435607e2fe03896a97)
+(MIT). Its attribution is in `third_party/flag-icons-LICENSE.txt` and the launcher's
+embedded third-party notices. Missing country data is left hidden. Membership
+dates use the shared API's Unix timestamp and localized month/year, never the
+illustrative date from the concept image.
+
+## Overview and personal records
+
+The identity response already includes the selected player's `records` array.
+The card validates and publishes an immutable record snapshot on the same
+worker; switching tabs, filtering and scrolling add no HTTP calls. Invalid or
+missing records do not prevent a valid identity, avatar or profile action.
+
+Overview shows distinct circuits with a published personal best, leaderboards
+where the player is first, and total published leaderboard entries. Its coverage
+bar uses the 20 distinct playable circuits supplied by the mandatory base/DLC
+content. Native slot 17 (reserved Balaton) is excluded; Silverstone, Shanghai and
+Istanbul remain indices 18, 19 and 20. This differs deliberately from the live
+site's older 17-track catalogue and its ranking metric of **tracks led**. The
+first card statistic is **tracks recorded**, not tracks led; **records held**
+counts first places, not all personal bests.
+
+Records lists personal best results, rank and board population, circuit, class,
+bike/season and stored game mode. Results use the site's `display.text`; season
+and game mode come from uploaded properties 13 and 6. Unknown data shows a dash.
+The current public response has no explicit `bike`/`manufacturer` label, so that
+field remains unavailable unless supplied by the API. Packed rider IDs are not
+guessed into manufacturers. Class labels follow published metadata, preserving
+the existing server-side Moto2/season integration limits.
+
+The class filter is built from returned records. Empty records and failed lookups
+have separate messages. Sorting uses rank, then latest update. A card opened
+through the verified leaderboard caller `8223EDD4` copies the current native view
+from `833362D8` (written by selector `82300088`). That exact result is shown first
+and highlighted; other results on the selected circuit follow. Overview also
+shows the exact selected-board best when the public API exposes it. Lobby calls
+have no board context and cannot inherit a previous leaderboard selection.
+The public player endpoint currently lists group-0 results, so unpublished ghost
+or other groups are not represented as if they were returned.
 
 ## Avatar loading and fallback
 
@@ -75,6 +120,8 @@ number that connects the selected XUID/player ID to these stages:
 - `identity`: MotoGP ID-to-name lookup and returned field availability.
 - `account`: shared profile lookup, country and avatar source.
 - `avatar`: HTTP result, JPEG/PNG decode dimensions and UI texture upload.
+- `records`: parsed personal-best rows, circuits and first places.
+- `flags`: embedded atlas decode/upload failures.
 
 HTTP events include the fixed host/path, status, content type, byte count,
 duration and Windows error code when relevant. Logs distinguish an account with
@@ -94,7 +141,10 @@ username. There is no new modal error box.
 
 - **A / Enter** opens the selected player's general NOBK profile in the browser.
 - **B / Esc** or the **Back** button closes the card.
-- Mouse controls use the same two visible actions.
+- **LB / RB** or **Q / E** changes tabs.
+- **X / F** cycles the Records class filter.
+- **D-pad / Up / Down** scrolls Records; a held D-pad repeats at a bounded rate.
+- Mouse controls support tabs, filter, wheel scrolling and the shared actions.
 
 The card uses a separate instance of the existing settings input gate. Opening
 F1 and the card is serialized so concurrent requests cannot acquire both gates.
@@ -114,11 +164,14 @@ avatar paths. Avatar download and UI-thread texture creation are separate.
 This card uses the shared public avatar service without importing FIFA's
 social protocol, friends list, invitations or SDK patch.
 
-The current card does not add a full records table, account editing, friends,
-invites or replay transfers. Native Windows review should cover a lobby member,
+The current card does not add account editing, friends, invites or replay
+transfers. Native Windows review should cover both tabs, class filtering,
+gamepad/keyboard scrolling, country flags, membership date and selected-board
+ordering, as well as a lobby member,
 multiple leaderboard rows including the local player, accounts with/without a
 photo, failed lookups, opening/dismissal presses and switching to the browser
 and back. These checks remain pending for the latest source. Development continues
 on `main`, separate from the frozen `preview` handoff branch. The Windows Actions
 workflow must be dispatched with `quality_checks=false` for the requested
-build-only run; push-triggered tests are skipped for this change.
+build-only run; push-triggered tests are skipped for this change. Per the user's
+standing instruction, dispatch the build and do not monitor its result.

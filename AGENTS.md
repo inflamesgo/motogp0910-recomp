@@ -19,3 +19,8 @@
   Use `feat` for new features, `fix` for corrections, `ci` for Actions changes,
   and `docs`, `build`, `refactor`, `perf` or `chore` when appropriate. Keep each
   subject specific to the actual change.
+- Unless the user explicitly requests otherwise, "build" means commit and push
+  the authorized changes to `main`, then dispatch `windows-build.yml` with
+  `quality_checks=false`. Do not run local builds or tests. Include `[skip ci]`
+  in the commit body to skip push-triggered tests. After dispatch, do not inspect
+  Actions status, logs, artifacts or results; only issue the run command.
