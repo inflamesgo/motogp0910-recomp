@@ -23,6 +23,10 @@ anti-cheat: a modified client can submit fabricated records for its own identity
 
 ## Player setup
 
+The native Gamer Card action has a local implementation for the production
+NOBK service: selected-player name, available country/avatar and a link to the general
+NOBK account profile. See [player card behavior and validation status](gamer-card.md).
+
 In **Online → Connection mode** choose:
 
 | Mode | Behavior |
