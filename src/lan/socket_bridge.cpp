@@ -16,6 +16,9 @@ namespace {std::atomic<uint64_t> title_bytes_sent{0};}
 uint64_t TitleBytesSent(){return title_bytes_sent.load(std::memory_order_relaxed);}
 namespace {
 constexpr uint16_t kQosRttMin=30,kQosRttMed=45;
+// Network-failure diagnostics: first occurrences and then every power of two.
+bool Noteworthy(std::atomic<uint64_t>& counter){const auto n=counter.fetch_add(1,std::memory_order_relaxed)+1;return (n&(n-1))==0;}
+std::atomic<uint64_t> diag_inaddr{0},diag_connect{0},diag_status{0},diag_send{0};
 constexpr uint32_t kQosUpBits=20'000'000,kQosDownBits=50'000'000;
 constexpr uint32_t kPending=0x103,kFault=10014,kInvalid=10022,kNotSocket=10038,
     kTooLarge=10040,kNotSupported=10045,kWouldBlock=10035,kAborted=995,kIncomplete=996;
@@ -188,7 +191,10 @@ struct SocketBridge::Impl {
       if(sent)title_bytes_sent.fetch_add(data.size(),std::memory_order_relaxed);return sent?0:10065;
     }
     const auto id=Peer(ip);
-    if(!id || !guest.Network().Connected(id) || !guest.Network().SendData(id,socket.port,port,data))return 10065;
+    if(!id || !guest.Network().Connected(id) || !guest.Network().SendData(id,socket.port,port,data)){
+      if(Noteworthy(diag_send))REXLOG_WARN("LAN_NET: send to {}:{} failed: peer={:016X} connected={} (count={})",IPv4(ip),port,id,id && guest.Network().Connected(id),diag_send.load());
+      return 10065;
+    }
     title_bytes_sent.fetch_add(data.size(),std::memory_order_relaxed);return 0;
   }
   uint64_t Send(PPCContext& ctx,bool to){
@@ -226,22 +232,28 @@ struct SocketBridge::Impl {
     rex::system::object_ref<rex::system::XEvent> notify;
     if(event){notify=kernel->object_table()->LookupObject<rex::system::XEvent>(event);if(!notify)return kInvalid;}
     std::vector<std::optional<Room>> results(count);
+    std::vector<bool> reachable(count,false);
     if(!service){auto rooms=guest.KnownRooms();
       for(unsigned i=0;i<count;++i){const auto xnaddr=U32(Ptr(ctx.r5.u32+i*4)),kid=U32(Ptr(ctx.r6.u32+i*4)),key=U32(Ptr(ctx.r7.u32+i*4));
         if(!Valid(xnaddr,36) || !Valid(kid,8) || !Valid(key,16))return kFault;
         const auto peer=U64(Ptr(xnaddr+16)),id=U64(Ptr(kid));
         for(const auto& room:rooms)if(room.host==peer && room.id==id && std::equal(room.key.begin(),room.key.end(),Ptr(key))){results[i]=room;break;}
+        // Probes to other riders of the current room (not only room hosts) must
+        // succeed: the game measures every member before a race starts.
+        if(!results[i] && peer && (guest.Network().Connected(peer) || peer==guest.Network().Identity()))reachable[i]=true;
+        static std::atomic<uint64_t> logged{0};
+        if(Noteworthy(logged))REXLOG_INFO("LAN_QOS: lookup peer={:016X} session={:016X} room={} member={} (count={})",peer,id,results[i].has_value(),static_cast<bool>(reachable[i]),logged.load());
       }
     }
     uint32_t size=8+count*24;for(const auto& room:results)if(room)size+=static_cast<uint32_t>((room->qos.size()+3)&~size_t(3));
     const auto allocation=memory->SystemHeapAlloc(size);if(!allocation)return 10055;
     qos_allocations.insert(allocation);auto* base=Ptr(allocation);std::memset(base,0,size);W32(base,count);uint32_t cursor=allocation+8+count*24;
-    for(unsigned i=0;i<count;++i){auto* q=base+8+i*24;const auto& room=results[i];q[0]=service?3:room?3:5;
-      W16(q+2,service?0:1);W16(q+4,room?1:0);
+    for(unsigned i=0;i<count;++i){auto* q=base+8+i*24;const auto& room=results[i];const bool ok=room || reachable[i];q[0]=service?3:ok?3:5;
+      W16(q+2,service?0:1);W16(q+4,ok?1:0);
       // XNQOSINFO: wRttMinInMsecs, wRttMedInMsecs, dwUpBitsPerSec, dwDnBitsPerSec.
       // The game sizes its lobby from these; zeros made hosts drop joiners once
       // a handful of riders were in. Report a typical broadband connection.
-      if(service || room){W16(q+12,kQosRttMin);W16(q+14,kQosRttMed);W32(q+16,kQosUpBits);W32(q+20,kQosDownBits);}
+      if(service || ok){W16(q+12,kQosRttMin);W16(q+14,kQosRttMed);W32(q+16,kQosUpBits);W32(q+20,kQosDownBits);}
       if(room && !room->qos.empty()){q[0]|=8;W16(q+6,static_cast<uint16_t>(room->qos.size()));W32(q+8,cursor);std::copy(room->qos.begin(),room->qos.end(),Ptr(cursor));cursor+=static_cast<uint32_t>((room->qos.size()+3)&~size_t(3));}
     }
     W32(Ptr(output),allocation);if(notify)notify->Set(0,false);return 0;
@@ -271,15 +283,17 @@ bool SocketBridge::Handle(std::string_view name,PPCContext& ctx,uint8_t* base){
       const auto peer=U64(p.Ptr(ctx.r4.u32+16)),id=U64(p.Ptr(ctx.r5.u32));bool known=false;
       auto rooms=p.guest.KnownRooms();
       for(const auto& room:rooms)if(room.id==id && (room.host==peer || p.guest.Network().Connected(peer) || peer==p.guest.Network().Identity()))known=true;
-      if(!known){ctx.r3.u64=kInvalid;return true;}W32(p.Ptr(ctx.r6.u32),p.Alias(peer));ctx.r3.u64=0;return true;
+      if(!known){if(Noteworthy(diag_inaddr))REXLOG_WARN("LAN_NET: XNetXnAddrToInAddr unknown peer {:016X} session {:016X} (count={})",peer,id,diag_inaddr.load());ctx.r3.u64=kInvalid;return true;}
+      W32(p.Ptr(ctx.r6.u32),p.Alias(peer));ctx.r3.u64=0;return true;
     }
     if(name=="NetDll_XNetConnect"){
       const auto peer=p.Peer(ctx.r4.u32);if(!peer){ctx.r3.u64=kInvalid;return true;}
       if(!p.guest.Network().Connected(peer)){auto rooms=p.guest.KnownRooms();auto found=std::find_if(rooms.begin(),rooms.end(),[&](const Room& r){return r.host==peer;});
-        if(found==rooms.end() || !p.guest.Network().Join(*found)){ctx.r3.u64=10060;return true;}}
+        if(found==rooms.end() || !p.guest.Network().Join(*found)){if(Noteworthy(diag_connect))REXLOG_WARN("LAN_NET: XNetConnect to {:016X} failed (count={})",peer,diag_connect.load());ctx.r3.u64=10060;return true;}}
       ctx.r3.u64=0;return true;
     }
-    if(name=="NetDll_XNetGetConnectStatus"){const auto peer=p.Peer(ctx.r4.u32);ctx.r3.u64=peer?(p.guest.Network().Connected(peer)?2:1):0;return true;}
+    if(name=="NetDll_XNetGetConnectStatus"){const auto peer=p.Peer(ctx.r4.u32);ctx.r3.u64=peer?(p.guest.Network().Connected(peer)?2:1):0;
+      if(ctx.r3.u64!=2 && Noteworthy(diag_status))REXLOG_WARN("LAN_NET: XNetGetConnectStatus addr={} peer={:016X} status={} (count={})",IPv4(ctx.r4.u32),peer,ctx.r3.u64,diag_status.load());return true;}
     if(name=="NetDll_XNetUnregisterInAddr"){auto found=p.aliases.find(ctx.r4.u32);if(found!=p.aliases.end()){p.reverse.erase(found->second);p.aliases.erase(found);}ctx.r3.u64=0;return true;}
     if(name=="NetDll_XNetQosListen"){
       const auto flags=ctx.r8.u32;if((flags&4) && (ctx.r6.u32>kMaxQos || (ctx.r6.u32 && !p.Valid(ctx.r5.u32,ctx.r6.u32)))){ctx.r3.u64=kFault;return true;}
