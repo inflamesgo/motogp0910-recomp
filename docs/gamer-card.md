@@ -4,22 +4,29 @@ The native **View profile** action in Online lobbies and leaderboards now opens 
 player card using the launcher's dark palette and orange accent (`#ff6a13`).
 It is titled **RIDER LICENSE** (**PİLOT LİSANSI**) and has **Overview** and
 **Records** tabs. A persistent left sidebar holds the selected player's avatar,
-orange account name, country flag and membership date. The right pane holds the
-tabs and their contents. A compact **Open NOBK Online profile** action remains
+orange account name, country flag, inline membership date and optional bio. The
+right pane holds the tabs and their contents. A compact **Open NOBK Online profile** action remains
 in the shared footer; **B / Esc** closes the card without a separate Back button.
 A 180 ms fade-in covers
 the panel, backdrop, text and photo; Windows' reduced-animation preference is
-respected. Each title stripe fades along its diagonal from the lower-left to the
-upper-right, with a smoothstep opacity ramp subdivided into 24 seamless bands.
-This permanent gradient is independent of the opening animation.
-The user confirmed that account data and avatars load in game. The stripe gradient
-and new tabs still require native visual review; no automated or gameplay tests
-were run for this update. The approved concepts are implemented on an 1100 by
+respected. The left title stripe fades over 80% of its diagonal, the middle
+stripe fades only over its bottom 18%, and the right stripe is fully orange.
+The ramps use smoothstep opacity over 24 seamless bands. This permanent
+difference between stripes is independent of the opening animation.
+The user supplied native screenshots of both tabs and confirmed that account
+data and avatars load in game. The latest alignment, typography, stripe and bio
+changes still require native visual review; no builds or tests were run for this
+design pass. The approved concepts are implemented on an 1100 by
 580 design canvas, scaled uniformly to fit the display. Text and hit targets
 share that canvas; the outer window has no scroll state. Overview fits without
 scrolling. Records draws complete rows with a dedicated row-based scrollbar,
 keeping its tabs, filter, headings, sidebar and footer fixed. At 1920 by 1080,
-normal body text is approximately 18–19 pixels and six records fit at once.
+Records circuit, lap-time and mode text retain their previous sizes, and six
+records fit at once. Rank/population pairs now use a common size and baseline.
+Overview uses moderately larger typography: 48-pixel summary values, roughly
+19-pixel captions and a 50-pixel personal-best time at that resolution. Summary
+columns, the tab group and rank/population pairs are centered in their respective
+areas. Each rank pair shares one baseline; circuit names remain left-aligned.
 
 ## Identity and public data
 
@@ -89,7 +96,10 @@ content. Native slot 17 (reserved Balaton) is excluded; Silverstone, Shanghai an
 Istanbul remain indices 18, 19 and 20. This differs deliberately from the live
 site's older 17-track catalogue and its ranking metric of **tracks led**. The
 first card statistic is **tracks recorded**, not tracks led; **records held**
-counts first places, not all personal bests.
+counts first places, not all personal bests. The percentage bar is labeled
+**Total Track Domination**, as explicitly selected by the user. Its calculation
+remains circuits with a published personal best / 20 (17/20 = 85%); the naming
+change does not turn it into a first-place ownership statistic.
 
 Records has four columns: rank/board population on one line, circuit with
 class/2009 underneath, best lap, and stored mode. Results use the site's
@@ -102,7 +112,10 @@ legacy rows without a season remain in the initial 2009 presentation. The source
 season property is retained for the later server integration.
 
 The class filter is built from returned records. Empty records and failed lookups
-have separate messages. Sorting uses rank, then latest update. A card opened
+have separate messages. Its popup has dedicated vertical padding, a smaller
+corner radius, complete 24-unit selectable rows and matching height constraints;
+it no longer inherits the main card's zero vertical window padding. Sorting uses
+rank, then latest update. A card opened
 through the verified leaderboard caller `8223EDD4` copies the current native view
 from `833362D8` (written by selector `82300088`). That exact result is shown first
 and highlighted; other results on the selected circuit follow. Overview also
@@ -110,6 +123,36 @@ shows the exact selected-board best when the public API exposes it. Lobby calls
 have no board context and cannot inherit a previous leaderboard selection.
 The public player endpoint currently lists group-0 results, so unpublished ghost
 or other groups are not represented as if they were returned.
+
+## Membership and bio
+
+The membership date shares one line with **Member since**, for example
+**Member since October 2026**. English month names can be abbreviated when a
+long label would not fit; the text does not become smaller to force a fit.
+Turkish uses **Üyelik: Ekim 2026**. Missing membership information is hidden.
+
+The existing shared public account response also contains `bio`. It is read
+after the account name has been verified and uses the same request and cache as
+the avatar metadata; no new endpoint, download or periodic refresh is added.
+Only plain UTF-8 text is displayed, up to 300 Unicode characters / 1200 bytes.
+Line breaks are preserved, tabs become spaces and embedded ASCII controls are
+excluded. Empty, oversized or unavailable bios remain hidden. Bio contents are
+never written into diagnostics.
+
+The sidebar shows a word-wrapped three-line preview below the membership date.
+If more text remains, a clickable **...** button at the end of the last line
+opens a centered **About me** modal with the full text. **Y** on the gamepad or
+**R** on the keyboard can open it for any nonempty bio. Preview wrapping preserves
+UTF-8 character boundaries, including when a single word exceeds the column.
+
+The modal sizes to the text up to a bounded height; only its text area scrolls
+for unusually long paragraphs or many explicit line breaks. Mouse wheel,
+scrollbar, D-pad and keyboard arrows can scroll it. A **Close** button,
+**A / Enter** or **B / Esc** closes the bio while retaining the underlying card,
+its selected tab and Records scroll position. Closing input cannot also open
+the website or dismiss the card in the same frame. Tabs, filters and profile
+actions are blocked while the modal is open. Each reopening starts the text at
+the top, and a new player selection resets its open state.
 
 ## Avatar loading and fallback
 
@@ -195,11 +238,15 @@ username. There is no new modal error box.
 
 - **A / Enter** opens the selected player's general NOBK profile in the browser.
 - **B / Esc** closes the card; there is no visible Back button.
+- **Y / R** opens the full bio when present; the preview's **...** does the same.
+- With the bio open, **A / Enter**, **B / Esc** or **Close** closes only that modal.
 - **LB / RB** or **Q / E** changes tabs.
 - **X / F** cycles the Records class filter.
-- **D-pad / Up / Down** scrolls Records; a held D-pad repeats at a bounded rate.
-- Mouse controls support tabs, the class dropdown, wheel/scrollbar navigation
-  and the compact profile action. Only the Records rows scroll.
+- **D-pad / Up / Down** scrolls Records or the open bio; a held D-pad repeats at
+  a bounded rate.
+- Mouse controls support tabs, the class dropdown, wheel/scrollbar navigation,
+  the bio preview and the compact profile action. The license itself never
+  scrolls; scrolling is limited to Records rows or the bio modal's text area.
 
 The card uses a separate instance of the existing settings input gate. Opening
 F1 and the card is serialized so concurrent requests cannot acquire both gates.
@@ -221,8 +268,9 @@ social protocol, friends list, invitations or SDK patch.
 
 The current card does not add account editing, friends, invites or replay
 transfers. Native Windows review should cover both tabs, class filtering,
-gamepad/keyboard scrolling, country flags, membership date and selected-board
-ordering, as well as a lobby member,
+gamepad/keyboard scrolling, country flags, inline membership date, short/long/empty
+and multiline bios, bio modal input isolation, the three distinct stripe ramps
+and selected-board ordering, as well as a lobby member,
 multiple leaderboard rows including the local player, accounts with/without a
 photo, failed lookups, opening/dismissal presses and switching to the browser
 and back. These checks remain pending for the latest source. Development continues

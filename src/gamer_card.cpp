@@ -94,6 +94,7 @@ struct Player {
   // Absent: older API, use avatar-by-name. Empty: explicitly no photo.
   std::optional<std::string> avatar_path;
   int64_t member_since=0;
+  std::string bio;
 };
 struct Avatar { uint32_t width=0, height=0; std::vector<uint8_t> rgba; };
 struct PublicReply { uint32_t status=0; std::string body; };
@@ -114,6 +115,25 @@ std::string Text(const nlohmann::json& object,const char* key,size_t limit=96) {
   auto text=value->get<std::string>();
   if(text.size()>limit||std::any_of(text.begin(),text.end(),[](unsigned char c){return c<32||c==127;}))return {};
   return text;
+}
+std::string ReadBio(const nlohmann::json& object) {
+  const auto field=object.find("bio");
+  if(field==object.end()||!field->is_string())return {};
+  const auto& value=field->get_ref<const std::string&>();
+  // JSON parsing has already validated UTF-8. Bound Unicode characters, not
+  // bytes, and preserve line breaks while excluding embedded UI controls.
+  if(value.size()>1200)return {};
+  std::string bio;
+  unsigned characters=0;
+  for(const unsigned char ch:value) {
+    if((ch&0xC0)!=0x80&&++characters>300)return {};
+    if(ch=='\r')continue;
+    if(ch=='\t')bio+=' ';
+    else if(ch=='\n'||(ch>=32&&ch!=127))bio+=static_cast<char>(ch);
+  }
+  const auto first=bio.find_first_not_of(" \n");
+  if(first==std::string::npos)return {};
+  return bio.substr(first,bio.find_last_not_of(" \n")-first+1);
 }
 int64_t Number(const nlohmann::json& object,const char* key,int64_t fallback=-1) {
   const auto value=object.find(key);
@@ -444,6 +464,7 @@ Player ReadAccount(PublicClient& client,Player player,uint64_t serial,std::stop_
   }
   const auto joined=Number(json,"member_since",0);
   if(joined>=946684800&&joined<4102444800LL)player.member_since=joined;
+  player.bio=ReadBio(json);
   if(const auto avatar=json.find("avatar");avatar!=json.end()&&avatar->is_string()) {
     const auto value=avatar->get<std::string>();
     if(value.empty())player.avatar_path=std::string{};
@@ -453,6 +474,7 @@ Player ReadAccount(PublicClient& client,Player player,uint64_t serial,std::stop_
   REXLOG_INFO("PLAYER_CARD request={} stage=account event=ready country={} avatar={}",serial,
       player.country.empty()?"absent":player.country,
       !player.avatar_path?"by_name":player.avatar_path->empty()?"none":"profile_path");
+  REXLOG_INFO("PLAYER_CARD request={} stage=account event=bio available={}",serial,!player.bio.empty());
   return player;
 }
 
@@ -689,6 +711,7 @@ class State {
             if(player.country.empty())player.country=snapshot_.player.country;
             player.member_since=snapshot_.player.member_since;
             player.avatar_path=snapshot_.player.avatar_path;
+            player.bio=snapshot_.player.bio;
           }
           snapshot_.player=player;
           snapshot_.results=std::move(results);
@@ -783,16 +806,17 @@ void Helmet(ImDrawList* draw, ImVec2 position, float size) {
       {position.x + size * .40f, position.y + size * .70f}, Color(77, 84, 99));
 }
 
-std::string Membership(int64_t timestamp,bool tr) {
+std::string Membership(int64_t timestamp,bool tr,bool compact=false) {
   if(!timestamp)return Tr(tr,"Membership date unavailable","Üyelik tarihi alınamadı");
   constexpr const char* months[]{"January","February","March","April","May","June","July",
     "August","September","October","November","December"};
   constexpr const char* months_tr[]{"Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz",
     "Ağustos","Eylül","Ekim","Kasım","Aralık"};
+  constexpr const char* short_months[]{"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
   const std::chrono::year_month_day date{std::chrono::floor<std::chrono::days>(std::chrono::sys_seconds{std::chrono::seconds{timestamp}})};
   const auto month=unsigned(date.month())-1;
-  return tr?std::string(months_tr[month])+" "+std::to_string(int(date.year()))+" tarihinden beri üye":
-      std::string("Member since ")+months[month]+" "+std::to_string(int(date.year()));
+  return tr?std::string("Üyelik: ")+months_tr[month]+" "+std::to_string(int(date.year())):
+      std::string("Member since ")+(compact?short_months[month]:months[month])+" "+std::to_string(int(date.year()));
 }
 
 std::string Mode(int64_t mode,bool tr) {
@@ -842,6 +866,8 @@ struct View {
   int tab=0, category=0, first_row=0;
   float scroll=0.f, drag_offset=-1.f;
   bool reset_scroll=true;
+  bool bio_open=false,bio_close=false;
+  float bio_scroll=0.f;
 };
 std::vector<std::string> Categories(const Results* results,bool tr) {
   std::vector<std::string> categories{Tr(tr,"All classes","Tüm sınıflar")};
@@ -874,6 +900,9 @@ struct Canvas {
   float scale;
   ImFont* font;
   ImVec2 Point(float x,float y)const{return {origin.x+x*scale,origin.y+y*scale};}
+  float Measure(std::string_view text,float pixels)const {
+    return font->CalcTextSizeA(pixels*scale,FLT_MAX,0,text.data(),text.data()+text.size()).x/scale;
+  }
   void Line(float x,float y,float end_x,float end_y)const {
     draw->AddLine(Point(x,y),Point(end_x,end_y),Color(48,54,64),scale);
   }
@@ -890,18 +919,76 @@ struct Canvas {
     draw->AddText(font,pixels*scale,Point(x,y),ImGui::GetColorU32(color),text.c_str());
     return measure(text)/scale;
   }
+  void Centered(float x,float y,float pixels,ImVec4 color,std::string text,float width)const {
+    const bool truncated=Measure(text,pixels)>width;
+    while(!text.empty()&&Measure(text+(truncated?"...":""),pixels)>width) {
+      size_t end=text.size()-1;
+      while(end&&(static_cast<unsigned char>(text[end])&0xC0)==0x80)--end;
+      text.resize(end);
+    }
+    if(truncated)text+="...";
+    const float at=x+(width-Measure(text,pixels))*.5f;
+    Text(at,y,pixels,color,std::move(text),width);
+  }
+  void Rank(float x,float y,float width,float pixels,uint32_t rank,uint32_t total)const {
+    const auto first=std::to_string(rank),rest=total?" / "+std::to_string(total):std::string{};
+    const auto measured=Measure(first+rest,pixels);
+    if(measured>width)pixels*=width/measured;
+    const float at=x+(width-Measure(first+rest,pixels))*.5f;
+    Text(at,y,pixels,rank==1?kAccent:kWhite,first);
+    Text(at+Measure(first,pixels),y,pixels,kMuted,rest);
+  }
 };
+
+struct BioExcerpt {std::vector<std::string> lines;bool more=false;};
+BioExcerpt Excerpt(const Canvas& c,const std::string& bio,float last_width) {
+  BioExcerpt result;
+  size_t position=0;
+  for(int line=0;line<3&&position<bio.size();++line) {
+    const auto newline=bio.find('\n',position);
+    const char* begin=bio.data()+position;
+    const char* paragraph=bio.data()+(newline==std::string::npos?bio.size():newline);
+    const char* end=c.font->CalcWordWrapPosition(15.5f*c.scale,begin,paragraph,
+        (line==2?last_width:196.f)*c.scale);
+    if(end<=begin&&begin<paragraph) {
+      end=begin+1;
+      while(end<paragraph&&(static_cast<unsigned char>(*end)&0xC0)==0x80)++end;
+    }
+    position=size_t(end-bio.data());
+    if(end==paragraph)position+=newline!=std::string::npos?1:0;
+    else while(position<bio.size()&&bio[position]==' ')++position;
+    while(end>begin&&end[-1]==' ')--end;
+    result.lines.emplace_back(begin,end);
+  }
+  result.more=position<bio.size();
+  return result;
+}
+void BioPreview(const Snapshot& state,View& view,const Canvas& c,bool tr,bool ready) {
+  if(state.player.bio.empty())return;
+  c.Text(32,397,13.5f,kMuted,Tr(tr,"ABOUT ME","HAKKINDA"),196);
+  auto excerpt=Excerpt(c,state.player.bio,196);
+  if(excerpt.more)excerpt=Excerpt(c,state.player.bio,152);
+  for(size_t i=0;i<excerpt.lines.size();++i)c.Text(32,420+float(i)*19,15.5f,kWhite,excerpt.lines[i],196);
+  if(excerpt.more) {
+    ImGui::SetCursorScreenPos(c.Point(194,455));
+    ImGui::BeginDisabled(!ready);
+    if(ImGui::Button("...##license_bio_more",{34*c.scale,24*c.scale}))view.bio_open=true;
+    if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",Tr(tr,"Read full bio (Y / R)","Biyografinin tamamını oku (Y / R)"));
+    ImGui::EndDisabled();
+  }
+}
 void Stripes(const Canvas& c) {
-  // Subdivide the native diagonal direction, not the entire three-stripe box.
-  // Shared vertices/colors at each band avoid seams; smoothstep avoids a harsh
-  // transparent edge and reaches full orange at the upper end of each stripe.
+  // Distinct native-style ramps: most of the left stripe fades, only the lower
+  // tip of the middle fades, and the entire right stripe stays solid orange.
   const auto uv=ImGui::GetFontTexUvWhitePixel();
   for(int stripe=0;stripe<3;++stripe)for(int band=0;band<24;++band) {
     const float a=band/24.f,b=(band+1)/24.f;
     const auto point=[&](float t,float edge){return c.Point(18.f+stripe*15.f+24.f*t+edge,49.f-36.f*t);};
     const auto tint=[&](float t) {
       auto color=kAccent;
-      color.w=(.015f+.985f*t*t*(3.f-2.f*t))*(.66f+.17f*stripe);
+      const float fade_length=stripe==0?.8f:.18f;
+      const float ramp=std::clamp(t/fade_length,0.f,1.f);
+      color.w=stripe==2?1.f:ramp*ramp*(3.f-2.f*ramp);
       return ImGui::GetColorU32(color);
     };
     c.draw->PrimReserve(6,4);
@@ -942,32 +1029,32 @@ void Overview(const Snapshot& state,const Canvas& c,float x,float width,bool tr)
   const float column=width/3.f;
   for(int i=0;i<3;++i) {
     const float at=x+i*column;
-    c.Text(at,158,32,kAccent,values[i],column-14);
-    c.Text(at,202,12.5f,kMuted,labels[i],column-14);
-    if(i)c.Line(at-24,160,at-24,223);
+    c.Centered(at+10,164,40,kAccent,values[i],column-20);
+    c.Centered(at+10,217,15.5f,kMuted,labels[i],column-20);
+    if(i)c.Line(at,162,at,244);
   }
-  const float fraction=std::clamp(float(tracks.size())/20.f,0.f,1.f),bar=width-54.f;
-  c.draw->AddRectFilled(c.Point(x,258),c.Point(x+bar,267),ImGui::GetColorU32(overlay::card),2*c.scale);
-  if(fraction)c.draw->AddRectFilled(c.Point(x,258),c.Point(x+bar*fraction,267),ImGui::GetColorU32(kAccent),2*c.scale);
-  c.Text(x+bar+14,254,15,kWhite,std::to_string(int(fraction*100.f+.5f))+"%",40);
-  c.Line(x,315,x+width,315);
-  c.Text(x,338,13,kMuted,Tr(tr,"PERSONAL BEST","KİŞİSEL EN İYİ"),width);
+  const float fraction=std::clamp(float(tracks.size())/20.f,0.f,1.f),bar=width-70.f;
+  c.Text(x,273,16,kMuted,Tr(tr,"TOTAL TRACK DOMINATION","TOPLAM PİST HÂKİMİYETİ"),width);
+  c.draw->AddRectFilled(c.Point(x,304),c.Point(x+bar,314),ImGui::GetColorU32(overlay::card),2*c.scale);
+  if(fraction)c.draw->AddRectFilled(c.Point(x,304),c.Point(x+bar*fraction,314),ImGui::GetColorU32(kAccent),2*c.scale);
+  c.Centered(x+bar+12,299,17,kWhite,std::to_string(int(fraction*100.f+.5f))+"%",58);
+  c.Line(x,346,x+width,346);
+  c.Text(x,368,15,kMuted,Tr(tr,"PERSONAL BEST","KİŞİSEL EN İYİ"),width);
   if(!state.preferred_view) {
-    c.Text(x,382,16,kMuted,Tr(tr,"No track selected.","Seçili pist yok."),width);return;
+    c.Text(x,418,19,kMuted,Tr(tr,"No track selected.","Seçili pist yok."),width);return;
   }
   const auto record=std::find_if(rows.begin(),rows.end(),[&](auto row){return row->view==state.preferred_view;});
   if(record==rows.end()) {
-    c.Text(x,382,16,kMuted,Tr(tr,"No published lap for these conditions.","Bu koşullarda kayıtlı turu yok."),width);return;
+    c.Text(x,418,19,kMuted,Tr(tr,"No published lap for these conditions.","Bu koşullarda kayıtlı turu yok."),width);return;
   }
   const auto& row=**record;
-  const float time_width=std::min(206.f,width*.28f),rank_width=92.f,details=x+time_width;
-  c.Text(x,378,36,kAccent,row.result,time_width-16);
-  c.Text(details,380,17,kWhite,row.track_name,width-time_width-rank_width-16);
-  c.Text(details,411,14,kMuted,row.category+" · 2009 · "+Mode(row.mode,tr),width-time_width-rank_width-16);
-  c.Line(x+width-rank_width,374,x+width-rank_width,440);
-  c.Text(x+width-rank_width+20,378,13,kMuted,Tr(tr,"Rank","Sıra"),rank_width-20);
-  c.Text(x+width-rank_width+20,402,26,kAccent,std::to_string(row.rank),rank_width-20);
-  if(row.total)c.Text(x+width-rank_width+44,412,16,kMuted,"/ "+std::to_string(row.total),rank_width-44);
+  const float time_width=std::min(222.f,width*.29f),rank_width=110.f,details=x+time_width;
+  c.Text(x,411,42,kAccent,row.result,time_width-16);
+  c.Text(details,413,19,kWhite,row.track_name,width-time_width-rank_width-20);
+  c.Text(details,447,16,kMuted,row.category+" · 2009 · "+Mode(row.mode,tr),width-time_width-rank_width-20);
+  c.Line(x+width-rank_width,406,x+width-rank_width,474);
+  c.Centered(x+width-rank_width+10,407,15,kMuted,Tr(tr,"Rank","Sıra"),rank_width-10);
+  c.Rank(x+width-rank_width+10,438,rank_width-10,28,row.rank,row.total);
 }
 void Records(const Snapshot& state,View& view,const Canvas& c,float x,float width,float bottom,bool tr,bool ready) {
   const auto categories=Categories(state.results.get(),tr);
@@ -975,21 +1062,31 @@ void Records(const Snapshot& state,View& view,const Canvas& c,float x,float widt
   ImGui::SetCursorScreenPos(c.Point(x,143));
   ImGui::SetNextItemWidth(174*c.scale);
   ImGui::BeginDisabled(!ready);
+  // The card uses zero window padding. A combo inherits its vertical padding,
+  // so give this popup its own inset and complete selectable row heights.
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{12*c.scale,8*c.scale});
+  ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding,4*c.scale);
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8*c.scale,6*c.scale});
+  const float popup_height=(std::min<size_t>(categories.size(),8)*30.f+10.f)*c.scale;
+  ImGui::SetNextWindowSizeConstraints({174*c.scale,0},{300*c.scale,popup_height});
   if(ImGui::BeginCombo("##license_class",categories[view.category].c_str())) {
-    for(int i=0;i<int(categories.size());++i)
-      if(ImGui::Selectable(categories[i].c_str(),view.category==i)){view.category=i;view.reset_scroll=true;}
+    for(int i=0;i<int(categories.size());++i) {
+      if(ImGui::Selectable(categories[i].c_str(),view.category==i,0,{0,24*c.scale})){view.category=i;view.reset_scroll=true;}
+      if(view.category==i)ImGui::SetItemDefaultFocus();
+    }
     ImGui::EndCombo();
   }
+  ImGui::PopStyleVar(3);
   ImGui::EndDisabled();
   c.Text(x+188,149,12,kMuted,"[X / F]",70);
   if(!state.results){c.Text(x,211,16,kMuted,Tr(tr,"Records unavailable","Tur kayıtları alınamadı"),width);return;}
   const auto rows=OrderedRecords(*state.results,state.preferred_view,categories,view.category);
   c.Text(x+width-90,149,13,kMuted,std::to_string(rows.size())+Tr(tr," records"," kayıt"),90);
   const float track=x+100.f,time=x+width-236.f,mode=x+width-112.f;
-  c.Text(x+12,194,13,kMuted,Tr(tr,"Rank","Sıra"),80);
+  c.Centered(x+6,194,13,kMuted,Tr(tr,"Rank","Sıra"),82);
   c.Text(track,194,13,kMuted,Tr(tr,"Track / class","Pist / sınıf"),time-track-16);
-  c.Text(time,194,13,kMuted,Tr(tr,"Best lap","En iyi tur"),110);
-  c.Text(mode,194,13,kMuted,Tr(tr,"Mode","Mod"),100);
+  c.Centered(time,194,13,kMuted,Tr(tr,"Best lap","En iyi tur"),112);
+  c.Centered(mode,194,13,kMuted,Tr(tr,"Mode","Mod"),92);
   const float top=220.f,available=bottom-top;
   const int visible=std::max(1,int(available/46.f));
   const float row_height=available/visible;
@@ -1007,12 +1104,11 @@ void Records(const Snapshot& state,View& view,const Canvas& c,float x,float widt
     const auto& row=*rows[view.first_row+i];
     const float y=top+i*row_height;
     if(row.view==state.preferred_view)c.draw->AddRectFilled(c.Point(x,y),c.Point(x+width-18,y+row_height),ImGui::GetColorU32(overlay::AccentTint(.10f)));
-    c.Text(x+12,y+12,20,row.rank==1?kAccent:kWhite,std::to_string(row.rank),36);
-    if(row.total)c.Text(x+42,y+15,14,kMuted,"/ "+std::to_string(row.total),52);
+    c.Rank(x+6,y+(row_height-18)*.5f,82,18,row.rank,row.total);
     c.Text(track,y+6,15,kWhite,row.track_name,time-track-18);
     c.Text(track,y+29,12.5f,kMuted,row.category+" · 2009",time-track-18);
-    c.Text(time,y+13,17,kAccent,row.result,112);
-    c.Text(mode,y+15,14,kWhite,Mode(row.mode,tr),92);
+    c.Centered(time,y+13,17,kAccent,row.result,112);
+    c.Centered(mode,y+15,14,kWhite,Mode(row.mode,tr),92);
     c.Line(x,y+row_height,x+width-18,y+row_height);
   }
   if(maximum) {
@@ -1034,6 +1130,62 @@ void Records(const Snapshot& state,View& view,const Canvas& c,float x,float widt
   view.scroll=0;view.reset_scroll=false;
 }
 
+void BioPopup(const Snapshot& state,View& view,const Canvas& parent,bool tr,bool ready) {
+  constexpr const char* id="##license_full_bio";
+  if(view.bio_close||state.player.bio.empty())view.bio_open=false;
+  const bool popup_open=ImGui::IsPopupOpen(id);
+  if(!view.bio_open&&!popup_open) {
+    view.bio_close=false;view.bio_scroll=0;return;
+  }
+  const bool opening=view.bio_open&&!popup_open;
+  if(opening)ImGui::OpenPopup(id);
+  const float scale=parent.scale;
+  const float text_height=parent.font->CalcTextSizeA(18*scale,FLT_MAX,572*scale,state.player.bio.c_str()).y/scale;
+  const float height=std::clamp(text_height+176.f,240.f,440.f);
+  const auto& io=ImGui::GetIO();
+  ImGui::SetNextWindowPos({io.DisplaySize.x*.5f,io.DisplaySize.y*.5f},ImGuiCond_Always,{.5f,.5f});
+  ImGui::SetNextWindowSize({620*scale,height*scale},ImGuiCond_Always);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{24*scale,20*scale});
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,4*scale);
+  if(ImGui::BeginPopupModal(id,nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoSavedSettings|
+      ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoNavInputs|ImGuiWindowFlags_NoScrollWithMouse)) {
+    Canvas c{ImGui::GetWindowDrawList(),ImGui::GetWindowPos(),scale,parent.font};
+    if(!view.bio_open||view.bio_close||state.player.bio.empty()) {
+      view.bio_open=false;
+      ImGui::CloseCurrentPopup();
+    } else {
+      c.Text(24,20,22,kAccent,Tr(tr,"ABOUT ME","HAKKINDA"),572);
+      c.Text(24,52,16,kMuted,state.player.name,572);
+      c.Line(24,80,596,80);
+      ImGui::SetCursorPos({24*scale,98*scale});
+      ImGui::PushFont(parent.font,18*scale);
+      if(opening)ImGui::SetNextWindowScroll({0,0});
+      if(ImGui::BeginChild("##license_bio_text",{572*scale,(height-164)*scale},0,ImGuiWindowFlags_NoNavInputs)) {
+        if(!opening&&view.bio_scroll)ImGui::SetScrollY(std::clamp(ImGui::GetScrollY()+view.bio_scroll,0.f,ImGui::GetScrollMaxY()));
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+ImGui::GetContentRegionAvail().x);
+        ImGui::TextUnformatted(state.player.bio.c_str());
+        ImGui::PopTextWrapPos();
+      }
+      ImGui::EndChild();
+      ImGui::PopFont();
+      c.Line(24,height-52,596,height-52);
+      ImGui::SetCursorPos({24*scale,(height-38)*scale});
+      ImGui::BeginDisabled(!ready);
+      if(ImGui::Button(Tr(tr,"Close","Kapat"),{90*scale,30*scale})) {
+        view.bio_open=false;
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::EndDisabled();
+      c.Text(140,height-29,13,kMuted,Tr(tr,"A / Enter: Close   B / Esc: Back   D-pad: Scroll",
+          "A / Enter: Kapat   B / Esc: Geri   Yön: Kaydır"),456);
+    }
+    ImGui::EndPopup();
+  }
+  ImGui::PopStyleVar(2);
+  view.bio_close=false;
+  view.bio_scroll=0;
+}
+
 struct Action { bool profile = false, close = false; };
 Action DrawCard(const Snapshot& state, rex::ui::ImmediateTexture* texture,
     rex::ui::ImmediateTexture* flag_atlas,View& view,bool tr, ImFont* font, ImFont* heading, bool ready,float alpha) {
@@ -1041,6 +1193,7 @@ Action DrawCard(const Snapshot& state, rex::ui::ImmediateTexture* texture,
   const auto& io=ImGui::GetIO();
   const float scale=std::max(.1f,std::min({io.DisplaySize.x/1440.f,io.DisplaySize.y/900.f,1.35f}));
   const ImVec2 size(1100.f*scale,580.f*scale);
+  const bool main_ready=ready&&!view.bio_open;
   ImGui::PushStyleVar(ImGuiStyleVar_Alpha,ImGui::GetStyle().Alpha*alpha);
   ImGui::GetBackgroundDrawList()->AddRectFilled({0,0},io.DisplaySize,Color(0,0,0,155));
   ImGui::PushFont(font?font:ImGui::GetFont(),16.f*scale);
@@ -1080,37 +1233,40 @@ Action DrawCard(const Snapshot& state, rex::ui::ImmediateTexture* texture,
     if(flag_atlas&&!state.player.country.empty()){
       ImGui::SetCursorScreenPos(c.Point(32+name_width+12,315));Flag(flag_atlas,state.player.country,scale);
     }
-    c.Text(32,365,15,kMuted,Tr(tr,"Member since","Üyelik tarihi"),196);
-    auto membership=Membership(state.player.member_since,tr);
     if(state.player.member_since) {
-      if(tr)membership.erase(membership.find(" tarihinden"));
-      else membership.erase(0,std::string_view("Member since ").size());
-    } else membership="-";
-    c.Text(32,389,15,kMuted,membership,196);
+      auto membership=Membership(state.player.member_since,tr);
+      if(c.Measure(membership,14.5f)>196)membership=Membership(state.player.member_since,tr,true);
+      c.Text(32,365,14.5f,kMuted,std::move(membership),196);
+    }
+    BioPreview(state,view,c,tr,main_ready);
     constexpr float content_x=292.f,content_width=776.f;
+    constexpr float tabs_x=content_x+(content_width-334.f)*.5f;
     for(int tab=0;tab<2;++tab) {
-      ImGui::SetCursorScreenPos(c.Point(content_x+tab*170,84));
-      ImGui::BeginDisabled(!ready);
+      ImGui::SetCursorScreenPos(c.Point(tabs_x+tab*170,84));
+      ImGui::BeginDisabled(!main_ready);
       ImGui::PushID(tab);
       if(ImGui::InvisibleButton("license_tab",{164*scale,38*scale})){view.tab=tab;view.reset_scroll=true;}
       ImGui::PopID();
       ImGui::EndDisabled();
-      c.Text(content_x+tab*170+32,92,18,view.tab==tab?kAccent:kMuted,tab?Tr(tr,"Records","Tur kayıtları"):Tr(tr,"Overview","Genel bilgiler"),135);
+      c.Centered(tabs_x+tab*170,92,18,view.tab==tab?kAccent:kMuted,tab?Tr(tr,"Records","Tur kayıtları"):Tr(tr,"Overview","Genel bilgiler"),164);
     }
     c.Line(content_x,124,content_x+content_width,124);
-    c.draw->AddLine(c.Point(content_x+view.tab*170,124),c.Point(content_x+view.tab*170+164,124),ImGui::GetColorU32(kAccent),3*scale);
+    c.draw->AddLine(c.Point(tabs_x+view.tab*170,124),c.Point(tabs_x+view.tab*170+164,124),ImGui::GetColorU32(kAccent),3*scale);
     if(state.status!=Status::Ready)c.Text(content_x,170,16,kMuted,state.status==Status::Loading?
         Tr(tr,"Loading player...","Oyuncu yükleniyor..."):Tr(tr,"Could not load this profile. Close and try again.","Profil yüklenemedi. Kapatıp tekrar dene."),content_width);
     else if(view.tab==0)Overview(state,c,content_x,content_width,tr);
-    else Records(state,view,c,content_x,content_width,505,tr,ready);
+    else Records(state,view,c,content_x,content_width,505,tr,main_ready);
     c.Line(32,516,1068,516);
     ImGui::SetCursorScreenPos(c.Point(32,534));
-    ImGui::BeginDisabled(!ready||state.status!=Status::Ready);
+    ImGui::BeginDisabled(!main_ready||state.status!=Status::Ready);
     action.profile=ImGui::Button(Tr(tr,"Open NOBK Online profile","NOBK Online profilini aç"));
     ImGui::EndDisabled();
-    c.Text(474,543,12,kMuted,view.tab==1?
-        Tr(tr,"LB / RB: Tabs   A / Enter: Profile   B / Esc: Back   D-pad: Scroll","LB / RB: Sekmeler   A / Enter: Profil   B / Esc: Geri   Yön: Kaydır"):
-        Tr(tr,"LB / RB: Tabs   A / Enter: Profile   B / Esc: Back","LB / RB: Sekmeler   A / Enter: Profil   B / Esc: Geri"),594);
+    std::string controls=Tr(tr,"LB / RB: Tabs   A / Enter: Profile   B / Esc: Back",
+        "LB / RB: Sekmeler   A / Enter: Profil   B / Esc: Geri");
+    if(view.tab==1)controls+=Tr(tr,"   D-pad: Scroll","   Yön: Kaydır");
+    if(!state.player.bio.empty())controls+="   Y / R: Bio";
+    c.Text(474,543,12,kMuted,std::move(controls),594);
+    BioPopup(state,view,c,tr,ready);
   }
   ImGui::End();
   ImGui::PopStyleColor(10);ImGui::PopStyleVar(6);ImGui::PopFont();
@@ -1179,28 +1335,49 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
       if(avatar_)REXLOG_INFO("PLAYER_CARD request={} stage=avatar event=texture_upload success={} width={} height={}",
           snapshot.serial,texture_!=nullptr,avatar_->width,avatar_->height);
     }
+    Action shortcuts;
+    const bool bio_was_open=view_.bio_open;
     if(ready) {
-      const bool previous=(fresh&rex::input::X_INPUT_GAMEPAD_LEFT_SHOULDER)||ImGui::IsKeyPressed(ImGuiKey_Q,false);
-      const bool next=(fresh&rex::input::X_INPUT_GAMEPAD_RIGHT_SHOULDER)||ImGui::IsKeyPressed(ImGuiKey_E,false);
-      if(previous!=next) { view_.tab=1-view_.tab;view_.reset_scroll=true; }
-      if(view_.tab==1) {
+      const bool back=(fresh&rex::input::X_INPUT_GAMEPAD_B)||ImGui::IsKeyPressed(ImGuiKey_Escape,false);
+      const bool confirm=(fresh&rex::input::X_INPUT_GAMEPAD_A)||ImGui::IsKeyPressed(ImGuiKey_Enter,false);
+      if(bio_was_open)view_.bio_close=back||confirm;
+      else {
+        shortcuts.close=back;
+        if(!back&&!snapshot.player.bio.empty()&&
+            ((fresh&rex::input::X_INPUT_GAMEPAD_Y)||ImGui::IsKeyPressed(ImGuiKey_R,false)))view_.bio_open=true;
+        else shortcuts.profile=confirm;
+      }
+      if(!view_.bio_open) {
+        const bool previous=(fresh&rex::input::X_INPUT_GAMEPAD_LEFT_SHOULDER)||ImGui::IsKeyPressed(ImGuiKey_Q,false);
+        const bool next=(fresh&rex::input::X_INPUT_GAMEPAD_RIGHT_SHOULDER)||ImGui::IsKeyPressed(ImGuiKey_E,false);
+        if(previous!=next) { view_.tab=1-view_.tab;view_.reset_scroll=true; }
+      }
+      if(!view_.bio_open&&view_.tab==1) {
         if((fresh&rex::input::X_INPUT_GAMEPAD_X)||ImGui::IsKeyPressed(ImGuiKey_F,false)) {
           view_.category=(view_.category+1)%int(Categories(snapshot.results.get(),tr_).size());view_.reset_scroll=true;
         }
+      }
+      if(view_.bio_open||view_.tab==1) {
         const auto now=ImGui::GetTime();
         const uint16_t directions=buttons&(rex::input::X_INPUT_GAMEPAD_DPAD_UP|rex::input::X_INPUT_GAMEPAD_DPAD_DOWN);
         const bool repeat=directions&&(now>=scroll_at_||(fresh&directions));
         const bool down=(repeat&&(directions&rex::input::X_INPUT_GAMEPAD_DPAD_DOWN))||ImGui::IsKeyPressed(ImGuiKey_DownArrow);
         const bool up=(repeat&&(directions&rex::input::X_INPUT_GAMEPAD_DPAD_UP))||ImGui::IsKeyPressed(ImGuiKey_UpArrow);
-        if(down!=up)view_.scroll=(down?1.f:-1.f)*60.f*std::clamp(ImGui::GetIO().DisplaySize.y/640.f,.65f,1.5f);
+        if(down!=up) {
+          const float movement=(down?1.f:-1.f)*60.f*std::clamp(ImGui::GetIO().DisplaySize.y/640.f,.65f,1.5f);
+          if(view_.bio_open)view_.bio_scroll=movement;
+          else view_.scroll=movement;
+        }
         if(repeat)scroll_at_=now+.12;
       }
     }
     auto action = DrawCard(snapshot, texture_.get(),flag_texture_.get(),view_, tr_, font_, heading_, ready,alpha);
-    if (ready) {
-      action.close |= (fresh & rex::input::X_INPUT_GAMEPAD_B) || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
-      action.profile |= (fresh & rex::input::X_INPUT_GAMEPAD_A) || ImGui::IsKeyPressed(ImGuiKey_Enter, false);
-    }
+    action.close|=shortcuts.close;
+    // Closing the bio consumes A/Enter and B/Esc. Neither action may also
+    // open the website or dismiss the license behind the modal in that frame.
+    if(!bio_was_open&&!view_.bio_open)action.profile|=shortcuts.profile;
+    if(bio_was_open!=view_.bio_open)REXLOG_INFO("PLAYER_CARD request={} event={}bio",
+        snapshot.serial,view_.bio_open?"open_":"close_");
     if (action.close) { state_->Dismiss(); return; }
     if (action.profile && snapshot.status == Status::Ready) {
       const bool opened=OpenProfile(snapshot.player.name);
