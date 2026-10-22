@@ -1,9 +1,13 @@
 # Rider License local validation — 22 October 2026
 
-Scope: current local changes after `1b8e105`, including Rider Rank, summary
-labels, footer and Personal Best alignment, removal of routine diagnostics,
-general bio emoji rendering and approved launcher version `1.1.11`.
-The existing integration PR remains unchanged; transfer is paused by the user.
+Scope: the source milestone committed and pushed to `main` as `8a33ea9`,
+including Rider Rank, summary labels, footer and Personal Best alignment,
+removal of routine diagnostics, general bio emoji rendering and approved
+launcher version `1.1.11`. Rider License was subsequently transferred selectively
+to `preview` as `ab7d3f7` for the existing integration PR. These results apply to
+the main source milestone; the integration worktree was not separately rebuilt
+and excludes the local probe implementations and two unrelated launcher fixes.
+See [the handoff](chunchunq-handoff.md) for transfer boundaries.
 
 ## Process failure and prevention
 

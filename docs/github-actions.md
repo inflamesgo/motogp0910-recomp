@@ -2,7 +2,7 @@
 
 The `Windows build` workflow is deliberately manual-only. Pushing commits,
 opening pull requests and editing documentation do not start builds. Do not
-dispatch the workflow until the owner requests the first build. No scheduled
+dispatch the workflow until the owner requests a build. No scheduled
 builds, releases or Pages deployments are configured by this workflow.
 
 ## Connect the private inputs
@@ -60,16 +60,19 @@ cached. The inputs are removed at job completion, including failures.
 After the private secret is configured and the owner requests a build:
 
 1. Open **Actions > Windows build > Run workflow**.
-2. Select `main` and click **Run workflow**. Other branches are skipped.
-3. Download the Windows artifact from the completed run. Its name includes
-   the checked-out commit title rather than a long hash. GitHub's downloaded
-   ZIP contains the launcher, `bin/` and `resources/` directly, with no second
-   ZIP to extract. It does not create a GitHub release.
+2. Select `main`, leave **quality_checks** off for an ordinary build-only
+   request, and click **Run workflow**. Other branches are skipped.
+3. Also dispatch **Quick quality checks** on `main`, as the owner requested for
+   ordinary build requests. This is separate from the optional Windows probe suite.
+4. The downloadable Windows artifact is named after the checked-out commit title.
+   GitHub's artifact ZIP contains a second, prepared application ZIP. Extract
+   that inner ZIP to obtain the launcher, `bin/`, `resources/`, `game/` and
+   `dlc/`. A workflow build does not create a GitHub release.
 
-The packaging script still validates a uniquely named local ZIP before the
-workflow uploads its staged application files. GitHub omits empty directories,
-so create `game/` when adding your original disc files to a fresh extraction,
-or select your existing game folder in the launcher.
+The packaging script validates a uniquely named application ZIP before upload.
+Uploading that prepared ZIP preserves the empty `game/` and `dlc/` directories;
+GitHub's outer artifact wrapper alone would otherwise omit empty directories.
+An updater manifest must point to the application ZIP, not that outer wrapper.
 
 The workflow uses a fresh Windows 2025 runner, LLVM 20.1.8, the SDK pin from
 `sdk-version.json` and the matching custom runtime manifest. The Windows helper
@@ -83,8 +86,9 @@ public repositories; private repositories use the owner's Actions allowance.
 
 ## Enable automatic builds later
 
-After the first requested build succeeds, a `push` trigger restricted to
-`main` can be added in a separate change. There is no such trigger today.
+Automatic Windows builds are not configured. Changing that policy requires a
+separate user request; the existing manual workflow is deliberate. Quick quality
+checks already has a main push trigger, as described below.
 Avoid pull-request triggers that expose private inputs to unreviewed code.
 
 ## Quality checks
@@ -94,6 +98,10 @@ Avoid pull-request triggers that expose private inputs to unreviewed code.
 server protocol, storage and security regression suites on both Linux and Windows.
 It does not use private inputs, download SDKs, build the game or access the live
 community service. Failed checks are reported on the commit and Actions run.
+For an ordinary requested build, put `[skip ci]` in the commit body to suppress
+duplicate push-triggered checks, then dispatch both workflows explicitly. Do not
+inspect run status/logs/artifacts afterward unless the user separately asks.
+Documentation-only maintenance does not require a Windows build or local tests.
 
 For the manual Windows CPU/UI suite, open **Windows build > Run workflow** and
 enable **quality_checks**. The build helper then builds the selected existing
@@ -117,6 +125,8 @@ To stop the generated `pages-build-deployment` workflow, open **Settings >
 Pages**, leave **Source** as **Deploy from a branch**, select **None** in the
 branch selector and click **Save**. This disables website publishing without
 disabling the Windows build workflow or deleting repository files.
+
+## Historical workflow evidence
 
 The first requested build confirmed Google Drive input download and SHA-256
 checks, then exposed an older Windows PowerShell runtime-staging command

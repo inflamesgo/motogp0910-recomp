@@ -3,6 +3,10 @@
 - Write all new and updated Markdown documentation in English. Preserve exact
   localized UI labels, glyph samples, identifiers and source quotations where
   necessary to explain behavior; explanatory prose must be English.
+- Do not write or expand the root README until the user declares the entire
+  project complete. Preserve its existing placeholder; keep current technical
+  and usage documentation under `docs/` instead. A general documentation audit
+  does not authorize creating the final README.
 - Development Windows packages omit README files, feature readmes, SHA256SUMS
   and separate license folders. Preserve source licenses and embedded launcher
   notices. The user will add the final release README later.

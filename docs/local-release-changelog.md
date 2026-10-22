@@ -1,6 +1,7 @@
 # MotoGP 09/10: changes relative to ChunchunQ's online fork
 
-Prepared on 21 October 2026; updated on 22 October 2026. This is the full local changelog and comparison
+Prepared on 21 October 2026; updated on 23 October 2026. This is the full local
+changelog and comparison
 record. It is **not part of the online-only handoff bundle**.
 
 ## Subsequent Rider License release: 1.1.11
@@ -13,12 +14,19 @@ distinct led circuits out of 20 including DLC; Records Held counts first-place
 boards, while Boards Entered counts submitted circuit/class boards. The card
 keeps its temporary 2009 scope independently of the website ranking scope.
 
-The current local extension also centers the changing footer hint group and
+The final main extension also centers the changing footer hint group and
 Personal Best middle column, removes routine diagnostics, corrects small-screen
 font selection and embeds general bio emoji artwork with its OFL notices.
-This extension has not been transferred to the existing PR: the user paused
-that operation. See [validation](rider-license-validation.md) and
-[the current handoff](chunchunq-handoff.md) for the separate delivery/test states.
+See [validation](rider-license-validation.md) and
+[the current handoff](chunchunq-handoff.md) for the source and selective-transfer
+evidence boundaries.
+
+The complete Rider License source milestone was pushed to `main` as `8a33ea9`.
+Its feature dependencies were selectively transferred to the existing `preview`
+PR as `ab7d3f7`; this full local changelog was excluded. The later main Windows
+Release build includes the earlier source-only polish mentioned below. See
+[local validation](rider-license-validation.md) for phased checks and native
+platform limits; the selective integration worktree was not separately rebuilt.
 
 ## Comparison scope
 
@@ -290,8 +298,10 @@ for integration, not server changes already implemented by this work.
   migration belong in the full project changelog; they are not automatically
   required in a minimal online PR.
 
-Start a clean integration branch from **ChunchunQ's `nobk-online`** and transfer
-reviewed files/hunks. Do not merge all of our `main` or cherry-pick mixed feature
+The initial integration was prepared from **ChunchunQ's `nobk-online`**. Extend
+the existing reviewed `preview` history with selected files/hunks; do not restart
+from the old baseline or remove features already accepted in that PR. Do not merge all
+of our `main` or cherry-pick mixed feature
 commits wholesale. Keep `.github`, root README changes, `AGENTS.md`, private
 environment instructions, historical packages and original content out of that
 PR. Select CMake/application/launcher hunks with their actual dependencies.
@@ -315,7 +325,10 @@ mapping and independent season storage/query behavior. They require evidence
 and design rather than labels or a claim of completed testing. The required
 local DLC policy is implemented without server-side package checks.
 
-## Validation and final delivery review
+## Historical source-delivery review — 21 October 2026
+
+The bullets below retain the original source-only review boundary. They predate
+the opened PR, `ab7d3f7` transfer and later main build/validation noted above.
 
 - The previous local Windows x64 release build completed on 21 October 2026 and
   produced `MotoGP0910-Windows-x64-Local-Update-20261021-145726.zip`. No game,

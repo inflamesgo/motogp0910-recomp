@@ -3,7 +3,7 @@
 Target integration branch: **ChunchunQ / `nobk-online`**.
 Scope: DLC-aware online records, website catalogue, room compatibility,
 account recovery, the in-game Rider License and the MotoGP launcher update
-service. Prepared on 21 October 2026; updated on 22 October 2026. This document and
+service. Prepared on 21 October 2026; updated on 23 October 2026. This document and
 [the factual catalogue](online-dlc-catalog.json) are self-contained; no website
 or production service was modified during this investigation.
 
@@ -16,15 +16,16 @@ describes the completed client delivery and its remaining service integration.
 
 The existing integration PR is
 [ChunchunQ/motogp0910-recomp#1](https://github.com/ChunchunQ/motogp0910-recomp/pull/1),
-from `inflamesgo:preview` to `ChunchunQ:nobk-online`. At the latest inspection it
-was open with source revision `6013abe9b56b064676affe3aa61ecf1a7d11ca59`.
-Rider License work was implemented afterward on our `main` through `1b8e105`,
-with Rider Rank, label, debug-log cleanup, footer alignment, bio emoji support
-and launcher version `1.1.11` currently in the local working tree. These additions
-and this updated handoff have **not
-yet been transferred to the PR**: the user paused that transfer for the current
-UI revisions. Source implementation, PR delivery and native validation are
-separate states; do not describe the pending extension as already delivered.
+from `inflamesgo:preview` to `ChunchunQ:nobk-online`. The source baseline for this extension is
+`6013abe9b56b064676affe3aa61ecf1a7d11ca59`; Rider License was pushed to
+`preview` as `ab7d3f7` after the user approved the selective transfer.
+The user approved extending that PR with Rider License from `main` revision
+`8a33ea9`: Rider Rank, corrected metric names, aligned profile details, bio emoji
+support, removal of routine diagnostics and launcher version `1.1.11`.
+This extension carries the reviewed feature dependencies onto the existing
+`preview` history, preserving its previously included production features.
+It does not merge the full `main` branch or include local validation tools,
+CI/workspace rules, build archives or unrelated launcher layout fixes.
 
 | Component | Implemented in our client | Remaining integration |
 | --- | --- | --- |
@@ -33,7 +34,7 @@ separate states; do not describe the pending extension as already delivered.
 | DLC installation/loading | Required three-package import plus runtime enumeration/mounting from portable `dlc/434307F0`. | Carry the runtime/path support; extend website metadata and verify Moto2/season behavior below. |
 | Public room capacity | Private Slots row removed; new PC-hosted rooms use zero private slots. | Carry client menu/bridge changes; retain wire fields for compatibility. No server schema change is needed for this alone. |
 | Account UI and recovery | **Forgot password?** and **My account** follow FIFA's shared website URLs. Remember me uses persistent or session-only tokens; country is read from the account API. | Carry the launcher changes. Preserve the optional `country` string on login/token refresh. No new recovery API is needed; Online PLAY still requires sign-in. |
-| Rider License | Native **View profile** opens Overview/Records, avatar/flag, membership/bio, selected-board personal best with outline/date, and the website's **Rider Rank**. Routine debug logs are removed; failure warnings remain. | The extension is pending transfer to the existing PR. Preserve the temporary 2009 scope; integrate lobby context, season/Moto2 metadata and DLC artwork as described below. |
+| Rider License | Native **View profile** opens Overview/Records, avatar/flag, membership/bio, selected-board personal best with outline/date, and the website's **Rider Rank**. Routine debug logs are removed; failure warnings remain. | Included in this PR extension. Preserve the temporary 2009 scope; integrate lobby context, season/Moto2 metadata and DLC artwork as described below. |
 
 Launcher version `1.1.11` is approved for this release. Both bio displays use
 the embedded Noto catalogue (5,709 emoji sequences / 4,068 shared sprites),
@@ -282,8 +283,9 @@ and flag-icons attribution in both source and embedded notices. Do not copy the
 dialog alone or omit its input isolation/cleanup. Personal Best now centers its
 circuit name, lap and a single class/2009/mode line in the middle column, with
 equal insets between the map and rank dividers. The outline and rank/date retain
-their positions. This spacing adjustment is implemented locally and still
-pending PR transfer along with the other Rider License refinements.
+their positions. This spacing adjustment is included along with the other
+Rider License refinements. Emoji PNG/metadata resources, their regeneration
+script, Noto OFL notice and the flag-icons MIT attribution accompany the feature.
 
 Native DLC online writes/reads and mixed-content races were not executed in this
 investigation. There is no claim that all client-side Moto2 normalization is
@@ -382,11 +384,10 @@ Preserve those upstream changes; do not count them as new work from this handoff
 
 ## 7. Transfer boundaries and dependencies
 
-The existing PR already uses the reviewed `preview` branch. Once the user
-resumes transfer, update that PR's source branch with reviewed feature hunks;
+The existing PR uses the reviewed `preview` branch. This extension is prepared
+separately from its frozen handoff worktree and preserves that source history;
 a new PR is not needed while it remains open. Do not merge our whole `main` or
-cherry-pick mixed feature commits blindly. Keep the original frozen handoff
-worktree intact while preparing the PR extension separately.
+cherry-pick mixed feature commits blindly.
 
 - Carry the client features in the status table, their headers/implementation
   files and the necessary CMake/application lifecycle wiring. The portable DLC
@@ -402,6 +403,9 @@ worktree intact while preparing the PR extension separately.
   must not be used to remove features already included in this PR. Carry only
   the new Rider License dependencies for its extension; copying full mixed
   files can accidentally import probes, unrelated packaging or CI changes.
+  Existing application-based optional targets receive only the link/resource
+  dependencies needed by the updated application header; no new probe target
+  or local test implementation is added.
 - Exclude `.github/`, root README edits, `AGENTS.md`, private environment/setup
   instructions, screenshots, historical ZIPs and the full local changelog.
   This English handoff and `online-dlc-catalog.json` are the service reference.
@@ -440,12 +444,20 @@ The original handoff review performed no new application build, gameplay/UI/
 server or probe tests or service deployment. The upstream PR was subsequently
 opened as linked above. Windows build and Quick quality checks were dispatched
 for Rider License commit `1b8e105`; their results were not inspected here.
-The latest local Rider Rank, naming, debug-log cleanup, footer, emoji and
-version edits have a successful local Windows Release build and package. Local
-validation includes 60 server tests, 6,807 Rider License checks, 65,765
-launcher viewport checks and 10,807 focused launcher regression checks. See
-[the validation report](rider-license-validation.md)
-for general regression coverage and the fixture/layout corrections. These
-changes have **not been transferred to the PR**. Native online/Moto2/season
-behavior, physical-controller/Windows-GPU playthroughs and real-service
-updater/rollback acceptance remain pending.
+Source revision `8a33ea9` has a successful local Windows Release build and
+package. Its local validation includes 60 server tests, 6,807 Rider License
+checks, 65,765 launcher viewport checks and 10,807 focused launcher regression
+checks under Wine/CPU/ImGui, with the launcher audited in phases rather than a
+single final all-green umbrella run. These are source-branch results, not a
+claim that this selectively prepared integration worktree was rebuilt or that
+excluded local test tools are part of the PR. Transfer review checks exact
+feature-file correspondence, required source/resource/license/build wiring
+and the exclusion boundaries above. No new build, broad regression campaign
+or service deployment is performed for this transfer.
+Native online/Moto2/season behavior, physical-controller/Windows-GPU
+playthroughs and real-service updater/rollback acceptance remain pending.
+
+The main-branch [local validation report](rider-license-validation.md) retains
+the detailed source-branch evidence. That report and its probe implementations
+are not part of the selective PR transfer. The PR body update attempt was denied
+by GitHub permissions; its text is not evidence of the code delivery state.

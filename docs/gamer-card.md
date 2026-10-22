@@ -1,7 +1,8 @@
 # In-game rider license
 
-The user accepted the design at commit `1b8e105` as the final Game Card design
-on 2026-10-22. Use this layout, typography, artwork and interaction pattern as
+The user accepted the design at commit `1b8e105` on 2026-10-22, then approved
+the refinements finalized in main commit `8a33ea9` for launcher **1.1.11**. Use this
+layout, typography, artwork and interaction pattern as
 the baseline for subsequent fixes. Further visual redesign requires new user
 direction. The user subsequently requested a limited extension: the website's
 **Rider Rank**, **Tracks Held** naming and a clearer label for boards entered.
@@ -24,8 +25,9 @@ The ramps use smoothstep opacity over 24 seamless bands. This permanent
 difference between stripes is independent of the opening animation.
 The user supplied native screenshots of both tabs and confirmed that account
 data and avatars load in game. Windows build and Quick quality checks were
-dispatched for `1b8e105`; no local builds or tests were run, and workflow results
-were not inspected. The approved design is implemented on an 1100 by
+dispatched for `1b8e105`; that dispatch did not include local validation or
+inspection of workflow results. The subsequent `8a33ea9` source milestone passed
+[local phased checks and a Windows Release build](rider-license-validation.md). The approved design is implemented on an 1100 by
 580 design canvas, scaled uniformly to fit the display. Text and hit targets
 share that canvas; the outer window has no scroll state. Overview fits without
 scrolling. Records draws complete rows with a dedicated row-based scrollbar,
@@ -317,7 +319,8 @@ from a closed card or another selected player cannot replace the current card's
 name or image.
 
 The worker reuses a WinHTTP session and connection across identity, metadata,
-avatar, optional circuit outlines and subsequent player requests, allowing HTTPS keep-alive instead of
+avatar, optional circuit outlines and subsequent player requests, allowing HTTPS
+keep-alive instead of
 recreating the entire session for each download. Requests use asynchronous
 WinHTTP completion callbacks with a cancellable worker wait. Closing the card,
 selecting another player or shutting down cancels the current request; the next
@@ -381,7 +384,8 @@ Warnings do not contain response bodies, passwords, tokens, cookies or bio text.
 
 For a missing avatar/country, open that player's card, wait for loading to finish,
 then share the newest game log from the install's `logs/` directory. Search for
-`PLAYER_CARD` to follow the request. A default helmet is expected for an account
+`PLAYER_CARD` warnings to identify failures; successful request stages no longer
+emit informational traces. A default helmet is expected for an account
 whose public profile explicitly reports no photo.
 
 If the player name cannot be resolved, the card explains the failure and keeps
@@ -428,16 +432,18 @@ and selected-board ordering, as well as a lobby member,
 multiple leaderboard rows including the local player, accounts with/without a
 photo, failed lookups, opening/dismissal presses and switching to the browser
 and back. Native playthrough checks remain pending; local CPU/UI coverage is
-recorded in [the validation report](rider-license-validation.md). Development continues
-on `main`. The user requested adding Rider License to the existing PR from
-`preview`, then paused that transfer for further UI edits. The PR source and
-original handoff worktree have not been changed by these local revisions; see
-[the updated handoff](chunchunq-handoff.md) for delivery status. The Windows Actions
-workflow is dispatched with `quality_checks=false`. As of the user's latest
-preference, each "build" request also explicitly dispatches `quality-checks.yml`
-(Quick quality checks) on `main`. For this revision, the user explicitly
-requested comprehensive local checks and a local Windows build instead.
-The default workflow for later ordinary build requests remains unchanged.
-`[skip ci]` avoids duplicate push-triggered checks; both workflows are dispatched
-explicitly. Do not monitor their results or repeat that restriction in the
-completion message; simply confirm the push and the two dispatches.
+recorded in [the validation report](rider-license-validation.md).
+
+## Delivery and superseded design notes
+
+Main commit `8a33ea9` contains the approved Rider License, Rider Rank, centered
+controller footer and Personal Best details, general emoji support, diagnostic
+cleanup and launcher version 1.1.11. The accepted design requirements from the
+former follow-up checklist are consolidated above; no new redesign is pending.
+The feature and its required resources/licenses were selectively pushed to
+`preview` as `ab7d3f7` for the existing upstream PR. The original frozen handoff
+worktree was retained. See [the handoff](chunchunq-handoff.md) for exact scope.
+
+Ordinary future build requests dispatch both Actions workflows on `main` under
+[the repository rules](../AGENTS.md). The local validation/build recorded for
+this milestone was an explicit exception, not a new default build policy.
