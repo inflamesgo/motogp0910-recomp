@@ -389,3 +389,49 @@ outside the current scope. The extension was initially syntax-checked only. The 
 local regression
 includes the current `lap_times_probe`; neither that probe nor the display fix
 validates real ghost transfer, Monthly rollover or an Internet race.
+
+## Track-menu mode selection and Time Trial query ownership
+
+The track menus apply a request-local mode predicate to timed display queries:
+Arcade = native mode 2, Career = unflagged modes 3–6, Championship = the native
+`0x10000000` flag, Time Trial = unflagged mode 10. Missing/invalid mode metadata
+is excluded. The standalone Lap Times screen remains an overall leaderboard.
+Arcade score categories and internal best-rating reads retain their native path.
+
+The deployed binary statistics protocol has no mode predicate. The client reads
+complete ranked pages, selects matching records, assigns ranks within that mode,
+and then applies page/around-player/by-user selection. It does not filter only
+the first ten global rows or leave gaps in mode-relative ranks. Work is bounded
+at approximately 10,000 entries per query; an incomplete/oversized response fails
+rather than presenting a partial board as complete. No extra HTTP endpoint or
+server deployment is required for this display correction.
+
+For Time Trial track-menu lap queries, group 0 is read from the corresponding
+native all-time group 2 (`view + 126`). The native submission path at `822FF518`
+keeps its Time Trial lap independently there, while group 0 can retain a faster
+lap from another mode. This reads statistics only and does not restore ghost
+replay downloading. The native result still carries the view ID requested by the
+guest, preserving its selected-track and output ABI contract.
+
+Time Trial initialization at `82234680` starts two copies of the same initial
+board query back to back (`8223477C`, `8223478C`). The second board at menu
+`+0x48FC` has no result-consumption path. Both native statistics objects share
+specification, output and overlapped/completion state. Starting the second query
+resets/cancels the first before the visible menu consumes its rows; the client
+completion worker can still write the older request's output. The Online path
+suppresses the second call at return address `82234790`. The normal global and
+friends requests continue, and Offline/LAN keep the original behavior. Native
+board destruction removes mode tags; standalone pages do not inherit them.
+
+`leaderboard_filter_probe` covers mixed-mode records, the Championship flag,
+mode-relative ranking, paging, player-specific reads, records beyond the first
+server page, invalid metadata and nested scope restoration. Quick quality checks
+run this small portable probe on Linux; the Windows build compiles the production
+native hooks. A native Windows menu check is still needed to establish rendered
+behavior. No local build or regression campaign is part of an ordinary build
+request.
+
+Storage remains one best record per `(player, view)`. The filter cannot recover
+historic Career/Championship laps already displaced by another mode in that view.
+Independent per-mode history requires a backward-compatible server storage and
+query change; this client fix does not relabel or modify existing records.

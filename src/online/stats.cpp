@@ -68,9 +68,16 @@ bool Valid(rex::system::KernelState* kernel,uint32_t address,size_t length){
 std::vector<Spec> Specs(lan::GuestBridge& bridge,uint32_t count,uint32_t address){
  if(!count || count>16 || !bridge.Valid(address,count*136))throw std::runtime_error("Invalid statistics specifications");
  std::vector<Spec> result;const auto* base=bridge.Kernel()->memory()->virtual_membase();
- for(unsigned i=0;i<count;++i){const auto* p=base+address+i*136;Spec spec;spec.view=U32(p);const auto columns=U32(p+4);if(!spec.view || spec.view>378 || columns>64)throw std::runtime_error("Unsupported statistics specification");
-  std::set<uint16_t> distinct;for(unsigned j=0;j<columns;++j){const auto id=rex::memory::load_and_swap<uint16_t>(p+8+j*2);if(!distinct.insert(id).second)throw std::runtime_error("Duplicate statistics column");spec.columns.push_back(id);}result.push_back(std::move(spec));
+ for(unsigned i=0;i<count;++i){const auto* p=base+address+i*136;Spec spec;spec.view=U32(p);spec.mode=requested_board_mode;const auto columns=U32(p+4);if(!spec.view || spec.view>378 || columns>64)throw std::runtime_error("Unsupported statistics specification");
+  std::set<uint16_t> distinct;for(unsigned j=0;j<columns;++j){const auto id=rex::memory::load_and_swap<uint16_t>(p+8+j*2);if(!distinct.insert(id).second)throw std::runtime_error("Duplicate statistics column");spec.columns.push_back(id);}if(!TimedDisplay(spec))spec.mode=BoardMode::Any;result.push_back(std::move(spec));
  }return result;
+}
+Page ReadBoard(const std::shared_ptr<Client>& client,const Spec& spec,uint32_t start,uint32_t count,
+               std::span<const uint64_t> users={},uint64_t around=0){
+ return ReadModeBoard(spec.view,spec.mode,start,count,users,around,
+  [&](uint32_t view,uint32_t first,uint32_t amount,std::span<const uint64_t> selected,uint64_t center){
+   return client->Read(view,first,amount,selected,center);
+  });
 }
 class Enumerator final:public rex::system::XEnumerator {
  rex::system::KernelState* kernel_;std::shared_ptr<Client> client_;std::vector<Spec> specs_;
@@ -83,7 +90,7 @@ class Enumerator final:public rex::system::XEnumerator {
   std::lock_guard lock(mutex_);if(written)*written=0;if(done_)return 18;
   if(!Valid(kernel_,output,size_))return 87;
   try{
-   std::vector<Page> pages;for(const auto& spec:specs_)pages.push_back(client_->Read(spec.view,mode_==1?static_cast<uint32_t>(first_):1,count_,{},mode_==0?first_:0));
+   std::vector<Page> pages;for(const auto& spec:specs_)pages.push_back(ReadBoard(client_,spec,mode_==1?static_cast<uint32_t>(first_):1,count_,{},mode_==0?first_:0));
    // Recheck after the network wait; do not retain a writable guest pointer.
    if(!Valid(kernel_,output,size_))return 87;
    (void)data;WriteResults(kernel_->memory()->virtual_membase(),output,specs_,pages);done_=true;if(written)*written=1;return 0;
@@ -140,7 +147,7 @@ std::function<uint32_t()> PrepareRead(lan::GuestBridge& bridge,uint32_t buffer,u
   auto specs=Specs(bridge,num_specs,input);const auto required=ResultsSize(specs,std::max(1u,count));if(bytes<required)return fail(Error(122));if(!bridge.Valid(output,bytes,true))return fail(Error(87));
   std::vector<uint64_t> identities;for(unsigned i=0;i<count;++i){auto id=U64(base+users+i*8);if(id==bridge.Kernel()->user_profile()->xuid())id=bridge.Network().Identity();identities.push_back(id);}
   return [client=bridge.Online(),kernel=bridge.Kernel(),specs=std::move(specs),identities=std::move(identities),count,output,bytes](){
-   try{std::vector<Page> pages;for(const auto& spec:specs)pages.push_back(client->Read(spec.view,1,std::max(1u,count),identities));
+   try{std::vector<Page> pages;for(const auto& spec:specs)pages.push_back(ReadBoard(client,spec,1,std::max(1u,count),identities));
     if(!Valid(kernel,output,bytes))return Error(87);WriteResults(kernel->memory()->virtual_membase(),output,specs,pages);return 0u;
    }catch(const std::exception& error){REXLOG_WARN("ONLINE_STATS: read failed: {}",error.what());return Error(1231);}
   };

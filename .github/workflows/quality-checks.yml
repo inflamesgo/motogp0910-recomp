@@ -43,3 +43,9 @@ jobs:
 
       - name: Run existing protocol, storage and security regression tests
         run: python -m unittest discover -s server -p "test_*.py" -v
+
+      - name: Check leaderboard mode selection and pagination
+        if: runner.os == 'Linux'
+        run: |
+          g++ -std=c++23 -Wall -Wextra -Werror -Isrc tools/leaderboard_filter_probe.cpp -o /tmp/leaderboard-filter-probe
+          /tmp/leaderboard-filter-probe

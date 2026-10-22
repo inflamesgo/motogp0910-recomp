@@ -1,11 +1,12 @@
 #pragma once
 #include "client.h"
+#include "leaderboard_filter.h"
 #include <rex/system/kernel_state.h>
 #include <optional>
 #include <functional>
 namespace motogp::lan {class GuestBridge;}
 namespace motogp::online {
-struct Spec {uint32_t view=0;std::vector<uint16_t> columns;};
+struct Spec {uint32_t view=0;std::vector<uint16_t> columns;BoardMode mode=BoardMode::Any;};
 // Xbox ABI: read results 8 bytes; views 16; rows 48; columns 24.
 uint32_t ResultsSize(const std::vector<Spec>&,uint32_t rows);
 void WriteResults(uint8_t* memory,uint32_t output,const std::vector<Spec>&,
