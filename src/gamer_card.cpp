@@ -14,6 +14,7 @@
 #include <rex/ui/image_decode.h>
 #include <rex/ui/window.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <algorithm>
 #include <array>
@@ -24,15 +25,18 @@
 #include <cstdint>
 #include <cfloat>
 #include <ctime>
+#include <cstring>
 #include <mutex>
 #include <optional>
 #include <set>
+#include <span>
 #include <stop_token>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 REX_EXTERN(__imp__sub_82303260);
@@ -54,8 +58,43 @@ const auto& kAccent=overlay::orange;
 const auto& kWhite=overlay::white;
 const auto& kMuted=overlay::muted;
 struct FontFace {ImFont* font;float size;};
-constexpr int kFontSizes[]{12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,36,40,44,48,52,56};
+constexpr int kFontSizes[]{5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,36,40,44,48,52,56};
 std::array<ImFont*,std::size(kFontSizes)> profile_fonts{};
+struct BioHash {
+  using is_transparent=void;
+  size_t operator()(std::string_view value)const noexcept{return std::hash<std::string_view>{}(value);}
+};
+std::unordered_map<std::string,ImWchar,BioHash,std::equal_to<>> emoji_aliases;
+size_t emoji_max_bytes=0;
+std::string EmojiText(std::string_view source) {
+  if(emoji_aliases.empty())return std::string(source);
+  std::string text;
+  for(size_t i=0;i<source.size();) {
+    if(source.substr(i,3)=="\xEF\xB8\x8F"){i+=3;continue;} // Emoji presentation selector.
+    text+=source[i++];
+  }
+  std::string result;
+  for(size_t at=0;at<text.size();) {
+    const auto byte=static_cast<unsigned char>(text[at]);
+    if(byte<0x80&&text[at]!='#'&&text[at]!='*'&&(text[at]<'0'||text[at]>'9')) {
+      result+=text[at++];continue;
+    }
+    bool matched=false;
+    for(size_t size=std::min(emoji_max_bytes,text.size()-at);size>0;--size) {
+      const auto item=emoji_aliases.find(std::string_view(text).substr(at,size));
+      if(item==emoji_aliases.end())continue;
+      const auto code=uint32_t(item->second);
+      result+=char(0xE0|(code>>12));result+=char(0x80|((code>>6)&63));result+=char(0x80|(code&63));
+      at+=size;matched=true;break;
+    }
+    if(!matched) {
+      // A joiner without a supported combined sequence remains invisible.
+      if(std::string_view(text).substr(at,3)=="\xE2\x80\x8D")at+=3;
+      else result+=text[at++];
+    }
+  }
+  return result;
+}
 FontFace Face(ImFont* fallback,float pixels) {
   size_t best=profile_fonts.size();
   float distance=FLT_MAX;
@@ -122,8 +161,23 @@ struct Record {
 };
 struct Results {
   std::vector<Record> rows;
-  unsigned tracks=0, firsts=0;
 };
+struct RecordSummary {size_t tracks_held=0,records_held=0,boards_entered=0;};
+RecordSummary SummarizeRecords(const std::vector<const Record*>& rows) {
+  std::set<int> tracks;
+  size_t firsts=0;
+  for(const auto* row:rows)if(row->rank==1) {
+    if(row->track!=17)tracks.insert(row->track);
+    ++firsts;
+  }
+  return {tracks.size(),firsts,rows.size()};
+}
+struct RankingEntry {
+  uint32_t id=0;
+  int64_t firsts=0,points=0,position=0;
+  std::set<int> tracks;
+};
+struct Ranking {std::vector<RankingEntry> players;};
 
 std::string Text(const nlohmann::json& object,const char* key,size_t limit=96) {
   const auto value=object.find(key);
@@ -177,7 +231,6 @@ std::shared_ptr<const Results> ReadResults(const nlohmann::json& json,uint64_t s
     return {};
   }
   auto results=std::make_shared<Results>();
-  std::set<int> tracks;
   std::set<uint32_t> views;
   for(const auto& item:*records) {
     if(!item.is_object())continue;
@@ -203,16 +256,11 @@ std::shared_ptr<const Results> ReadResults(const nlohmann::json& json,uint64_t s
     if(const auto display=item.find("display");display!=item.end()&&display->is_object())
       row.result=Text(*display,"text",32);
     if(row.result.empty())row.result="-";
-    if(row.rank==1)++results->firsts;
-    if(!kTracks[row.track].empty())tracks.insert(row.track);
     results->rows.push_back(std::move(row));
   }
-  results->tracks=static_cast<unsigned>(tracks.size());
   std::stable_sort(results->rows.begin(),results->rows.end(),[](const auto& a,const auto& b){
     return a.rank!=b.rank?a.rank<b.rank:a.updated>b.updated;
   });
-  REXLOG_INFO("PLAYER_CARD request={} stage=records event=ready rows={} tracks={} firsts={}",
-      serial,results->rows.size(),results->tracks,results->firsts);
   return results;
 }
 
@@ -303,8 +351,6 @@ class PublicClient {
       const auto remaining=std::chrono::duration_cast<std::chrono::milliseconds>(
           deadline-std::chrono::steady_clock::now()).count();
       if(!cold||!transient||remaining<250)throw;
-      REXLOG_INFO("PLAYER_CARD request={} stage={} event=http_retry attempt=2 reason=initial_connection win_error={} remaining_ms={}",
-          serial,stage,error.code,remaining);
       return GetOnce(relative_path,max_body,serial,stage,cancel,deadline);
 #else
       throw;
@@ -317,19 +363,14 @@ class PublicClient {
       std::chrono::steady_clock::time_point deadline) {
 #ifdef _WIN32
   if(cancel.stop_requested())throw RequestCancelled();
-  const auto started=std::chrono::steady_clock::now();
   // Unlike separate resolve/connect/read timeouts, this bounds the entire
   // HTTP exchange. Optional metadata cannot occupy the worker indefinitely.
-  const auto elapsed=[&] { return std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::steady_clock::now()-started).count(); };
   const auto failure=[&](const char* operation) {
     const auto error=GetLastError();
-    REXLOG_WARN("PLAYER_CARD request={} stage={} event=http_failed operation={} win_error={} elapsed_ms={}",
-        serial,stage,operation,error,elapsed());
+    REXLOG_WARN("PLAYER_CARD request={} stage={} event=http_failed operation={} win_error={}",
+        serial,stage,operation,error);
     return PublicHttpFailure(operation,error);
   };
-  REXLOG_INFO("PLAYER_CARD request={} stage={} event=http_start host=www.nobkonline.com path={}",
-      serial,stage,relative_path);
   if(!session_.value) {
     session_.value=WinHttpOpen(L"MotoGP0910-PlayerCard/1",
       WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
@@ -366,14 +407,10 @@ class PublicClient {
   const auto complete=[&](BOOL initiated,DWORD expected,const char* operation) {
     if(!initiated&&GetLastError()!=ERROR_IO_PENDING)throw failure(operation);
     if(!exchange.Wait(expected,cancel,deadline))throw failure(operation);
-    REXLOG_INFO("PLAYER_CARD request={} stage={} event=http_phase operation={} elapsed_ms={}",
-        serial,stage,operation,elapsed());
   };
   DWORD redirects = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
   if (!WinHttpSetOption(request.value, WINHTTP_OPTION_REDIRECT_POLICY,
       &redirects, sizeof(redirects)))throw failure("redirect_policy");
-  REXLOG_INFO("PLAYER_CARD request={} stage={} event=http_phase operation=setup elapsed_ms={}",
-      serial,stage,elapsed());
   complete(WinHttpSendRequest(request.value,WINHTTP_NO_ADDITIONAL_HEADERS,
       0,WINHTTP_NO_REQUEST_DATA,0,0,context),WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE,"send");
   complete(WinHttpReceiveResponse(request.value,nullptr),WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE,"headers");
@@ -381,19 +418,8 @@ class PublicClient {
   if (!WinHttpQueryHeaders(request.value,
       WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
       WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX)) throw failure("status");
-  wchar_t type[128]{}; DWORD type_size=sizeof(type);
-  std::string content_type="unknown";
-  if (WinHttpQueryHeaders(request.value,WINHTTP_QUERY_CONTENT_TYPE,
-      WINHTTP_HEADER_NAME_BY_INDEX,type,&type_size,WINHTTP_NO_HEADER_INDEX)) {
-    content_type.clear();
-    for (const auto ch:type) {
-      if (!ch) break;
-      content_type+=ch>=0x20&&ch<0x7F?static_cast<char>(ch):'?';
-    }
-  }
   if (status!=200) {
-    REXLOG_INFO("PLAYER_CARD request={} stage={} event=http_result status={} content_type={} read_bytes=0 elapsed_ms={}",
-        serial,stage,status,content_type,elapsed());
+    if(status!=404)REXLOG_WARN("PLAYER_CARD request={} stage={} event=http_failed status={}",serial,stage,status);
     return {status,{}};
   }
 
@@ -413,8 +439,6 @@ class PublicClient {
     }
     body.append(chunk, received);
   }
-  REXLOG_INFO("PLAYER_CARD request={} stage={} event=http_result status={} content_type={} read_bytes={} elapsed_ms={}",
-      serial,stage,status,content_type,body.size(),elapsed());
   return {status,std::move(body)};
 #else
   (void)relative_path; (void)max_body; (void)serial; (void)stage; (void)cancel; (void)deadline;
@@ -429,8 +453,6 @@ Player ReadPlayer(PublicClient& client,uint32_t id,uint64_t serial,
   if(response.status!=200) throw std::runtime_error("Player identity endpoint did not return HTTP 200");
   const auto json = nlohmann::json::parse(response.body,nullptr,false);
   if(json.is_discarded())throw std::runtime_error("Player identity response is not valid JSON");
-  REXLOG_INFO("PLAYER_CARD request={} stage=identity event=json_fields id={} name={} country={} avatar={}",
-      serial,json.contains("id"),json.contains("name"),json.contains("country"),json.contains("avatar"));
   // Numeric IDs belong to this game's service, not to the site's account ID.
   // Resolve the name from the matching record instead of guessing from XUID.
   if (!json.is_object() || json.value("missing", false) ||
@@ -445,12 +467,65 @@ Player ReadPlayer(PublicClient& client,uint32_t id,uint64_t serial,
     throw std::runtime_error("Player profile name is invalid");
   if (const auto country = json.find("country"); country != json.end() && country->is_string())
     player.country = Country(country->get<std::string>());
-  REXLOG_INFO("PLAYER_CARD request={} stage=identity event=ready player_id={} name={} country={}",
-      serial,id,player.name,player.country.empty()?"absent":player.country);
   // Records arrive with the identity; switching tabs needs no new HTTP request.
   try { results=ReadResults(json,serial); }
   catch(const std::exception&) { REXLOG_WARN("PLAYER_CARD request={} stage=records event=unavailable reason=invalid_record",serial); }
   return player;
+}
+
+std::shared_ptr<const Ranking> ParseRanking(const nlohmann::json& json,const nlohmann::json& views) {
+  // /motogp/ranking/ reorders this API list using /views. The raw "pos"
+  // alone is not the rider position displayed on the website.
+  if(!json.is_object()||!json.contains("players")||!json["players"].is_array()||json["players"].size()>100)
+    throw std::runtime_error("Rider ranking response is invalid");
+  auto ranking=std::make_shared<Ranking>();
+  std::set<uint32_t> ids;
+  std::set<int64_t> positions;
+  for(const auto& player:json["players"]) {
+    if(!player.is_object())throw std::runtime_error("Rider ranking entry is invalid");
+    const auto id=Number(player,"id"),position=Number(player,"pos"),
+        firsts=Number(player,"firsts"),points=Number(player,"points");
+    if(id<1||id>0xFFFFFF||position<1||position>100||firsts<0||firsts>378||points<0||
+        !ids.insert(uint32_t(id)).second||!positions.insert(position).second)
+      throw std::runtime_error("Rider ranking fields are invalid");
+    ranking->players.push_back({uint32_t(id),firsts,points,position,{}});
+  }
+  if(!views.is_object()||!views.contains("views")||!views["views"].is_array()||views["views"].size()>378)
+    throw std::runtime_error("Rider ranking boards are invalid");
+  std::set<int64_t> seen;
+  for(const auto& board:views["views"]) {
+    if(!board.is_object())throw std::runtime_error("Rider ranking board is invalid");
+    const auto view=Number(board,"view");
+    if(view<1||view>378||!seen.insert(view).second)
+      throw std::runtime_error("Rider ranking board index is invalid");
+    const int track=int((view-1)%21);
+    // Match the site's current 17-entry TRACKS catalogue and complete ranking
+    // scope, separately from the card's DLC /20 and temporary 2009 summaries.
+    if(track>=17||!board.contains("best")||board["best"].is_null())continue;
+    const auto& best=board["best"];
+    if(!best.is_object())throw std::runtime_error("Rider ranking leader is invalid");
+    const auto id=Number(best,"id");
+    if(id<1||id>0xFFFFFF)throw std::runtime_error("Rider ranking leader identity is invalid");
+    const auto player=std::find_if(ranking->players.begin(),ranking->players.end(),
+        [&](const auto& item){return item.id==uint32_t(id);});
+    if(player!=ranking->players.end())player->tracks.insert(track);
+  }
+  std::stable_sort(ranking->players.begin(),ranking->players.end(),[](const auto& a,const auto& b) {
+    if(a.tracks.size()!=b.tracks.size())return a.tracks.size()>b.tracks.size();
+    if(a.firsts!=b.firsts)return a.firsts>b.firsts;
+    if(a.points!=b.points)return a.points>b.points;
+    return a.position<b.position;
+  });
+  return ranking;
+}
+
+std::shared_ptr<const Ranking> ReadRanking(PublicClient& client,uint64_t serial,std::stop_token cancel) {
+  const auto response=client.Get("/api/motogp/ranking",256*1024,serial,"ranking",cancel);
+  if(response.status!=200)throw std::runtime_error("Rider ranking endpoint did not return HTTP 200");
+  const auto boards=client.Get("/api/motogp/views",512*1024,serial,"ranking_views",cancel);
+  if(boards.status!=200)throw std::runtime_error("Rider ranking boards did not return HTTP 200");
+  return ParseRanking(nlohmann::json::parse(response.body,nullptr,false),
+      nlohmann::json::parse(boards.body,nullptr,false));
 }
 
 bool SameName(std::string_view first,std::string_view second) {
@@ -477,8 +552,6 @@ Player ReadAccount(PublicClient& client,Player player,uint64_t serial,std::stop_
   if(response.status!=200)throw std::runtime_error("Shared account endpoint did not return HTTP 200");
   const auto json=nlohmann::json::parse(response.body,nullptr,false);
   if(json.is_discarded())throw std::runtime_error("Shared account response is not valid JSON");
-  REXLOG_INFO("PLAYER_CARD request={} stage=account event=json_fields player={} country={} avatar={}",
-      serial,json.contains("player"),json.contains("country"),json.contains("avatar"));
   if(!json.is_object()||!json.contains("player")||!json["player"].is_string()||
       !SameName(json["player"].get<std::string>(),player.name))
     throw std::runtime_error("Shared account name did not match the selected player");
@@ -495,10 +568,6 @@ Player ReadAccount(PublicClient& client,Player player,uint64_t serial,std::stop_
     else if(auto path=AvatarPath(value))player.avatar_path=std::move(*path);
     else REXLOG_WARN("PLAYER_CARD request={} stage=account event=avatar_path_rejected",serial);
   }
-  REXLOG_INFO("PLAYER_CARD request={} stage=account event=ready country={} avatar={}",serial,
-      player.country.empty()?"absent":player.country,
-      !player.avatar_path?"by_name":player.avatar_path->empty()?"none":"profile_path");
-  REXLOG_INFO("PLAYER_CARD request={} stage=account event=bio available={}",serial,!player.bio.empty());
   return player;
 }
 
@@ -515,14 +584,12 @@ std::shared_ptr<const Avatar> ReadAvatar(PublicClient& client,const Player& play
     uint64_t serial,std::stop_token cancel,bool& complete) {
   complete=false;
   if(player.avatar_path&&player.avatar_path->empty()) {
-    REXLOG_INFO("PLAYER_CARD request={} stage=avatar event=fallback reason=account_has_no_photo",serial);
     complete=true;
     return {};
   }
   const auto path=player.avatar_path.value_or("/api/avatar/u/"+EncodeName(player.name));
   auto response=client.Get(path,512*1024,serial,"avatar",cancel);
   if(response.status!=200) {
-    REXLOG_INFO("PLAYER_CARD request={} stage=avatar event=fallback reason=http_status status={}",serial,response.status);
     complete=response.status==404;
     return {};
   }
@@ -572,7 +639,6 @@ std::shared_ptr<const Avatar> ReadAvatar(PublicClient& client,const Player& play
           nullptr,0.,WICBitmapPaletteTypeCustom),"convert"))return {};
   std::vector<uint8_t> pixels(size_t(width)*height*4);
   if(failed(converter->CopyPixels(nullptr,width*4,static_cast<UINT>(pixels.size()),pixels.data()),"pixels"))return {};
-  REXLOG_INFO("PLAYER_CARD request={} stage=avatar event=decoded format={} width={} height={}",serial,jpeg?"JPEG":"PNG",width,height);
   complete=true;
   return std::make_shared<Avatar>(Avatar{width,height,std::move(pixels)});
 #else
@@ -583,7 +649,10 @@ std::shared_ptr<const Avatar> ReadAvatar(PublicClient& client,const Player& play
 enum class Status { Loading, Ready, Unavailable };
 struct Snapshot {
   uint64_t serial = 0;
+  uint32_t player_id=0;
   Status status = Status::Loading;
+  Status ranking_status=Status::Unavailable;
+  std::shared_ptr<const Ranking> ranking;
   Player player;
   std::shared_ptr<const Avatar> avatar;
   std::shared_ptr<const Results> results;
@@ -604,21 +673,72 @@ std::shared_ptr<const Avatar> ReadFlags() {
   return std::make_shared<Avatar>(Avatar{uint32_t(width),uint32_t(height),std::move(pixels)});
 }
 
-std::shared_ptr<const Avatar> ReadHelmet() {
+std::span<const uint8_t> Embedded(uint16_t id) {
 #ifdef _WIN32
   const auto module=GetModuleHandleW(nullptr);
-  const auto resource=FindResourceW(module,MAKEINTRESOURCEW(201),MAKEINTRESOURCEW(10));
+  const auto resource=FindResourceW(module,MAKEINTRESOURCEW(id),MAKEINTRESOURCEW(10));
   if(!resource)return {};
   const auto size=SizeofResource(module,resource);
   const auto loaded=LoadResource(module,resource);
   const auto* png=loaded?static_cast<const uint8_t*>(LockResource(loaded)):nullptr;
   if(!png||!size)return {};
+  return {png,size};
+#else
+  (void)id;
+  return {};
+#endif
+}
+std::shared_ptr<const Avatar> ReadHelmet() {
+  const auto png=Embedded(201);
+  if(png.empty())return {};
   int width=0,height=0;
-  auto pixels=rex::ui::DecodeImageRGBA(png,size,width,height);
+  auto pixels=rex::ui::DecodeImageRGBA(png.data(),png.size(),width,height);
   if(width!=1254||height!=1254||pixels.size()!=size_t(width)*height*4)return {};
   return std::make_shared<Avatar>(Avatar{uint32_t(width),uint32_t(height),std::move(pixels)});
+}
+
+void PrepareEmoji(ImFontAtlas* atlas) {
+  emoji_aliases.clear();emoji_max_bytes=0;
+#ifdef _WIN32
+  const auto png=Embedded(202),metadata=Embedded(203);
+  if(png.empty()||metadata.empty())throw std::runtime_error("Embedded bio emoji assets are missing");
+  const auto table=nlohmann::json::parse(metadata.begin(),metadata.end());
+  const auto count=Number(table,"glyphs"),cell=Number(table,"cell"),columns=Number(table,"columns");
+  if(count<1||count>0x1900||cell!=32||columns!=64||!table.contains("aliases")||!table["aliases"].is_object())
+    throw std::runtime_error("Embedded bio emoji metadata is invalid");
+  int width=0,height=0;
+  const auto rgba=rex::ui::DecodeImageRGBA(png.data(),png.size(),width,height);
+  if(width!=columns*cell||height!=((count+columns-1)/columns)*cell||rgba.size()!=size_t(width)*height*4)
+    throw std::runtime_error("Embedded bio emoji atlas is invalid");
+  atlas->TexMinWidth=std::max(atlas->TexMinWidth,4096);
+  const auto id=atlas->AddCustomRect(width,height);
+  if(id==ImFontAtlasRectId_Invalid)throw std::runtime_error("Could not reserve bio emoji atlas");
+  unsigned char* pixels;int tw,th;atlas->GetTexDataAsRGBA32(&pixels,&tw,&th);
+  ImFontAtlasRect rect;
+  if(!atlas->GetCustomRect(id,&rect))throw std::runtime_error("Could not locate bio emoji atlas");
+  for(int y=0;y<height;++y)
+    std::memcpy(pixels+(size_t(rect.y+y)*tw+rect.x)*4,rgba.data()+size_t(y)*width*4,size_t(width)*4);
+  // Share the same packed color sprites at every native text size. Pixels are
+  // stored once; only their glyph metrics differ between prepared fonts.
+  for(size_t f=0;f<profile_fonts.size();++f)if(auto* font=profile_fonts[f]) {
+    auto* baked=font->GetFontBaked(float(kFontSizes[f]));
+    for(int index=0;index<count;++index) {
+      ImFontGlyph glyph;glyph.Codepoint=0xE000+index;glyph.Visible=true;glyph.Colored=true;
+      glyph.AdvanceX=float(kFontSizes[f])+1;glyph.X1=glyph.Y1=float(kFontSizes[f]);
+      const auto x=rect.x+(index%columns)*cell,y=rect.y+(index/columns)*cell;
+      glyph.U0=float(x)/tw;glyph.V0=float(y)/th;glyph.U1=float(x+cell)/tw;glyph.V1=float(y+cell)/th;
+      ImFontAtlasBakedAddFontGlyph(atlas,baked,nullptr,&glyph);
+    }
+    font->Flags|=ImFontFlags_LockBakedSizes;
+  }
+  for(const auto& [sequence,index]:table["aliases"].items()) {
+    if(sequence.empty()||sequence.size()>128||!index.is_number_unsigned()||index.get<uint64_t>()>=uint64_t(count))
+      throw std::runtime_error("Embedded bio emoji alias is invalid");
+    emoji_aliases.emplace(sequence,ImWchar(0xE000+index.get<unsigned>()));
+    emoji_max_bytes=std::max(emoji_max_bytes,sequence.size());
+  }
 #else
-  return {};
+  (void)atlas;
 #endif
 }
 
@@ -643,7 +763,6 @@ std::shared_ptr<const Avatar> ReadTrackMap(PublicClient& client,int track,uint64
   auto pixels=rex::ui::DecodeImageRGBA(reinterpret_cast<const uint8_t*>(body.data()),body.size(),width,height);
   if(width!=int(expected_width)||height!=int(expected_height)||pixels.size()!=size_t(width)*height*4)
     throw std::runtime_error("Track outline decode failed");
-  REXLOG_INFO("PLAYER_CARD request={} stage=track_map event=decoded track={} width={} height={}",serial,track,width,height);
   return std::make_shared<Avatar>(Avatar{uint32_t(width),uint32_t(height),std::move(pixels)});
 }
 
@@ -656,7 +775,6 @@ class State {
     const auto origin = rex::cvar::Query<std::string>("online_server");
     available_ = rex::cvar::Query<std::string>("network_mode") == "online" &&
         (origin == "https://motogp.nobkonline.com" || origin == "https://motogp.nobkonline.com/");
-    REXLOG_INFO("PLAYER_CARD event=initialize enabled={} photo_decoder=WIC_JPEG_PNG",available_);
   }
   ~State() { Stop(); }
 
@@ -665,9 +783,9 @@ class State {
       REXLOG_WARN("PLAYER_CARD event=open_rejected reason=identity user={} xuid={:016X}",user,xuid);
       return 87;
     }
-    if (!available_) { REXLOG_INFO("PLAYER_CARD event=open_rejected reason=service_not_supported"); return 1168; }
+    if (!available_) return 1168;
     if (quit::Pending() || settings::GuestInputBlocked()) {
-      REXLOG_INFO("PLAYER_CARD event=open_rejected reason=other_menu_or_held_input"); return 170;
+      return 170;
     }
     std::lock_guard lock(mutex_);
     if (stopping_) return 1168;
@@ -681,25 +799,32 @@ class State {
     cancellation_=std::stop_source{};
     requested_id_.reset();
     requested_map_.reset();
+    requested_ranking_=false;
     const auto id=static_cast<uint32_t>(xuid&0xFFFFFF);
     const auto serial=snapshot_.serial+1;
     snapshot_={};
     snapshot_.serial=serial;
     snapshot_.preferred_view=preferred_view;
     snapshot_.helmet=helmet_;
-    bool cached=false,fresh=false;
+    bool fresh=false;
     const auto now=std::chrono::steady_clock::now();
     for(const auto& entry:cache_) {
       if(entry.id!=id||now-entry.stored>std::chrono::minutes(5))continue;
       snapshot_=entry.data;
       snapshot_.serial=serial;
       snapshot_.preferred_view=preferred_view;
-      cached=true;
       fresh=entry.complete&&now-entry.stored<std::chrono::seconds(60);
       break;
     }
     request_serial_=serial;
     if(!fresh)requested_id_=id;
+    snapshot_.player_id=id;
+    snapshot_.ranking.reset();snapshot_.ranking_status=Status::Unavailable;
+    if(ranking_&&now-ranking_stored_<std::chrono::seconds(60)) {
+      snapshot_.ranking=ranking_;snapshot_.ranking_status=Status::Ready;
+    } else if(now>=ranking_retry_at_) {
+      requested_ranking_=true;snapshot_.ranking_status=Status::Loading;
+    }
     // The selected board is opening-specific, even on a cached player card.
     // Keep artwork separately keyed by circuit so another board cannot inherit
     // a previous card's map. A map-only task does not re-fetch the profile.
@@ -711,12 +836,7 @@ class State {
       if(!snapshot_.track_map&&!kTrackMaps[track].empty()&&now>=map_retry_at_[track]) {
         requested_map_=track;snapshot_.map_loading=true;
       }
-      REXLOG_INFO("PLAYER_CARD request={} stage=track_map event=cache track={} hit={} loading={}",
-          serial,track,snapshot_.track_map!=nullptr,snapshot_.map_loading);
     }
-    REXLOG_INFO("PLAYER_CARD request={} event=open user={} xuid={:016X} player_id={} preferred_view={}",
-        request_serial_,user,xuid,id,preferred_view);
-    REXLOG_INFO("PLAYER_CARD request={} event=cache hit={} fresh={}",serial,cached,fresh);
     kernel_->BroadcastNotification(0x9, true); // XN_SYS_UI
     notified_ = true;
     changed_.notify_one();
@@ -728,11 +848,11 @@ class State {
   }
   void Dismiss() {
     std::lock_guard lock(mutex_);
-    if(gate->IsOpen())REXLOG_INFO("PLAYER_CARD request={} event=close",snapshot_.serial);
     gate->Close();
     cancellation_.request_stop();
     requested_id_.reset();
     requested_map_.reset();
+    requested_ranking_=false;
     if (notified_) { kernel_->BroadcastNotification(0x9, false); notified_ = false; }
   }
   void Stop() {
@@ -742,6 +862,7 @@ class State {
       cancellation_.request_stop();
       requested_id_.reset();
       requested_map_.reset();
+      requested_ranking_=false;
       gate->Close();
       if (notified_) { kernel_->BroadcastNotification(0x9, false); notified_ = false; }
     }
@@ -770,18 +891,45 @@ class State {
     try { flag_atlas=ReadFlags(); }
     catch(const std::exception&) { REXLOG_WARN("PLAYER_CARD stage=flags event=decode_failed"); }
     std::shared_ptr<const Avatar> helmet;
-    try { helmet=ReadHelmet(); }
+    try {
+      helmet=ReadHelmet();
+      if(!helmet)REXLOG_WARN("PLAYER_CARD stage=default_avatar event=unavailable");
+    }
     catch(const std::exception&) { REXLOG_WARN("PLAYER_CARD stage=default_avatar event=decode_failed"); }
-    REXLOG_INFO("PLAYER_CARD stage=default_avatar event=ready success={}",helmet!=nullptr);
     std::unique_lock lock(mutex_);
     helmet_=std::move(helmet);
     snapshot_.helmet=helmet_;
     snapshot_.flags=flag_atlas;
     while (!stopping_) {
-      changed_.wait(lock, [this] { return stopping_ || requested_id_.has_value() || requested_map_.has_value(); });
+      changed_.wait(lock, [this] { return stopping_ || requested_id_.has_value() || requested_ranking_ || requested_map_.has_value(); });
       if (stopping_) break;
-      // Identity, records, metadata and photo have priority. The outline is
-      // optional and cannot delay publishing any of those existing fields.
+      // Publish identity, records, metadata and photo before optional ranking
+      // or artwork requests. Neither can delay the existing profile fields.
+      if(!requested_id_&&requested_ranking_) {
+        const auto serial=request_serial_;
+        const auto cancel=cancellation_.get_token();
+        requested_ranking_=false;
+        if(snapshot_.status!=Status::Ready) {
+          snapshot_.ranking_status=Status::Unavailable;
+          continue;
+        }
+        lock.unlock();
+        std::shared_ptr<const Ranking> ranking;
+        try {ranking=ReadRanking(client,serial,cancel);}
+        catch(const RequestCancelled&) {} // Closing or switching cards is expected.
+        catch(const std::exception& error) {
+          REXLOG_WARN("PLAYER_CARD request={} stage=ranking event=unavailable reason={}",serial,error.what());
+        }
+        lock.lock();
+        if(!stopping_&&!cancel.stop_requested()&&serial==snapshot_.serial&&gate->IsOpen()) {
+          const auto now=std::chrono::steady_clock::now();
+          if(ranking) {ranking_=ranking;ranking_stored_=now;}
+          ranking_retry_at_=now+std::chrono::seconds(60);
+          snapshot_.ranking=std::move(ranking);
+          snapshot_.ranking_status=snapshot_.ranking?Status::Ready:Status::Unavailable;
+        }
+        continue;
+      }
       if(!requested_id_&&requested_map_) {
         const auto track=*requested_map_;
         const auto serial=request_serial_;
@@ -790,7 +938,7 @@ class State {
         lock.unlock();
         std::shared_ptr<const Avatar> map;
         try {map=ReadTrackMap(client,track,serial,cancel);}
-        catch(const RequestCancelled&) {REXLOG_INFO("PLAYER_CARD request={} stage=track_map event=cancelled",serial);}
+        catch(const RequestCancelled&) {} // Closing or switching cards is expected.
         catch(const std::exception& error) {
           REXLOG_WARN("PLAYER_CARD request={} stage=track_map event=unavailable reason={}",serial,error.what());
         }
@@ -799,7 +947,7 @@ class State {
           track_maps_[track]=std::move(map);
           map_retry_at_[track]=std::chrono::steady_clock::now()+std::chrono::seconds(60);
           snapshot_.track_map=track_maps_[track];snapshot_.map_loading=false;
-        } else REXLOG_INFO("PLAYER_CARD request={} stage=track_map event=discarded reason=card_changed_or_closed",serial);
+        }
         continue;
       }
       const auto id = *requested_id_;
@@ -810,9 +958,7 @@ class State {
       Player player; bool loaded = false;
       std::shared_ptr<const Results> results;
       try { player = ReadPlayer(client,id,serial,results,cancel); loaded = true; }
-      catch(const RequestCancelled&) {
-        REXLOG_INFO("PLAYER_CARD request={} stage=identity event=cancelled",serial);
-      }
+      catch(const RequestCancelled&) {} // Closing or switching cards is expected.
       catch (const std::exception& error) {
         REXLOG_WARN("PLAYER_CARD request={} stage=identity event=failed reason={}",serial,error.what());
       }
@@ -844,15 +990,12 @@ class State {
           // valid MotoGP identity or prevent the legacy avatar-by-name route.
           bool account_loaded=false;
           try { player=ReadAccount(client,player,serial,cancel);account_loaded=true; }
-          catch(const RequestCancelled&) {
-            REXLOG_INFO("PLAYER_CARD request={} stage=account event=cancelled",serial);
-          }
+          catch(const RequestCancelled&) {} // Closing or switching cards is expected.
           catch(const std::exception& error) {
             REXLOG_WARN("PLAYER_CARD request={} stage=account event=failed reason={}",serial,error.what());
           }
           lock.lock();
           if(stopping_||cancel.stop_requested()||serial!=snapshot_.serial||!gate->IsOpen()) {
-            REXLOG_INFO("PLAYER_CARD request={} stage=account event=discarded reason=card_changed_or_closed",serial);
             continue;
           }
           snapshot_.player=player;
@@ -861,9 +1004,7 @@ class State {
           std::shared_ptr<const Avatar> avatar;
           bool avatar_loaded=false;
           try { avatar=ReadAvatar(client,player,serial,cancel,avatar_loaded); }
-          catch(const RequestCancelled&) {
-            REXLOG_INFO("PLAYER_CARD request={} stage=avatar event=cancelled",serial);
-          }
+          catch(const RequestCancelled&) {} // Closing or switching cards is expected.
           catch (const std::exception& error) {
             REXLOG_WARN("PLAYER_CARD request={} stage=avatar event=fallback reason={}",serial,error.what());
           }
@@ -872,9 +1013,8 @@ class State {
             if(avatar_loaded)snapshot_.avatar=std::move(avatar);
             Remember(id,account_loaded&&avatar_loaded);
           }
-          else REXLOG_INFO("PLAYER_CARD request={} stage=avatar event=discarded reason=card_changed_or_closed",serial);
         }
-      } else REXLOG_INFO("PLAYER_CARD request={} stage=identity event=discarded reason=card_changed_or_closed",serial);
+      }
     }
   }
   rex::system::KernelState* kernel_;
@@ -884,6 +1024,9 @@ class State {
   std::thread worker_;
   std::stop_source cancellation_;
   std::vector<CachedProfile> cache_;
+  std::shared_ptr<const Ranking> ranking_;
+  std::chrono::steady_clock::time_point ranking_stored_{},ranking_retry_at_{};
+  bool requested_ranking_=false;
   std::shared_ptr<const Avatar> helmet_;
   std::array<std::shared_ptr<const Avatar>,std::size(kTracks)> track_maps_{};
   std::array<std::chrono::steady_clock::time_point,std::size(kTracks)> map_retry_at_{};
@@ -1104,8 +1247,9 @@ BioExcerpt Excerpt(const Canvas& c,const std::string& bio,float last_width) {
 void BioPreview(const Snapshot& state,View& view,const Canvas& c,bool tr,bool ready) {
   if(state.player.bio.empty())return;
   c.Text(32,397,13.5f,kMuted,Tr(tr,"ABOUT ME","HAKKINDA"),196);
-  auto excerpt=Excerpt(c,state.player.bio,196);
-  if(excerpt.more)excerpt=Excerpt(c,state.player.bio,152);
+  const auto bio=EmojiText(state.player.bio);
+  auto excerpt=Excerpt(c,bio,196);
+  if(excerpt.more)excerpt=Excerpt(c,bio,152);
   for(size_t i=0;i<excerpt.lines.size();++i)c.Text(32,420+float(i)*19,15.5f,kWhite,excerpt.lines[i],196);
   if(excerpt.more) {
     ImGui::SetCursorScreenPos(c.Point(194,455));
@@ -1172,11 +1316,9 @@ void Overview(const Snapshot& state,const Canvas& c,float x,float width,bool tr,
   if(!state.results){c.Text(x,160,16,kMuted,Tr(tr,"Statistics unavailable","İstatistikler alınamadı"),width);return;}
   const auto categories=Categories(state.results.get(),tr);
   const auto rows=OrderedRecords(*state.results,0,categories,0);
-  std::set<int> tracks;
-  unsigned firsts=0;
-  for(const auto* row:rows)if(row->rank==1){if(row->track!=17)tracks.insert(row->track);++firsts;}
-  const std::string values[]{std::to_string(tracks.size())+" / 20",std::to_string(firsts),std::to_string(rows.size())};
-  const char* labels[]{Tr(tr,"TRACKS LED","LİDER OLDUĞU PİSTLER"),Tr(tr,"RECORDS HELD","LİDER OLDUĞU TABLOLAR"),Tr(tr,"LEADERBOARDS","SIRALAMA TABLOLARI")};
+  const auto summary=SummarizeRecords(rows);
+  const std::string values[]{std::to_string(summary.tracks_held)+" / 20",std::to_string(summary.records_held),std::to_string(summary.boards_entered)};
+  const char* labels[]{Tr(tr,"TRACKS HELD","LİDER OLDUĞU PİSTLER"),Tr(tr,"RECORDS HELD","LİDER OLDUĞU TABLOLAR"),Tr(tr,"BOARDS ENTERED","KATILDIĞI TABLOLAR")};
   const float column=width/3.f;
   for(int i=0;i<3;++i) {
     const float at=x+i*column;
@@ -1184,7 +1326,7 @@ void Overview(const Snapshot& state,const Canvas& c,float x,float width,bool tr,
     c.Centered(at+10,217,15.5f,kMuted,labels[i],column-20);
     if(i)c.Line(at,162,at,244);
   }
-  const float fraction=std::clamp(float(tracks.size())/20.f,0.f,1.f),bar=width-70.f;
+  const float fraction=std::clamp(float(summary.tracks_held)/20.f,0.f,1.f),bar=width-70.f;
   c.Text(x,273,16,kMuted,Tr(tr,"TOTAL TRACK DOMINATION","TOPLAM PİST HÂKİMİYETİ"),width);
   c.draw->AddRectFilled(c.Point(x,304),c.Point(x+bar,314),ImGui::GetColorU32(overlay::card),2*c.scale);
   if(fraction)c.draw->AddRectFilled(c.Point(x,304),c.Point(x+bar*fraction,314),ImGui::GetColorU32(kAccent),2*c.scale);
@@ -1197,23 +1339,22 @@ void Overview(const Snapshot& state,const Canvas& c,float x,float width,bool tr,
   const auto record=std::find_if(rows.begin(),rows.end(),[&](auto row){return row->view==state.preferred_view;});
   const int track=int((state.preferred_view-1)%21);
   constexpr float map_width=166.f,rank_width=142.f;
-  const float details=x+map_width+26.f,details_width=width-map_width-26.f-rank_width-20.f;
   const float rank=x+width-rank_width;
+  const float details=x+map_width+28.f,details_width=rank-details-18.f;
   TrackOutline(state,c,map,track,x+6,403,map_width-12,94,tr);
   c.Line(x+map_width+10,400,x+map_width+10,496);
   c.Line(rank,400,rank,496);
-  c.Text(details,399,18,kWhite,record!=rows.end()?(*record)->track_name:
+  c.Centered(details,399,18,kWhite,record!=rows.end()?(*record)->track_name:
       (kTracks[track].empty()?Tr(tr,"Unknown circuit","Bilinmeyen pist"):std::string(kTracks[track])),details_width);
   c.Centered(rank+10,399,13,kMuted,Tr(tr,"Rank","Sıra"),rank_width-10);
   if(record==rows.end()) {
-    c.Text(details,437,16,kMuted,Tr(tr,"No published lap for this board.","Bu tabloda yayımlanmış turu yok."),details_width);
+    c.Centered(details,437,16,kMuted,Tr(tr,"No published lap for this board.","Bu tabloda yayımlanmış turu yok."),details_width);
     c.Centered(rank+10,429,26,kMuted,"-",rank_width-10);
     return;
   }
   const auto& row=**record;
-  c.Text(details,430,36,kAccent,row.result,166);
-  c.Text(details+182,435,14,kMuted,row.category+" · 2009",details_width-182);
-  c.Text(details+182,459,14,kWhite,Mode(row.mode,tr),details_width-182);
+  c.Centered(details,430,36,kAccent,row.result,details_width);
+  c.Centered(details,475,14,kMuted,row.category+" · 2009 · "+Mode(row.mode,tr),details_width);
   c.Rank(rank+10,423,rank_width-10,26,row.rank,row.total);
   c.Centered(rank+10,465,12.5f,kMuted,std::string(Tr(tr,"Set · ","Tarih · "))+SetTime(row.updated,tr),rank_width-10);
   if(row.updated>0&&ImGui::IsWindowHovered()&&
@@ -1309,8 +1450,9 @@ void BioPopup(const Snapshot& state,View& view,const Canvas& parent,bool tr,bool
   const bool opening=view.bio_open&&!popup_open;
   if(opening)ImGui::OpenPopup(id);
   const float scale=parent.scale;
+  const auto bio=EmojiText(state.player.bio);
   const auto body_font=parent.Font(18);
-  const float text_height=body_font.font->CalcTextSizeA(body_font.size,FLT_MAX,572*scale,state.player.bio.c_str()).y/scale;
+  const float text_height=body_font.font->CalcTextSizeA(body_font.size,FLT_MAX,572*scale,bio.c_str()).y/scale;
   const float height=std::clamp(text_height+176.f,240.f,440.f);
   const auto& io=ImGui::GetIO();
   ImGui::SetNextWindowPos({io.DisplaySize.x*.5f,io.DisplaySize.y*.5f},ImGuiCond_Always,{.5f,.5f});
@@ -1333,7 +1475,7 @@ void BioPopup(const Snapshot& state,View& view,const Canvas& parent,bool tr,bool
       if(ImGui::BeginChild("##license_bio_text",{572*scale,(height-164)*scale},0,ImGuiWindowFlags_NoNavInputs)) {
         if(!opening&&view.bio_scroll)ImGui::SetScrollY(std::clamp(ImGui::GetScrollY()+view.bio_scroll,0.f,ImGui::GetScrollMaxY()));
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+ImGui::GetContentRegionAvail().x);
-        ImGui::TextUnformatted(state.player.bio.c_str());
+        ImGui::TextUnformatted(bio.c_str());
         ImGui::PopTextWrapPos();
       }
       ImGui::EndChild();
@@ -1355,6 +1497,31 @@ void BioPopup(const Snapshot& state,View& view,const Canvas& parent,bool tr,bool
 }
 
 struct Action { bool profile = false, close = false; };
+void RiderRank(const Snapshot& state,const Canvas& c,bool tr,bool tooltip) {
+  size_t position=0;
+  if(state.ranking) {
+    const auto& players=state.ranking->players;
+    const auto player=std::find_if(players.begin(),players.end(),
+        [&](const auto& item){return item.id==state.player_id;});
+    if(player!=players.end())position=size_t(player-players.begin())+1;
+  }
+  const auto value=position?"#"+std::to_string(position):
+      std::string(state.ranking_status==Status::Loading?"...":"-");
+  c.Text(858,26,13,kMuted,Tr(tr,"RIDER RANK","PİLOT SIRASI"),128);
+  c.Centered(996,17,30,position?kAccent:kMuted,value,72);
+  if(!tooltip||!ImGui::IsWindowHovered()||
+      !ImGui::IsMouseHoveringRect(c.Point(850,12),c.Point(1074,54)))return;
+  if(state.ranking_status==Status::Loading)
+    ImGui::SetTooltip("%s",Tr(tr,"Loading NOBK Online rider ranking...","NOBK Online pilot sıralaması yükleniyor..."));
+  else if(state.ranking_status!=Status::Ready)
+    ImGui::SetTooltip("%s",Tr(tr,"Rider rank is unavailable.","Pilot sırası alınamadı."));
+  else if(!position)
+    ImGui::SetTooltip("%s",Tr(tr,"Not listed in NOBK Online's ranking (up to 100 riders).",
+        "NOBK Online sıralamasında listelenmiyor (en fazla 100 pilot)."));
+  else ImGui::SetTooltip("%s",Tr(tr,
+      "NOBK Online rider ranking: tracks held, then records held, then points.\nUses the website's track catalogue and ranking scope.",
+      "NOBK Online pilot sıralaması: lider olduğu pist, ardından rekor ve puan sayısı.\nSitenin pist kataloğu ve sıralama kapsamı kullanılır."));
+}
 Action DrawCard(const Snapshot& state, rex::ui::ImmediateTexture* texture,
     rex::ui::ImmediateTexture* flag_atlas,rex::ui::ImmediateTexture* helmet,
     rex::ui::ImmediateTexture* map,View& view,bool tr, ImFont* font, ImFont* heading, bool ready,float alpha) {
@@ -1393,7 +1560,8 @@ Action DrawCard(const Snapshot& state, rex::ui::ImmediateTexture* texture,
         ImGui::GetColorU32(overlay::AccentTint(.10f)),ImGui::GetColorU32(overlay::ink),
         ImGui::GetColorU32(overlay::ink),ImGui::GetColorU32(overlay::ink));
     Stripes(c);
-    c.Text(96,21,24,kWhite,Tr(tr,"RIDER LICENSE","PİLOT LİSANSI"),900);
+    c.Text(96,21,24,kWhite,Tr(tr,"RIDER LICENSE","PİLOT LİSANSI"),740);
+    RiderRank(state,c,tr,!view.bio_open);
     c.draw->AddLine(c.Point(0,64),c.Point(1100,64),ImGui::GetColorU32(kAccent),scale);
     c.Line(260,84,260,496);
     Portrait(c,texture?texture:helmet,196,!texture);
@@ -1435,7 +1603,9 @@ Action DrawCard(const Snapshot& state, rex::ui::ImmediateTexture* texture,
         "LB / RB: Sekmeler   A: Profil   B: Geri");
     if(view.tab==1)controls+=Tr(tr,"   D-pad: Scroll","   Yön: Kaydır");
     if(!state.player.bio.empty())controls+="   Y: Bio";
-    c.Text(474,543,12,kMuted,std::move(controls),594);
+    // The hint string changes with the active tab and bio availability. Keep
+    // the entire group centered on the same content area in every state.
+    c.Centered(content_x,543,12,kMuted,std::move(controls),content_width);
     BioPopup(state,view,c,tr,ready);
   }
   ImGui::End();
@@ -1495,28 +1665,27 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
       flags_=snapshot.flags;flag_texture_.reset();
       if(flags_&&immediate_)flag_texture_=immediate_->CreateTexture(flags_->width,flags_->height,
           rex::ui::ImmediateTextureFilter::kLinear,false,flags_->rgba.data());
-      if(flags_)REXLOG_INFO("PLAYER_CARD request={} stage=flags event=texture_upload success={}",snapshot.serial,flag_texture_!=nullptr);
+      if(flags_&&!flag_texture_)REXLOG_WARN("PLAYER_CARD request={} stage=flags event=texture_upload_failed",snapshot.serial);
     }
     if(snapshot.helmet!=helmet_) {
       helmet_=snapshot.helmet;helmet_texture_.reset();
       if(helmet_&&immediate_)helmet_texture_=immediate_->CreateTexture(helmet_->width,helmet_->height,
           rex::ui::ImmediateTextureFilter::kLinear,false,helmet_->rgba.data());
-      if(helmet_)REXLOG_INFO("PLAYER_CARD request={} stage=default_avatar event=texture_upload success={}",snapshot.serial,helmet_texture_!=nullptr);
+      if(helmet_&&!helmet_texture_)REXLOG_WARN("PLAYER_CARD request={} stage=default_avatar event=texture_upload_failed",snapshot.serial);
     }
     if(snapshot.track_map!=track_map_) {
       track_map_=snapshot.track_map;map_texture_.reset();
       if(track_map_&&immediate_)map_texture_=immediate_->CreateTexture(track_map_->width,track_map_->height,
           rex::ui::ImmediateTextureFilter::kLinear,false,track_map_->rgba.data());
-      if(track_map_)REXLOG_INFO("PLAYER_CARD request={} stage=track_map event=texture_upload track={} success={}",
-          snapshot.serial,snapshot.map_track,map_texture_!=nullptr);
+      if(track_map_&&!map_texture_)REXLOG_WARN("PLAYER_CARD request={} stage=track_map event=texture_upload_failed track={}",
+          snapshot.serial,snapshot.map_track);
     }
     if (snapshot.avatar!=avatar_) {
       avatar_=snapshot.avatar;
       texture_.reset();
       if (avatar_ && immediate_) texture_=immediate_->CreateTexture(avatar_->width,avatar_->height,
           rex::ui::ImmediateTextureFilter::kLinear,false,avatar_->rgba.data());
-      if(avatar_)REXLOG_INFO("PLAYER_CARD request={} stage=avatar event=texture_upload success={} width={} height={}",
-          snapshot.serial,texture_!=nullptr,avatar_->width,avatar_->height);
+      if(avatar_&&!texture_)REXLOG_WARN("PLAYER_CARD request={} stage=avatar event=texture_upload_failed",snapshot.serial);
     }
     Action shortcuts;
     const bool bio_was_open=view_.bio_open;
@@ -1559,12 +1728,10 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
     // Closing the bio consumes A/Enter and B/Esc. Neither action may also
     // open the website or dismiss the license behind the modal in that frame.
     if(!bio_was_open&&!view_.bio_open)action.profile|=shortcuts.profile;
-    if(bio_was_open!=view_.bio_open)REXLOG_INFO("PLAYER_CARD request={} event={}bio",
-        snapshot.serial,view_.bio_open?"open_":"close_");
     if (action.close) { state_->Dismiss(); return; }
     if (action.profile && snapshot.status == Status::Ready) {
-      const bool opened=OpenProfile(snapshot.player.name);
-      REXLOG_INFO("PLAYER_CARD request={} event=open_profile success={}",snapshot.serial,opened);
+      if(!OpenProfile(snapshot.player.name))
+        REXLOG_WARN("PLAYER_CARD request={} event=open_profile_failed",snapshot.serial);
     }
   }
 
@@ -1601,9 +1768,14 @@ void ConfigureFonts(ImFontAtlas* atlas,const char* path) {
   config.OversampleH=2;config.OversampleV=1;config.PixelSnapH=true;
   for(size_t i=0;i<profile_fonts.size();++i)
     profile_fonts[i]=atlas->AddFontFromFileTTF(path,float(kFontSizes[i]),&config,ranges);
-  REXLOG_INFO("PLAYER_CARD event=configure_fonts sizes={} loaded={} min_px={} max_px={}",
-      profile_fonts.size(),std::count_if(profile_fonts.begin(),profile_fonts.end(),[](auto* font){return font!=nullptr;}),
-      kFontSizes[0],kFontSizes[std::size(kFontSizes)-1]);
+  const auto loaded=std::count_if(profile_fonts.begin(),profile_fonts.end(),[](auto* font){return font!=nullptr;});
+  if(size_t(loaded)!=profile_fonts.size())
+    REXLOG_WARN("PLAYER_CARD event=configure_fonts_failed loaded={} expected={}",loaded,profile_fonts.size());
+  try {PrepareEmoji(atlas);}
+  catch(const std::exception& error) {
+    emoji_aliases.clear();emoji_max_bytes=0;
+    REXLOG_WARN("PLAYER_CARD event=emoji_font_failed reason={}",error.what());
+  }
 }
 
 void Initialize(rex::Runtime* runtime, std::shared_ptr<settings::InputGate> gate) {

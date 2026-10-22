@@ -125,7 +125,10 @@ int main(int argc,char** argv){try{
  PPCContext defaults{};defaults.r3.u32=menu;sub_822F0AD0(defaults,base);
  constexpr std::array<uint32_t,24> default_actions{7,8,0,0,6,5,21,4,14,3,0,0,10,9,23,24,22,5,2,26,0,0,0,0};
  for(unsigned i=0;i<default_actions.size();++i)Check(read(menu+4*i)==default_actions[i],"Default native physical slots match the documented action table");
- Check(std::wstring_view(launcher::kBindings[0].english).starts_with(L"Gear up")&&std::wstring_view(launcher::kBindings[1].english).starts_with(L"Gear down"),"Launcher A/B descriptions agree with Default rather than Alternative A");
+ Check(std::wstring_view(launcher::kBindings[0].english).starts_with(L"Tuck in")&&
+       std::wstring_view(launcher::kBindings[1].english).starts_with(L"Gear down")&&
+       std::wstring_view(launcher::kBindings[3].english).starts_with(L"Gear up"),
+       "Launcher A/B/Y descriptions agree with the current native Default layout");
  motogp::options::Initialize(&runtime);write(motogp::options::kOnlineHandle,731);
  PPCContext online{};online.r3.u32=motogp::options::kOnlineHandle;sub_826EDB38(online,base);
  Check(online.r3.u32==motogp::options::OnlineLabel()&&std::strcmp(reinterpret_cast<char*>(base+online.r3.u32),"ONLINE")==0,"Only the native multiplayer ONLINE label is replaced, without rewriting original message files");

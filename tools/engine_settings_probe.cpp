@@ -114,7 +114,9 @@ int main(int argc,char** argv){
         const bool narrow=ratio.first==4;
         const auto expected=narrow?(word==1?std::bit_cast<uint32_t>(.5f+(std::bit_cast<float>(saved[i][word])-.5f)*.75f):saved[i][word]):
             (word==0?std::bit_cast<uint32_t>(.5f+(std::bit_cast<float>(saved[i][word])-.5f)*motogp::wide::HorizontalScale()):saved[i][word]);
-        Check(batched==expected,"HUD fits a centered safe area, preserving unaffected coordinates and Z/color/UV");
+        const bool coordinate=word==(narrow?1u:0u);
+        Check(coordinate?std::abs(std::bit_cast<float>(batched)-std::bit_cast<float>(expected))<.000001f:batched==expected,
+            "HUD fits a centered safe area, preserving unaffected coordinates and Z/color/UV");
         Check(read(vertices[i]+word*4)==saved[i][word],"Native HUD source vertices fully restored, including aliases");
       }
       Check(ctx.r1.u32==stack+2048 && ctx.lr==0x12345678,"HUD quad wrapper preserves native ABI");

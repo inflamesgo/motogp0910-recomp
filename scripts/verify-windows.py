@@ -4,6 +4,7 @@
 Build the EXCLUDE_FROM_ALL probe targets first. On Windows omit --wine;
 Linux/Wine validation additionally needs a display and the native VC++ runtime.
 This suite does not verify rendered Windows GPU pixels or a full career race.
+Use --probe NAME and --launcher-phase PHASE for focused reruns in fresh fixtures.
 """
 import argparse
 import hashlib
@@ -37,21 +38,30 @@ def main():
     parser.add_argument('--game-root', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, default=Path('out/windows-validation'))
     parser.add_argument('--wine', type=Path)
+    parser.add_argument('--probe', action='append', choices=[*PROBES, 'input_defaults_probe'],
+                        help='Run only this probe; repeat to select multiple probes')
+    parser.add_argument('--launcher-phase', choices=['full', 'layout', 'remaining', 'sliders', 'graphics', 'iso', 'updates'],
+                        help='Select a launcher UI phase; requires --probe launcher_layout_probe')
     parser.add_argument('--skip-ui', action='store_true')
     parser.add_argument('--compilation-inputs-only', action='store_true',
                         help='Report full-disc probes as skipped; run checks supported by XEX/patch inputs')
     parser.add_argument('--list-targets', action='store_true', help='Print selected build targets without running checks')
     args = parser.parse_args()
+    requested = set(args.probe) if args.probe else {*PROBES, 'input_defaults_probe'}
+    if args.launcher_phase and (not args.probe or 'launcher_layout_probe' not in requested or args.skip_ui or args.compilation_inputs_only):
+        parser.error('--launcher-phase requires an enabled --probe launcher_layout_probe')
+    include_inputs = 'input_defaults_probe' in requested
     skipped = {name: 'requires full original disc assets' for name in FULL_DISC_PROBES
-               if args.compilation_inputs_only}
-    if args.skip_ui:
+               if args.compilation_inputs_only and name in requested}
+    if args.skip_ui and 'launcher_layout_probe' in requested:
         skipped['launcher_layout_probe'] = 'interactive launcher UI check disabled'
-    selected = {name: kind for name, kind in PROBES.items() if name not in skipped}
+    selected = {name: kind for name, kind in PROBES.items() if name in requested and name not in skipped}
+    targets = [*selected, *(['input_defaults_probe'] if include_inputs else [])]
     if args.list_targets:
-        print('\n'.join([*selected, 'input_defaults_probe']))
+        print('\n'.join(targets))
         return 0
     build, game = args.build_dir.resolve(), args.game_root.resolve()
-    for name in [*selected, 'input_defaults_probe']:
+    for name in targets:
         if not (build / (name + '.exe')).is_file():
             parser.error(f'Build the missing probe target first: {name}')
     if not (game / 'default.xex').is_file():
@@ -103,12 +113,15 @@ def main():
             env.pop(key, None)
         env.update(environment or {})
         start = time.monotonic()
+        # The bilingual physical-input audit also resizes every launcher page
+        # and tests ISO import; Wine can exceed the CPU probes' three minutes.
+        timeout = 600 if name == 'launcher_layout_probe' else 180
         with (root / (label + '.log')).open('w', encoding='utf-8') as log:
             try:
-                result = subprocess.run(command, cwd=fixture, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=180)
+                result = subprocess.run(command, cwd=fixture, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=timeout)
                 code = result.returncode
             except subprocess.TimeoutExpired:
-                log.write('\nTimed out after 180 seconds\n')
+                log.write(f'\nTimed out after {timeout} seconds\n')
                 code = 124
         results.append({'probe': label, 'status': 'passed' if code == 0 else 'failed',
                         'exit': code, 'seconds': round(time.monotonic() - start, 3)})
@@ -129,18 +142,21 @@ def main():
             extra = [target(game), target(build / 'resources/ui/OpenSans-Semibold.ttf'), target(root / 'settings-preview')]
         if kind == 'ui':
             extra.append(target(root / 'screenshots'))
+            if args.launcher_phase and args.launcher_phase != 'full':
+                extra.append('--' + args.launcher_phase + '-only')
         run(name, extra)
-    for scenario in ('default', 'config-false', 'env-false', 'cli-false', 'cli-true'):
-        extra = [scenario]
-        if scenario.startswith('cli-'):
-            extra.append('--mnk_mode=' + ('true' if scenario == 'cli-true' else 'false'))
-        run('input_defaults_probe', extra, config='mnk_mode=false\n' if scenario == 'config-false' else None,
-            environment={'REX_MNK_MODE':'false', 'REXGLUE_MNK_MODE':'false'} if scenario in ('env-false', 'cli-true') else None,
-            label='input-' + scenario)
-    run('input_defaults_probe', ['config-false'],
-        config='mnk_mode=false\nkeybind_a="Semicolon,Space"\nkeybind_b="Quote,Backspace"\n', label='input-legacy-confirm')
-    run('input_defaults_probe', ['config-false'],
-        config='mnk_mode=false\nkeybind_a="Ctrl+K,Space"\nkeybind_b="Delete"\n', label='input-custom-confirm')
+    if include_inputs:
+        for scenario in ('default', 'config-false', 'env-false', 'cli-false', 'cli-true'):
+            extra = [scenario]
+            if scenario.startswith('cli-'):
+                extra.append('--mnk_mode=' + ('true' if scenario == 'cli-true' else 'false'))
+            run('input_defaults_probe', extra, config='mnk_mode=false\n' if scenario == 'config-false' else None,
+                environment={'REX_MNK_MODE':'false', 'REXGLUE_MNK_MODE':'false'} if scenario in ('env-false', 'cli-true') else None,
+                label='input-' + scenario)
+        run('input_defaults_probe', ['config-false'],
+            config='mnk_mode=false\nkeybind_a="Semicolon,Space"\nkeybind_b="Quote,Backspace"\n', label='input-legacy-confirm')
+        run('input_defaults_probe', ['config-false'],
+            config='mnk_mode=false\nkeybind_a="Ctrl+K,Space"\nkeybind_b="Delete"\n', label='input-custom-confirm')
     print('Evidence:', root)
     return 1 if any(item['exit'] for item in results) else 0
 

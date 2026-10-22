@@ -4,10 +4,43 @@
 #include <iostream>
 #include <thread>
 #include <atomic>
+#include <winioctl.h>
 
 namespace {
 int ui_checks=0;
 void CheckUI(bool ok,const char* message){if(!ok)throw std::runtime_error(message);++ui_checks;}
+// Inventory-only sparse fixtures, never executed as game content. The UI probe
+// must run in its isolated application directory, not an installed launcher.
+struct DlcFixture {
+  fs::path root;
+  explicit DlcFixture(const fs::path& application):root(motogp::dlc::ContentRoot(application)) {
+    CheckUI(!fs::exists(root),"DLC fixtures never overwrite an existing installation");
+    fs::create_directories(motogp::dlc::Headers(root));
+    for(size_t i=0;i<dlc::kPackages.size();++i) {
+      const auto& spec=dlc::kPackages[i];const auto folder=motogp::dlc::Packages(root)/spec.id;
+      fs::create_directories(folder);
+      {std::ofstream marker(folder/("DLCPack0"+std::to_string(spec.marker)+".meta"),std::ios::binary);marker<<"DLCPACK1PADDING";}
+      for(size_t file=1;file<spec.files;++file) {
+        const auto path=folder/(std::to_string(file)+".fixture");
+        {std::ofstream empty(path,std::ios::binary);}
+        if(file==1) {
+          const auto handle=CreateFileW(path.c_str(),GENERIC_WRITE,0,nullptr,OPEN_EXISTING,0,nullptr);
+          CheckUI(handle!=INVALID_HANDLE_VALUE,"Create inventory-only sparse payload");
+          DWORD written=0;DeviceIoControl(handle,FSCTL_SET_SPARSE,nullptr,0,nullptr,0,&written,nullptr);CloseHandle(handle);
+          fs::resize_file(path,spec.payload_bytes-15);
+        }
+      }
+      rex::system::xam::XCONTENT_AGGREGATE_DATA data{};data.title_id=0x434307F0;
+      data.content_type=rex::system::XContentType::kMarketplaceContent;
+      std::memcpy(data.file_name_raw,spec.id,std::strlen(spec.id));
+      {std::ofstream header(motogp::dlc::Headers(root)/(std::string(spec.id)+".header"),std::ios::binary);
+        header.write(reinterpret_cast<const char*>(&data),sizeof(data));
+        if(spec.license)header.write(reinterpret_cast<const char*>(&spec.license),sizeof(spec.license));}
+      CheckUI(motogp::dlc::AllInstalled(root)==(i+1==dlc::kPackages.size()),"Partial DLC inventory stays blocked until all three packages are present");
+    }
+  }
+  ~DlcFixture(){std::error_code error;fs::remove_all(root,error);}
+};
 #include "iso_import_checks.inc"
 #include "steam_shortcut_checks.inc"
 void Screenshot(HWND window,const fs::path& file,bool whole=false,bool include_popups=false){
@@ -116,9 +149,13 @@ void CheckFocusPainting(App& app){
   app.ShowPage(3);
 }
 void CheckRapidCheckbox(HWND control){
+  CheckUI(IsWindowVisible(control)&&IsWindowEnabled(control),"Rapid checkbox regression uses a visible enabled control");
   const auto original=SendMessageW(control,BM_GETCHECK,0,0);
   for(int i=0;i<6;++i){
     const auto before=SendMessageW(control,BM_GETCHECK,0,0);ClickControl(control,14,8);
+    if(SendMessageW(control,BM_GETCHECK,0,0)==before)
+      std::cerr<<"Checkbox input failure: id="<<GetDlgCtrlID(control)<<" click="<<i<<" foreground="
+          <<(GetForegroundWindow()==GetAncestor(control,GA_ROOT))<<'\n';
     CheckUI(SendMessageW(control,BM_GETCHECK,0,0)!=(before),"Every rapid physical checkbox click toggles immediately, including double-click sequences");
   }
   CheckUI(SendMessageW(control,BM_GETCHECK,0,0)==original,"An even rapid click sequence restores the original checkbox state");
@@ -382,7 +419,7 @@ void CheckHelp(App& app,const fs::path& pictures){
   wchar_t cls[80]{};GetClassNameW(app.help.window,cls,80);CheckUI(std::wstring_view(cls)==TOOLTIPS_CLASSW,"Help uses the real Windows tooltip control");
   const auto count=SendMessageW(app.help.window,TTM_GETTOOLCOUNT,0,0);
   CheckUI(TooltipText(app.help.window,app.verify_files).find(L"No files are changed")!=std::wstring::npos,"File verification help is available on hover instead of a static paragraph");
-  app.turkish=true;app.Localize();CheckUI(TooltipText(app.help.window,app.verify_files).find(L"Dosyalar değiştirilmez")!=std::wstring::npos,"Tooltip text changes with launcher language");
+  app.turkish=true;app.Localize();CheckUI(TooltipText(app.help.window,app.verify_files).find(L"Dosyaları değiştirmez")!=std::wstring::npos,"Tooltip text changes with launcher language");
   app.turkish=false;app.Localize();CheckUI(SendMessageW(app.help.window,TTM_GETTOOLCOUNT,0,0)==count,"Localization updates existing tooltip tools without duplicating them");
   const auto selection=SendMessageW(app.effect,CB_GETCURSEL,0,0);SendMessageW(app.effect,CB_SETCURSEL,3,0);app.UpdateSharpness();
   CheckUI(TooltipText(app.help.window,app.effect).find(L"No frame generation")!=std::wstring::npos,"Experimental upscaling caveats remain available in the relevant tooltip");
@@ -405,6 +442,10 @@ void LayoutCheck(App& app){
     if(GetParent(item.control)==app.page_content){RECT panel;GetClientRect(app.page_view,&panel);MapWindowPoints(app.page_view,app.window,reinterpret_cast<POINT*>(&panel),2);
       RECT clipped;if(!IntersectRect(&clipped,&r,&panel))continue;r=clipped;
       CheckUI(uncut.left>=panel.left && uncut.right<=panel.right,"Page controls fit the actual scroll viewport width");}
+    if(!(r.left>=0&&r.top>=0&&r.right<=client.right&&r.bottom<=client.bottom))
+      std::cerr<<"Outside client: id="<<GetDlgCtrlID(item.control)<<" page="<<app.current_page<<" scale="<<app.scale
+          <<" tr="<<app.turkish<<" rect="<<r.left<<','<<r.top<<','<<r.right<<','<<r.bottom
+          <<" client="<<client.right<<','<<client.bottom<<'\n';
     CheckUI(r.left>=0 && r.top>=0 && r.right<=client.right && r.bottom<=client.bottom,"Visible control fits client area");
     for(auto& [previous,control]:visible){RECT overlap;const bool intersects=IntersectRect(&overlap,&previous,&r);
       if(intersects)std::cerr<<"Overlap: scale="<<app.scale<<" page="<<app.current_page<<" tr="<<app.turkish
@@ -541,6 +582,29 @@ void Check1080Graphics(App& app,const fs::path& game,const fs::path& pictures){
   app.turkish=false;app.Localize();
   CheckUI(TooltipText(app.help.window,app.aspect)==baseline_aspect_tip,"Existing aspect-ratio hover help remains unchanged");
 }
+void CheckViewportLayouts(App& app,const fs::path& pictures){
+  const auto window=app.window;constexpr DWORD style=WS_POPUP|WS_SYSMENU|WS_MINIMIZEBOX|WS_CLIPCHILDREN;
+    for(double scale:{.75,1.,1.25,1.5}){
+      app.Rescale(scale);RECT size{0,0,app.S(kWidth),app.S(kHeight+kCaptionHeight)};AdjustWindowRectEx(&size,style,FALSE,0);
+      SetWindowPos(window,nullptr,20,20,size.right-size.left,size.bottom-size.top,SWP_NOZORDER);
+      for(bool tr:{false,true}){
+        app.turkish=tr;app.Localize();CheckPolish(app);
+        for(int page=0;page<7;++page){app.ShowPage(page);CheckUI(bool(IsWindowVisible(app.path))==(page==3) && bool(IsWindowVisible(app.browse))==(page==3),"Game folder appears only on General");CheckUI(bool(IsWindowVisible(app.network_mode))==(page==6),"Network controls appear only on Online");CheckUI(bool(IsWindowVisible(app.language))==(page==3),"Launcher language appears only on General");RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_UPDATENOW|RDW_ALLCHILDREN);LayoutCheck(app);
+          for(int offset=160;offset<app.PageMaximum()+160;offset+=160){app.ScrollPage(offset);RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_UPDATENOW|RDW_ALLCHILDREN);LayoutCheck(app);}
+          app.ScrollPage(0);RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_UPDATENOW|RDW_ALLCHILDREN);
+          CheckSurface(app,app.page_view,app.S(App::kPageWidth)-1,app.S(App::kPageHeight)-1);
+          CheckSurface(app,app.page_content,app.S(App::kFormWidth)-2,app.S(280));
+          if(page==0)CheckSurface(app,app.sharp_value,app.S(35),app.S(22)-1);
+          if(page==5){RECT list;GetClientRect(app.achievement_list,&list);CheckUI(list.bottom>=4*app.S(76)+3*app.S(6),"Achievement viewport fits at least four complete compact cards");}
+          if(scale==1. || (scale==.75 && tr && page==2)){
+            const auto tab=page==0?L"graphics":page==1?L"audio":page==2?L"controls":page==3?L"general":page==4?L"advanced":page==6?L"online":L"achievements";
+            auto file=std::wstring(L"launcher-")+tab+(tr?L"-turkish":L"-english")+(scale==.75?L"-compact":L"")+L".bmp";Screenshot(window,pictures/file);if(scale==1.&&page==5&&!tr)Screenshot(window,pictures/L"launcher-achievements-full-window.bmp",true);
+            if(scale==1.&&page==3&&!tr){app.caption_hover=HTCLOSE;app.PaintCaption();Screenshot(window,pictures/L"launcher-caption-hover.bmp");app.caption_hover=0;app.PaintCaption();}
+          }
+        }
+      }
+    }
+}
 int wmain(int argc,wchar_t** argv){
   if(argc==2&&std::wstring_view(argv[1])==L"--fixture-child")return 0;
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
@@ -557,7 +621,7 @@ int wmain(int argc,wchar_t** argv){
     Gdiplus::GdiplusShutdown(token);CoUninitialize();return result;
   }
   try{
-    if(argc!=3&&argc!=4)throw std::runtime_error("Usage: launcher_ui_probe GAME_ROOT SCREENSHOT_DIRECTORY [--sliders-only|--graphics-only|--iso-only|--updates-only] (run in an isolated executable folder)");
+    if(argc!=3&&argc!=4)throw std::runtime_error("Usage: launcher_ui_probe GAME_ROOT SCREENSHOT_DIRECTORY [--sliders-only|--graphics-only|--iso-only|--updates-only|--layout-only|--remaining-only] (run in an isolated executable folder)");
     CheckSteamShortcuts();
     const auto pictures=fs::path(argv[2]);fs::create_directories(pictures);
     App app;app.scale=1;const auto game=fs::path(argv[1]);
@@ -567,6 +631,9 @@ int wmain(int argc,wchar_t** argv){
     auto window=CreateWindowExW(0,cls.lpszClassName,L"MotoGP 09/10 Launcher",style,20,20,bounds.right-bounds.left,bounds.bottom-bounds.top,nullptr,nullptr,cls.hInstance,&app);
     CheckUI(window!=nullptr,"Production UI window created");ShowWindow(window,SW_SHOW);SetForegroundWindow(window);UpdateWindow(window);
     SetWindowTextW(app.path,game.c_str());app.ReadyStatus();
+    CheckUI(!app.dlc_complete&&!IsWindowEnabled(app.play),"A base-only installation remains blocked before DLC setup");
+    DlcFixture dlc_fixture(app.exe);app.dlc_checked=false;app.ReadyStatus();
+    CheckUI(app.dlc_complete&&IsWindowEnabled(app.play),"Complete inventory enables the launcher without running synthetic content");
     if(argc==4 && std::wstring_view(argv[3])==L"--updates-only"){
       app.StartUpdateCheck();CheckUI(!IsWindowVisible(app.update_notice),"Unconfigured normal launch has no update notification");
       app.update_preview=true;app.StartUpdateCheck();
@@ -591,11 +658,20 @@ int wmain(int argc,wchar_t** argv){
       Check1080Graphics(app,game,pictures);DestroyWindow(window);std::cout<<ui_checks<<" targeted graphics settings checks passed\n";
       Gdiplus::GdiplusShutdown(token);CoUninitialize();return 0;
     }
+    if(argc==4&&std::wstring_view(argv[3])==L"--layout-only"){
+      CheckViewportLayouts(app,pictures);DestroyWindow(window);std::cout<<ui_checks<<" targeted viewport checks passed\n";
+      Gdiplus::GdiplusShutdown(token);CoUninitialize();return 0;
+    }
+    const bool remaining_only=argc==4&&std::wstring_view(argv[3])==L"--remaining-only";
+    if(!remaining_only){
     CheckSliderInteractions(app);
     CheckSharpnessPersistence(app);
     CheckFocusPainting(app);
-    app.ShowPage(1);app.ScrollPage(0);CheckRapidCheckbox(app.mute);app.ShowPage(0);app.ScrollPage(0);CheckRapidCheckbox(app.vsync);CheckRapidCheckbox(app.msaa);
-    CheckPaintCoherence(app);CheckAdaptivePainting(app);CheckActionCursors(app);CheckPopupAnimation(app.render_resolution);CheckLanguageCapacity(app);CheckAllPopupOptions(app);CheckBindingLabelWidths(app);app.ShowPage(3);
+    app.ShowPage(1);app.ScrollPage(0);CheckRapidCheckbox(app.mute);
+    app.ShowPage(0);app.Reveal(app.vsync);CheckRapidCheckbox(app.vsync);app.Reveal(app.msaa);CheckRapidCheckbox(app.msaa);
+    CheckPaintCoherence(app);CheckAdaptivePainting(app);CheckActionCursors(app);
+    app.ShowPage(0);app.Reveal(app.render_resolution);CheckPopupAnimation(app.render_resolution);
+    CheckLanguageCapacity(app);CheckAllPopupOptions(app);CheckBindingLabelWidths(app);app.ShowPage(3);
     if(argc==4){CheckUI(std::wstring_view(argv[3])==L"--sliders-only","Known targeted regression mode");DestroyWindow(window);std::cout<<ui_checks<<" slider channel-click checks passed\n";Gdiplus::GdiplusShutdown(token);CoUninitialize();return 0;}
     CheckIsoImport(app,pictures);
     CheckUI(!app.Checked(app.debug_overlay)&&!GetDlgItem(app.page_content,164),"Debug defaults off and the former intro-skip checkbox is absent");
@@ -651,12 +727,13 @@ int wmain(int argc,wchar_t** argv){
       std::thread dismiss_missing([&]{while(!dismiss_done){auto dialog=FindWindowW(L"#32770",nullptr);
         if(dialog&&GetWindow(dialog,GW_OWNER)==window){PostMessageW(dialog,WM_COMMAND,IDOK,0);break;}Sleep(10);}});
       while(app.verifying){app.PollVerification();Sleep(10);}dismiss_done=true;dismiss_missing.join();
-      CheckUI(!app.status_positive&&app.status_en==L"Game is not ready"&&app.status_tr==L"Oyun hazır değil","Missing-file details stay in the report while the readiness footer remains stable");
+      CheckUI(!app.status_positive&&app.status_en.starts_with(L"Game is not ready · Launcher v")&&app.status_tr.starts_with(L"Oyun hazır değil · Launcher v"),"Missing-file details stay in the report while the versioned readiness footer remains stable");
       CheckUI(!fs::exists(sample)&&!fs::exists(scratch/L"logs"),"Missing-file verification neither recreates game files nor writes reports into the game folder");
       SetWindowTextW(app.path,game.c_str());
       app.ReadyStatus();
     }
 
+    }
     // Read the actual original XEX in the background; never execute the title
     // or touch its unlock save. Use a separate fixture profile for UI actions.
     const auto profile=app.exe/L"achievement-profile";
@@ -721,26 +798,7 @@ int wmain(int argc,wchar_t** argv){
     }
 
     SendMessageW(app.achievement_list,WM_KEYDOWN,VK_END,0);UpdateWindow(app.achievement_list);CheckUI(app.achievement_scroll>0,"Keyboard scroll reaches the final achievements");SendMessageW(app.achievement_list,WM_KEYDOWN,VK_HOME,0);UpdateWindow(app.achievement_list);CheckUI(app.achievement_scroll==0,"Keyboard scroll returns to the first achievement");
-    for(double scale:{.75,1.,1.25,1.5}){
-      app.Rescale(scale);RECT size{0,0,app.S(kWidth),app.S(kHeight+kCaptionHeight)};AdjustWindowRectEx(&size,style,FALSE,0);
-      SetWindowPos(window,nullptr,20,20,size.right-size.left,size.bottom-size.top,SWP_NOZORDER);
-      for(bool tr:{false,true}){
-        app.turkish=tr;app.Localize();CheckPolish(app);
-        for(int page=0;page<7;++page){app.ShowPage(page);CheckUI(bool(IsWindowVisible(app.path))==(page==3) && bool(IsWindowVisible(app.browse))==(page==3),"Game folder appears only on General");CheckUI(bool(IsWindowVisible(app.network_mode))==(page==6),"Network controls appear only on Online");CheckUI(bool(IsWindowVisible(app.language))==(page==3),"Launcher language appears only on General");RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_UPDATENOW|RDW_ALLCHILDREN);LayoutCheck(app);
-          for(int offset=160;offset<app.PageMaximum()+160;offset+=160){app.ScrollPage(offset);RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_UPDATENOW|RDW_ALLCHILDREN);LayoutCheck(app);}
-          app.ScrollPage(0);RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_UPDATENOW|RDW_ALLCHILDREN);
-          CheckSurface(app,app.page_view,app.S(App::kPageWidth)-1,app.S(App::kPageHeight)-1);
-          CheckSurface(app,app.page_content,app.S(App::kFormWidth)-2,app.S(280));
-          if(page==0)CheckSurface(app,app.sharp_value,app.S(35),app.S(22)-1);
-          if(page==5){RECT list;GetClientRect(app.achievement_list,&list);CheckUI(list.bottom>=4*app.S(76)+3*app.S(6),"Achievement viewport fits at least four complete compact cards");}
-          if(scale==1. || (scale==.75 && tr && page==2)){
-            const auto tab=page==0?L"graphics":page==1?L"audio":page==2?L"controls":page==3?L"general":page==4?L"advanced":page==6?L"online":L"achievements";
-            auto file=std::wstring(L"launcher-")+tab+(tr?L"-turkish":L"-english")+(scale==.75?L"-compact":L"")+L".bmp";Screenshot(window,pictures/file);if(scale==1.&&page==5&&!tr)Screenshot(window,pictures/L"launcher-achievements-full-window.bmp",true);
-            if(scale==1.&&page==3&&!tr){app.caption_hover=HTCLOSE;app.PaintCaption();Screenshot(window,pictures/L"launcher-caption-hover.bmp");app.caption_hover=0;app.PaintCaption();}
-          }
-        }
-      }
-    }
+    if(!remaining_only)CheckViewportLayouts(app,pictures);
     { // Regression for the reported stutter: tabs must never repopulate all
       // selectors / enumerate monitor modes or modify pending game settings.
       const auto generation=app.localization_generation;toml::table before;app.GetControls().Store(before);std::ostringstream original;original<<toml::toml_formatter{before};
@@ -884,7 +942,7 @@ int wmain(int argc,wchar_t** argv){
           SendMessageW(app.network_mode,WM_MOUSEWHEEL,MAKEWPARAM(0,static_cast<WORD>(-WHEEL_DELTA)),0);
           CheckUI(SendMessageW(app.network_mode,CB_GETCURSEL,0,0)==mode,"Closed Online connection selector ignores the mouse wheel");
           for(auto control:{app.network_player,app.network_room,app.network_adapter,app.network_host,app.network_server}){
-            const bool relevant=control==app.network_server?false:control==app.network_player?mode==1:(control==app.network_adapter||control==app.network_host)?mode==1:mode>0;
+            const bool relevant=control==app.network_server?false:control==app.network_player?mode==1:(control==app.network_adapter||control==app.network_host)?mode==1:mode==1||(mode==2&&app.account.has_value());
             CheckUI(bool(IsWindowVisible(control))==relevant&&bool(IsWindowVisible(app.help_labels.at(control)))==relevant&&bool(IsWindowEnabled(control))==relevant,"Each mode shows and enables only its relevant fields and labels");
           }
           LayoutCheck(app);
@@ -896,7 +954,7 @@ int wmain(int argc,wchar_t** argv){
           app.ShowPage(6);CheckUI(app.Text(app.network_player)==L"Rider"&&app.Text(app.network_host)==L"192.168.1.3"&&app.Text(app.network_server)==L"https://play.example.com","Mode and tab changes preserve LAN and Online details");
           if(scale==1.){RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN|RDW_UPDATENOW);const auto prefix=mode==0?L"online-offline":mode==1?L"online-lan":L"online-server";Screenshot(window,pictures/(std::wstring(prefix)+(tr?L"-turkish.bmp":L"-english.bmp")));}
         }
-        SetWindowTextW(app.network_server,L"invalid server");bool rejected=false;try{app.GetControls();}catch(const Error&){rejected=true;}CheckUI(rejected,"Invalid inline Online server is rejected without modifying accepted settings");
+        SetWindowTextW(app.network_server,L"invalid server");CheckUI(app.GetControls().online_server==kCommunityServer,"The hidden legacy server field cannot override the fixed community endpoint");bool rejected=false;
         SendMessageW(app.network_mode,CB_SETCURSEL,1,0);app.Command(kLanEnabled,CBN_SELCHANGE);SetWindowTextW(app.network_host,L"999.1.1.1");rejected=false;try{app.GetControls();}catch(const Error&){rejected=true;}CheckUI(rejected,"Invalid inline LAN IPv4 is rejected by existing validation");
         app.SetControls(initial);
       }

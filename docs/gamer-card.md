@@ -1,5 +1,14 @@
 # In-game rider license
 
+The user accepted the design at commit `1b8e105` as the final Game Card design
+on 2026-10-22. Use this layout, typography, artwork and interaction pattern as
+the baseline for subsequent fixes. Further visual redesign requires new user
+direction. The user subsequently requested a limited extension: the website's
+**Rider Rank**, **Tracks Held** naming and a clearer label for boards entered.
+That extension preserves the existing three-column summary and other layout.
+Acceptance does not change the documented data/context limits or constitute
+independent runtime validation.
+
 The native **View profile** action in Online lobbies and leaderboards now opens a
 player card using the launcher's dark palette and orange accent (`#ff6a13`).
 It is titled **RIDER LICENSE** (**PİLOT LİSANSI**) and has **Overview** and
@@ -14,9 +23,9 @@ stripe fades only over its bottom 18%, and the right stripe is fully orange.
 The ramps use smoothstep opacity over 24 seamless bands. This permanent
 difference between stripes is independent of the opening animation.
 The user supplied native screenshots of both tabs and confirmed that account
-data and avatars load in game. The latest alignment, typography, stripe and bio
-changes still require native visual review; no builds or tests were run for this
-design pass. The approved concepts are implemented on an 1100 by
+data and avatars load in game. Windows build and Quick quality checks were
+dispatched for `1b8e105`; no local builds or tests were run, and workflow results
+were not inspected. The approved design is implemented on an 1100 by
 580 design canvas, scaled uniformly to fit the display. Text and hit targets
 share that canvas; the outer window has no scroll state. Overview fits without
 scrolling. Records draws complete rows with a dedicated row-based scrollbar,
@@ -30,12 +39,15 @@ areas. Each rank pair shares one baseline; circuit names remain left-aligned.
 
 The pinned renderer uploads a static font atlas. F1 uses fonts prepared at 17
 and 30 pixels, while the original license scaled the 17-pixel font to arbitrary
-sizes. The application now registers 27 additional profile-specific sizes
-(12–32 pixels at one-pixel intervals, then 36/40/44/48/52/56) during font setup,
+sizes. The application now registers 34 additional profile-specific sizes
+(5–32 pixels at one-pixel intervals, then 36/40/44/48/52/56) during font setup,
 before the SDK uploads the atlas. Profile drawing, measurement, wrapping and
 widgets select the closest prepared size and render it at its actual pixel size;
 canvas positions are rounded to screen pixels. F1 fonts, SDK/runtime pins and
-the rendering backend are unchanged. Native visual verification remains pending.
+the rendering backend are unchanged. Small prepared sizes prevent the old
+12-pixel minimum from overlapping bio/Records baselines in small viewports;
+ordinary display sizes still select the same sharp native faces. Native visual
+verification remains pending.
 
 ## Identity and public data
 
@@ -105,13 +117,56 @@ content. Native slot 17 (reserved Balaton) is excluded; Silverstone, Shanghai an
 Istanbul remain indices 18, 19 and 20. This differs deliberately from the live
 site's older 17-track catalogue. After comparing the user's screenshots with the
 site's `leaders` / `withTracks` calculation, the user selected **DLC included:
-tracks led / 20**. The first statistic is now **Tracks led**, and the **Total Track
+tracks led / 20**. The first statistic is now **Tracks Held**, and the **Total Track
 Domination** percentage uses that same distinct-first-place circuit count. In
 the supplied example, 17 boards led across 16 circuits means 16/20 = 80%; 19 is
 the total board count. The site's 16/17 uses its smaller catalogue. The previous
 17/20 counted circuits with any saved result, a different statistic. The initial
 2009 season filter still applies; multiple first-place boards on one circuit
-increase Records held but count only once toward Tracks led.
+increase Records held but count only once toward Tracks Held. The third caption
+is **Boards Entered** (**Katıldığı tablolar**), replacing **Leaderboards**. This
+counts separate published circuit/class boards with a personal best, not unique
+circuits ridden: two class entries on the same circuit count as two boards.
+The existing numerator and percentage calculations are unchanged by the rename.
+
+## Rider Rank
+
+The header's right-hand space displays **RIDER RANK** (**PİLOT SIRASI**) and a
+compact `#<position>` on both tabs. It is separate from the selected-board rank
+in Personal Best and from the three existing summary counters. This addition
+does not add another summary column or alter the Records table.
+
+The website does not display the raw `pos` from `/api/motogp/ranking` directly.
+Its current `withTracks` code joins that endpoint's players with leaders from
+`/api/motogp/views`, counts distinct circuits led, sorts by that count descending,
+then `firsts` descending, then `points` descending, and finally raw `pos`
+ascending. The client follows that exact ordering and looks up the selected
+MotoGP player ID, never the current launcher user or a display-name guess.
+The live ranking page, its current JavaScript and both public endpoints were
+retrieved successfully during this implementation; the responses contained 15
+ranked riders and 38 populated boards at that time.
+
+This rank intentionally follows the site's current 17-base-circuit catalogue
+and full ranking scope. It does not apply the card's separate DLC denominator
+or temporary 2009 summary filter. The public ranking API currently returns at
+most 100 riders; an absent rider is shown with a hyphen, not an invented rank.
+The hover explanation distinguishes a rider not listed from a lookup failure.
+Loading shows an ellipsis; a failed or malformed response shows a hyphen while
+the rest of the profile remains available.
+
+Both read-only requests run on the existing cancellable worker after identity,
+record, metadata and avatar results have been published, before optional map
+artwork. They use the fixed public host without credentials, with 256 KiB and
+512 KiB response limits respectively, and reject invalid or duplicate IDs,
+positions and board indices. A single immutable, memory-only ranking cache is
+shared across players for 60 seconds. Each opening selects its own player ID
+from that list, including when the profile itself is cached. No polling occurs;
+failed lookups wait 60 seconds before a subsequent opening can retry. Closed or
+superseded requests cannot publish into a different card. Local checks are
+recorded in [the validation report](rider-license-validation.md); native visual
+verification remains pending.
+
+## Records table
 
 Records has five columns: rank/board population on one line, circuit with
 class/2009 underneath, best lap, stored mode, and **Set**. Results use the site's
@@ -178,12 +233,39 @@ the top, and a new player selection resets its open state. The modal footer has
 only a centered Close button; its redundant shortcut sentence is removed. The
 preview tooltip also omits its redundant Y/R hint. The main license footer shows
 controller hints only (LB/RB, A, B, D-pad and Y); keyboard bindings remain active.
+The complete hint string is measured and centered within the same right-pane
+width on both tabs. Adding Records' D-pad hint or the optional bio hint changes
+the string's width without moving its center. The profile action keeps its
+existing sidebar alignment.
+
+### Embedded emoji rendering
+
+Both the preview and the full bio modal render the embedded Noto emoji catalogue:
+5,709 sequences sharing 4,068 sprites, including non-BMP characters, flags,
+skin-tone variants, keycaps and supported ZWJ families. The original UTF-8 bio
+remains intact in the account snapshot. A display-only longest-sequence match
+maps each supported cluster into a BMP private-use glyph, preserving the pinned
+SDK's 16-bit `ImWchar` ABI. Unknown future emoji require a catalogue update.
+
+The transparent 32-pixel sprites are stored once in a shared atlas rectangle;
+all prepared profile sizes reuse those UVs with native glyph metrics and color
+rendering. There are no emoji HTTP requests or per-profile texture downloads.
+Font faces now include sizes 5–11 so small viewports do not force a 12-pixel
+minimum into shorter bio and Records baselines. F1 font sizes remain unchanged.
+
+`scripts/build-profile-emoji.py` reproducibly builds the PNG and JSON from a
+local Noto Color Emoji font using fontTools and Pillow. The metadata records
+the input font's SHA-256. Its SIL OFL attribution is retained in
+`third_party/noto-emoji-OFL.txt` and the launcher's embedded third-party notices.
 
 ## Personal-best circuit panel
 
 The user subsequently approved the circuit-panel layout. Personal Best now has
 a small circuit outline on the left, circuit name and lap/class/2009/mode in
-the middle, and rank/board population plus **Set** on the right. The date uses
+the middle, and rank/board population plus **Set** on the right. The middle
+column has equal insets between its dividers: circuit name at the top, the
+larger lap below, then class/2009/mode on one line, all centered on the same
+axis. A missing-lap message shares that center. The date uses
 the same accepted-result timestamp and formatter as Records; hovering it shows
 the full local date and time. All lap details come from the exact selected
 leaderboard view, never another circuit's faster lap. An unpublished result
@@ -211,8 +293,8 @@ session. Failed requests wait at least 60 seconds before another opening can
 retry; there is no polling. Cached profiles still select artwork from the new
 opening's circuit, and closed or superseded requests cannot publish into another
 card. The UI uploads each changed image once and fits its original aspect ratio
-inside the map area. Native visual review remains pending; no local build or
-tests were run for this pass.
+inside the map area. See [local validation](rider-license-validation.md) for the
+subsequent checks; native visual review remains pending.
 
 ## Avatar loading and fallback
 
@@ -225,8 +307,8 @@ trusted 1254-square embedded image is independent of the download size limits
 below. It is available before identity HTTP completes and needs no network
 request or sidecar file. Its image is drawn directly with transparent padding,
 without the old geometric helmet or an opaque square/frame. Uploaded photos
-retain their existing fit and border. The latest artwork still needs native
-visual review; no build or tests were run for this change.
+retain their existing fit and border. Embedded-image decoding and CPU previews
+are covered by the subsequent local validation; native visual review remains.
 
 Name lookup starts only when the card opens, on one worker. The account name,
 records and profile action become available before the optional account metadata
@@ -256,14 +338,16 @@ and malformed JSON do not trigger this retry. Later player lookups do not add
 retries, and there is no background warm-up or polling request.
 
 A bounded, memory-only cache retains up to eight profiles. A complete profile
-reopened within 60 seconds is shown immediately without HTTP. An older or partial
+reopened within 60 seconds is shown immediately without new identity, metadata
+or avatar HTTP requests. Optional ranking/map work has its own cache. An older or partial
 cached profile can be shown for up to five minutes while the worker refreshes it
 in the background. The selected leaderboard view is always taken from the new
 opening, never from the cached card. Refresh failures keep the available cached
 profile visible; a verified account rename clears the previous account's photo.
 Partial or failed loads are eligible for another attempt on reopening. The cache
 does not survive game shutdown, and a first visit still depends on network and
-server response time. These changes have not been built or tested locally.
+server response time. Subsequent local checks are recorded in
+[the validation report](rider-license-validation.md).
 
 Avatar downloads are limited to 512 KiB and image dimensions to 1024 by 1024
 before decoding. HTTP errors, missing photos, invalid or oversized images leave
@@ -277,27 +361,23 @@ avatar square without stretching or cropping. Avatars are not written to disk.
 
 ## Diagnostics
 
-Card events use the existing game log with the `PLAYER_CARD` prefix. No separate
-logging service, polling loop or debug UI is added. Each opening gets a request
-number that connects the selected XUID/player ID to these stages:
+The user requested removal of the temporary Rider License debug instrumentation.
+Routine opening/closing, successful HTTP phases/results, timings, JSON field
+availability, cache hits, retry notices, normal cancellation/discard, successful
+image decoding/upload and bio/browser action traces are removed. Counters and
+content-type queries used only by those messages are removed as well. A normal
+successful visit, including an account without a photo, emits no `PLAYER_CARD`
+informational messages.
 
-- `identity`: MotoGP ID-to-name lookup and returned field availability.
-- `account`: shared profile lookup, country and avatar source.
-- `avatar`: HTTP result, JPEG/PNG decode dimensions and UI texture upload.
-- `records`: parsed personal-best rows, circuits and first places.
-- `flags`: embedded atlas decode/upload failures.
-- `default_avatar`: embedded helmet decode readiness and UI texture upload.
-- `track_map`: per-circuit cache state, optional HTTP/decode and UI upload.
-
-HTTP events include the fixed host/path, status, content type, byte count,
-duration and Windows error code when relevant. `http_phase` events report
-cumulative setup, send-completion and response-header timings; `http_result`
-reports total time through the final body read. `cache` records immediate hits and freshness, and
-`cancelled` distinguishes dismissal from a network failure. `http_retry` records
-the single initial-connection retry and its remaining time budget. Logs distinguish
-an account with no photo, HTTP errors, decode failures and responses discarded after
-closing or changing cards. They do not record response bodies, passwords, tokens
-or cookies.
+Actionable warnings remain in the existing game log with the `PLAYER_CARD`
+prefix: invalid identity or response data, transport/HTTP failures, rejected
+avatar paths, image/resource decode failures, failed GPU texture creation,
+missing profile fonts and a failed browser action. HTTP errors retain the
+request number, stage and Windows error code or HTTP status; routine 404 avatar
+fallbacks are silent. Normal cancellation is still handled separately from
+failures. Loading, cache freshness, retry, deadlines and cancellation behavior
+are unchanged. No separate logging service, polling or debug toggle is added.
+Warnings do not contain response bodies, passwords, tokens, cookies or bio text.
 
 For a missing avatar/country, open that player's card, wait for loading to finish,
 then share the newest game log from the install's `logs/` directory. Search for
@@ -347,11 +427,17 @@ and multiline bios, bio modal input isolation, the three distinct stripe ramps
 and selected-board ordering, as well as a lobby member,
 multiple leaderboard rows including the local player, accounts with/without a
 photo, failed lookups, opening/dismissal presses and switching to the browser
-and back. These checks remain pending for the latest source. Development continues
-on `main`, separate from the frozen `preview` handoff branch. The Windows Actions
+and back. Native playthrough checks remain pending; local CPU/UI coverage is
+recorded in [the validation report](rider-license-validation.md). Development continues
+on `main`. The user requested adding Rider License to the existing PR from
+`preview`, then paused that transfer for further UI edits. The PR source and
+original handoff worktree have not been changed by these local revisions; see
+[the updated handoff](chunchunq-handoff.md) for delivery status. The Windows Actions
 workflow is dispatched with `quality_checks=false`. As of the user's latest
 preference, each "build" request also explicitly dispatches `quality-checks.yml`
-(Quick quality checks) on `main`. Local builds and tests remain disabled.
+(Quick quality checks) on `main`. For this revision, the user explicitly
+requested comprehensive local checks and a local Windows build instead.
+The default workflow for later ordinary build requests remains unchanged.
 `[skip ci]` avoids duplicate push-triggered checks; both workflows are dispatched
 explicitly. Do not monitor their results or repeat that restriction in the
 completion message; simply confirm the push and the two dispatches.

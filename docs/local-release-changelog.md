@@ -1,7 +1,24 @@
 # MotoGP 09/10: changes relative to ChunchunQ's online fork
 
-Prepared on 21 October 2026. This is the full local changelog and comparison
+Prepared on 21 October 2026; updated on 22 October 2026. This is the full local changelog and comparison
 record. It is **not part of the online-only handoff bundle**.
+
+## Subsequent Rider License release: 1.1.11
+
+The user approved `1.1.11` for the in-game Rider License release after the
+original PR was opened. Native View profile opens Overview/Records with
+account photo/flag, inline membership, a bounded bio/full-text modal, selected
+circuit outline/lap/rank/set date and the site's Rider Rank. Tracks Held counts
+distinct led circuits out of 20 including DLC; Records Held counts first-place
+boards, while Boards Entered counts submitted circuit/class boards. The card
+keeps its temporary 2009 scope independently of the website ranking scope.
+
+The current local extension also centers the changing footer hint group and
+Personal Best middle column, removes routine diagnostics, corrects small-screen
+font selection and embeds general bio emoji artwork with its OFL notices.
+This extension has not been transferred to the existing PR: the user paused
+that operation. See [validation](rider-license-validation.md) and
+[the current handoff](chunchunq-handoff.md) for the separate delivery/test states.
 
 ## Comparison scope
 
@@ -113,11 +130,10 @@ Sources: `src/launcher/steam_shortcut.h`, `steam_vdf.h`, `steam_page.inc`,
   MotoGP service/download links remain to be configured by the operator.
 - Retain the native installation/startup rollback as a client fallback, with
   short explanatory comments. Preserve game content, DLC, settings and saves.
-- The source constant still reads `1.1.10`, the earlier updater milestone;
-  newer feature groups have not been assigned final release versions. Do not
-  treat this as a completed version calculation for the entire delivery.
-  Normal checks are inactive while the MotoGP manifest endpoint is empty.
-  The visual preview's `1.1.11` is synthetic, not an approved next release.
+- The source constant is `1.1.11`, approved for the Rider License release.
+  The earlier updater milestone was `1.1.10`. Normal checks remain inactive
+  while the MotoGP manifest endpoint is empty. Update-preview contents remain
+  synthetic and do not publish a release or configure a service.
 - Keep the existing MotoGP update UI: widen its panel, use the slim launcher
   scroll rail, enlarge the close target with hand cursor and translucent hover,
   and place the main action lower to leave more room for notes.

@@ -288,7 +288,9 @@
     reset_bindings=PageControl(2,L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,0,136+static_cast<int>(kBindings.size())*38,270,32,kResetBindings);
     BuildNetworkPage();
     BuildAchievements();
-    status=Control(L"STATIC",L"",0,44,kStatusY,kPageWidth-16,30);SendMessageW(status,WM_SETFONT,reinterpret_cast<WPARAM>(small_font),TRUE);
+    // Keep a small bottom inset: independently rounded Y/height values can
+    // otherwise place this control one pixel outside a 75% scaled window.
+    status=Control(L"STATIC",L"",0,44,kStatusY,kPageWidth-16,28);SendMessageW(status,WM_SETFONT,reinterpret_cast<WPARAM>(small_font),TRUE);
     save=Control(L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,28,kActionsY,108,32,kSave);
     defaults=Control(L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,146,kActionsY,128,32,kDefaults);
     logs=Control(L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,284,kActionsY,88,32,kLogs);
