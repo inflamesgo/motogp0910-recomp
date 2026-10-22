@@ -20,7 +20,12 @@
   and `docs`, `build`, `refactor`, `perf` or `chore` when appropriate. Keep each
   subject specific to the actual change.
 - Unless the user explicitly requests otherwise, "build" means commit and push
-  the authorized changes to `main`, then dispatch `windows-build.yml` with
-  `quality_checks=false`. Do not run local builds or tests. Include `[skip ci]`
-  in the commit body to skip push-triggered tests. After dispatch, do not inspect
-  Actions status, logs, artifacts or results; only issue the run command.
+  the authorized changes to `main`, then dispatch both `windows-build.yml`
+  (`quality_checks=false`) and `quality-checks.yml` (Quick quality checks) on
+  `main`. The user explicitly authorized Quick quality checks in Actions for
+  these build requests; do not run local builds or tests. Include `[skip ci]`
+  in the commit body to avoid duplicate push-triggered checks, then dispatch
+  the two workflows explicitly. After dispatch, do not inspect Actions status,
+  logs, artifacts or results. The final response should only confirm the push,
+  Windows build and Quick quality checks dispatch; do not repeat that the
+  results are not being monitored.

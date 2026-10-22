@@ -21,12 +21,21 @@ design pass. The approved concepts are implemented on an 1100 by
 share that canvas; the outer window has no scroll state. Overview fits without
 scrolling. Records draws complete rows with a dedicated row-based scrollbar,
 keeping its tabs, filter, headings, sidebar and footer fixed. At 1920 by 1080,
-Records circuit, lap-time and mode text retain their previous sizes, and six
-records fit at once. Rank/population pairs now use a common size and baseline.
-Overview uses moderately larger typography: 48-pixel summary values, roughly
-19-pixel captions and a 50-pixel personal-best time at that resolution. Summary
+Records retains six rows and its existing circuit/lap/mode typography roles.
+Rank/population pairs use a common size and baseline. Overview uses moderately
+larger typography, including roughly 48-pixel summary values and a 44-pixel
+personal-best time at that resolution. Summary
 columns, the tab group and rank/population pairs are centered in their respective
 areas. Each rank pair shares one baseline; circuit names remain left-aligned.
+
+The pinned renderer uploads a static font atlas. F1 uses fonts prepared at 17
+and 30 pixels, while the original license scaled the 17-pixel font to arbitrary
+sizes. The application now registers 27 additional profile-specific sizes
+(12–32 pixels at one-pixel intervals, then 36/40/44/48/52/56) during font setup,
+before the SDK uploads the atlas. Profile drawing, measurement, wrapping and
+widgets select the closest prepared size and render it at its actual pixel size;
+canvas positions are rounded to screen pixels. F1 fonts, SDK/runtime pins and
+the rendering backend are unchanged. Native visual verification remains pending.
 
 ## Identity and public data
 
@@ -89,20 +98,23 @@ The card validates and publishes an immutable record snapshot on the same
 worker; switching tabs, filtering and scrolling add no HTTP calls. Invalid or
 missing records do not prevent a valid identity, avatar or profile action.
 
-Overview shows distinct circuits with a published personal best, leaderboards
-where the player is first, and total published leaderboard entries. Its coverage
-bar uses the 20 distinct playable circuits supplied by the mandatory base/DLC
+Overview shows distinct circuits where the player leads at least one board,
+the number of boards where the player is first, and total published leaderboard
+entries. Its percentage uses the 20 playable circuits supplied by the base/DLC
 content. Native slot 17 (reserved Balaton) is excluded; Silverstone, Shanghai and
 Istanbul remain indices 18, 19 and 20. This differs deliberately from the live
-site's older 17-track catalogue and its ranking metric of **tracks led**. The
-first card statistic is **tracks recorded**, not tracks led; **records held**
-counts first places, not all personal bests. The percentage bar is labeled
-**Total Track Domination**, as explicitly selected by the user. Its calculation
-remains circuits with a published personal best / 20 (17/20 = 85%); the naming
-change does not turn it into a first-place ownership statistic.
+site's older 17-track catalogue. After comparing the user's screenshots with the
+site's `leaders` / `withTracks` calculation, the user selected **DLC included:
+tracks led / 20**. The first statistic is now **Tracks led**, and the **Total Track
+Domination** percentage uses that same distinct-first-place circuit count. In
+the supplied example, 17 boards led across 16 circuits means 16/20 = 80%; 19 is
+the total board count. The site's 16/17 uses its smaller catalogue. The previous
+17/20 counted circuits with any saved result, a different statistic. The initial
+2009 season filter still applies; multiple first-place boards on one circuit
+increase Records held but count only once toward Tracks led.
 
-Records has four columns: rank/board population on one line, circuit with
-class/2009 underneath, best lap, and stored mode. Results use the site's
+Records has five columns: rank/board population on one line, circuit with
+class/2009 underneath, best lap, stored mode, and **Set**. Results use the site's
 `display.text`; game mode comes from uploaded property 6. Unknown data uses an
 ASCII hyphen to avoid a missing-glyph diamond. The empty bike column is removed.
 Class labels follow published metadata, preserving the existing server-side
@@ -111,10 +123,20 @@ known 2010 rows (property 13 = 1) are excluded from the list, filters and summar
 legacy rows without a season remain in the initial 2009 presentation. The source
 season property is retained for the later server integration.
 
+**Set** uses each row's existing `updated` Unix timestamp, the same field used
+by the site's results table. It shows localized relative time below seven days,
+then a short date; hovering reveals local date and time. Missing timestamps show
+a hyphen. The server's best-score write path keeps the prior timestamp for equal
+or worse submissions, so this represents the accepted personal best's set time,
+not the latest profile read. No additional HTTP request is needed.
+
 The class filter is built from returned records. Empty records and failed lookups
 have separate messages. Its popup has dedicated vertical padding, a smaller
-corner radius, complete 24-unit selectable rows and matching height constraints;
-it no longer inherits the main card's zero vertical window padding. Sorting uses
+corner radius, complete 24-unit selectable rows and height based on every
+available class plus padding and rounding headroom. It no longer inherits the
+main card's zero vertical window padding or caps the option list at eight rows;
+all current classes fit without a popup scrollbar. The redundant X/F hint next
+to the selector is removed. Sorting uses
 rank, then latest update. A card opened
 through the verified leaderboard caller `8223EDD4` copies the current native view
 from `833362D8` (written by selector `82300088`). That exact result is shown first
@@ -152,9 +174,59 @@ scrollbar, D-pad and keyboard arrows can scroll it. A **Close** button,
 its selected tab and Records scroll position. Closing input cannot also open
 the website or dismiss the card in the same frame. Tabs, filters and profile
 actions are blocked while the modal is open. Each reopening starts the text at
-the top, and a new player selection resets its open state.
+the top, and a new player selection resets its open state. The modal footer has
+only a centered Close button; its redundant shortcut sentence is removed. The
+preview tooltip also omits its redundant Y/R hint. The main license footer shows
+controller hints only (LB/RB, A, B, D-pad and Y); keyboard bindings remain active.
+
+## Personal-best circuit panel
+
+The user subsequently approved the circuit-panel layout. Personal Best now has
+a small circuit outline on the left, circuit name and lap/class/2009/mode in
+the middle, and rank/board population plus **Set** on the right. The date uses
+the same accepted-result timestamp and formatter as Records; hovering it shows
+the full local date and time. All lap details come from the exact selected
+leaderboard view, never another circuit's faster lap. An unpublished result
+keeps the selected circuit name and available map, with an explicit missing-lap
+message and no invented rank or date. Without a selected leaderboard, the panel
+shows **No track selected**; lobby context integration remains a separate task.
+
+The site's public track catalogue maps native circuit slots 0–16 to PNG outlines
+under `https://www.nobkonline.com/assets/motogp/tracks/`. The client uses an explicit
+filename table with the original slot indices. Losail's `omap-qatar.png` was
+retrieved and visually inspected. Reserved slot 17 has no map. Published map
+paths for Silverstone, Shanghai and Istanbul were not found; the ignored local
+game assets were also searched, including `frontend_track.mgb`, but no directly
+usable DLC outline was identified. These slots show **Map unavailable** while
+their lap data remains usable. No guessed substitute circuit or original game
+texture is committed or packaged.
+
+Outlines are optional, fetched only after the existing identity, metadata and
+photo work has published its results. A map cannot delay the profile's data or
+browser action. The existing cancellable HTTP client requests only a known
+filename on the fixed public host, caps responses at 256 KiB and validates PNG
+dimensions (maximum 1024 square) before decoding on the worker. Successful maps
+remain in a bounded, memory-only cache keyed by native circuit for the game
+session. Failed requests wait at least 60 seconds before another opening can
+retry; there is no polling. Cached profiles still select artwork from the new
+opening's circuit, and closed or superseded requests cannot publish into another
+card. The UI uploads each changed image once and fits its original aspect ratio
+inside the map area. Native visual review remains pending; no local build or
+tests were run for this pass.
 
 ## Avatar loading and fallback
+
+The default avatar is a transparent side-profile racing helmet adapted from the
+user's supplied reference. Its off-white shell and light silver outer outline
+remain visible against the dark card; the visor and vents remain charcoal.
+`resources/gamer-card/default-helmet.png` is embedded as Windows RCDATA 201,
+decoded once on the profile worker and uploaded once by the UI renderer. This
+trusted 1254-square embedded image is independent of the download size limits
+below. It is available before identity HTTP completes and needs no network
+request or sidecar file. Its image is drawn directly with transparent padding,
+without the old geometric helmet or an opaque square/frame. Uploaded photos
+retain their existing fit and border. The latest artwork still needs native
+visual review; no build or tests were run for this change.
 
 Name lookup starts only when the card opens, on one worker. The account name,
 records and profile action become available before the optional account metadata
@@ -163,7 +235,7 @@ from a closed card or another selected player cannot replace the current card's
 name or image.
 
 The worker reuses a WinHTTP session and connection across identity, metadata,
-avatar and subsequent player requests, allowing HTTPS keep-alive instead of
+avatar, optional circuit outlines and subsequent player requests, allowing HTTPS keep-alive instead of
 recreating the entire session for each download. Requests use asynchronous
 WinHTTP completion callbacks with a cancellable worker wait. Closing the card,
 selecting another player or shutting down cancels the current request; the next
@@ -214,6 +286,8 @@ number that connects the selected XUID/player ID to these stages:
 - `avatar`: HTTP result, JPEG/PNG decode dimensions and UI texture upload.
 - `records`: parsed personal-best rows, circuits and first places.
 - `flags`: embedded atlas decode/upload failures.
+- `default_avatar`: embedded helmet decode readiness and UI texture upload.
+- `track_map`: per-circuit cache state, optional HTTP/decode and UI upload.
 
 HTTP events include the fixed host/path, status, content type, byte count,
 duration and Windows error code when relevant. `http_phase` events report
@@ -275,6 +349,9 @@ multiple leaderboard rows including the local player, accounts with/without a
 photo, failed lookups, opening/dismissal presses and switching to the browser
 and back. These checks remain pending for the latest source. Development continues
 on `main`, separate from the frozen `preview` handoff branch. The Windows Actions
-workflow must be dispatched with `quality_checks=false` for the requested
-build-only run; push-triggered tests are skipped for this change. Per the user's
-standing instruction, dispatch the build and do not monitor its result.
+workflow is dispatched with `quality_checks=false`. As of the user's latest
+preference, each "build" request also explicitly dispatches `quality-checks.yml`
+(Quick quality checks) on `main`. Local builds and tests remain disabled.
+`[skip ci]` avoids duplicate push-triggered checks; both workflows are dispatched
+explicitly. Do not monitor their results or repeat that restriction in the
+completion message; simply confirm the push and the two dispatches.

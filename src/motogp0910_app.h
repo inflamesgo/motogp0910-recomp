@@ -240,6 +240,7 @@ class Motogp0910App : public rex::ReXApp {
       const auto utf8_path=rex::path_to_utf8(path);
       achievement_font_ = atlas->AddFontFromFileTTF(utf8_path.c_str(),17.f,nullptr,ranges);
       achievement_heading_font_ = atlas->AddFontFromFileTTF(utf8_path.c_str(),30.f,nullptr,ranges);
+      motogp::gamer_card::ConfigureFonts(atlas,utf8_path.c_str());
       if(achievement_font_)ImGui::GetIO().FontDefault=achievement_font_;
     }
     else REXLOG_WARN("Achievement font is missing; extract the complete build including resources/ui");

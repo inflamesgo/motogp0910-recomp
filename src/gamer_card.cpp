@@ -16,11 +16,14 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cmath>
 #include <cstdint>
 #include <cfloat>
+#include <ctime>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -50,6 +53,19 @@ constexpr uint64_t kPeerMask = 0xFFFFFFFFFF000000ull;
 const auto& kAccent=overlay::orange;
 const auto& kWhite=overlay::white;
 const auto& kMuted=overlay::muted;
+struct FontFace {ImFont* font;float size;};
+constexpr int kFontSizes[]{12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,36,40,44,48,52,56};
+std::array<ImFont*,std::size(kFontSizes)> profile_fonts{};
+FontFace Face(ImFont* fallback,float pixels) {
+  size_t best=profile_fonts.size();
+  float distance=FLT_MAX;
+  for(size_t i=0;i<profile_fonts.size();++i) {
+    const float difference=std::abs(float(kFontSizes[i])-pixels);
+    if(profile_fonts[i]&&difference<distance){distance=difference;best=i;}
+  }
+  if(best<profile_fonts.size())return {profile_fonts[best],float(kFontSizes[best])};
+  return {fallback,std::max(1.f,std::round(pixels))};
+}
 const char* Tr(bool tr, const char* en, const char* translated) {
   return tr ? translated : en;
 }
@@ -145,6 +161,14 @@ constexpr std::string_view kTracks[]{"Losail International Circuit","Twin Ring M
   "Le Mans","Mugello","Catalunya","TT Circuit Assen","Laguna Seca","Sachsenring",
   "Donington Park","Brno","Indianapolis","Misano","Estoril","Phillip Island",
   "Sepang","Valencia","","Silverstone","Shanghai","Istanbul Park"};
+// Verified NOBK outline filenames in native track order. The reserved slot and
+// DLC tracks have no published outline in the site's current track catalogue.
+constexpr std::string_view kTrackMaps[]{"omap-qatar.png","omap-motegi.png","omap-jerez.png",
+  "omap-lemans.png","omap-mugello.png","omap-catalunya.png","omap-assen.png",
+  "omap-lagunaseca.png","omap-sachsenring.png","omap-donington.png","omap-brno.png",
+  "omap-indianapolis.png","omap-misano.png","omap-estoril.png","omap-phillipisland.png",
+  "omap-sepang.png","omap-valencia.png","","","",""};
+static_assert(std::size(kTrackMaps)==std::size(kTracks));
 
 std::shared_ptr<const Results> ReadResults(const nlohmann::json& json,uint64_t serial) {
   const auto records=json.find("records");
@@ -564,6 +588,10 @@ struct Snapshot {
   std::shared_ptr<const Avatar> avatar;
   std::shared_ptr<const Results> results;
   std::shared_ptr<const Avatar> flags;
+  std::shared_ptr<const Avatar> helmet;
+  std::shared_ptr<const Avatar> track_map;
+  int map_track=-1;
+  bool map_loading=false;
   uint32_t preferred_view=0;
 };
 
@@ -573,6 +601,49 @@ std::shared_ptr<const Avatar> ReadFlags() {
   if(width!=768||height!=544||pixels.size()!=size_t(width)*height*4) {
     REXLOG_WARN("PLAYER_CARD stage=flags event=decode_failed");return {};
   }
+  return std::make_shared<Avatar>(Avatar{uint32_t(width),uint32_t(height),std::move(pixels)});
+}
+
+std::shared_ptr<const Avatar> ReadHelmet() {
+#ifdef _WIN32
+  const auto module=GetModuleHandleW(nullptr);
+  const auto resource=FindResourceW(module,MAKEINTRESOURCEW(201),MAKEINTRESOURCEW(10));
+  if(!resource)return {};
+  const auto size=SizeofResource(module,resource);
+  const auto loaded=LoadResource(module,resource);
+  const auto* png=loaded?static_cast<const uint8_t*>(LockResource(loaded)):nullptr;
+  if(!png||!size)return {};
+  int width=0,height=0;
+  auto pixels=rex::ui::DecodeImageRGBA(png,size,width,height);
+  if(width!=1254||height!=1254||pixels.size()!=size_t(width)*height*4)return {};
+  return std::make_shared<Avatar>(Avatar{uint32_t(width),uint32_t(height),std::move(pixels)});
+#else
+  return {};
+#endif
+}
+
+std::shared_ptr<const Avatar> ReadTrackMap(PublicClient& client,int track,uint64_t serial,
+    std::stop_token cancel) {
+  if(track<0||track>=int(std::size(kTrackMaps))||kTrackMaps[track].empty())return {};
+  const auto response=client.Get("/assets/motogp/tracks/"+std::string(kTrackMaps[track]),
+      256*1024,serial,"track_map",cancel);
+  if(response.status!=200)return {};
+  const auto& body=response.body;
+  if(body.size()<33||body.compare(0,8,"\x89PNG\r\n\x1a\n",8)||body.compare(12,4,"IHDR"))
+    throw std::runtime_error("Track outline response is not PNG");
+  const auto dimension=[&](size_t at) {
+    uint32_t value=0;
+    for(size_t i=0;i<4;++i)value=(value<<8)|static_cast<uint8_t>(body[at+i]);
+    return value;
+  };
+  const auto expected_width=dimension(16),expected_height=dimension(20);
+  if(!expected_width||!expected_height||expected_width>1024||expected_height>1024)
+    throw std::runtime_error("Track outline dimensions are invalid");
+  int width=0,height=0;
+  auto pixels=rex::ui::DecodeImageRGBA(reinterpret_cast<const uint8_t*>(body.data()),body.size(),width,height);
+  if(width!=int(expected_width)||height!=int(expected_height)||pixels.size()!=size_t(width)*height*4)
+    throw std::runtime_error("Track outline decode failed");
+  REXLOG_INFO("PLAYER_CARD request={} stage=track_map event=decoded track={} width={} height={}",serial,track,width,height);
   return std::make_shared<Avatar>(Avatar{uint32_t(width),uint32_t(height),std::move(pixels)});
 }
 
@@ -609,11 +680,13 @@ class State {
     cancellation_.request_stop();
     cancellation_=std::stop_source{};
     requested_id_.reset();
+    requested_map_.reset();
     const auto id=static_cast<uint32_t>(xuid&0xFFFFFF);
     const auto serial=snapshot_.serial+1;
     snapshot_={};
     snapshot_.serial=serial;
     snapshot_.preferred_view=preferred_view;
+    snapshot_.helmet=helmet_;
     bool cached=false,fresh=false;
     const auto now=std::chrono::steady_clock::now();
     for(const auto& entry:cache_) {
@@ -627,6 +700,20 @@ class State {
     }
     request_serial_=serial;
     if(!fresh)requested_id_=id;
+    // The selected board is opening-specific, even on a cached player card.
+    // Keep artwork separately keyed by circuit so another board cannot inherit
+    // a previous card's map. A map-only task does not re-fetch the profile.
+    snapshot_.map_track=preferred_view?int((preferred_view-1)%21):-1;
+    snapshot_.track_map.reset();snapshot_.map_loading=false;
+    if(snapshot_.map_track>=0) {
+      const auto track=snapshot_.map_track;
+      snapshot_.track_map=track_maps_[track];
+      if(!snapshot_.track_map&&!kTrackMaps[track].empty()&&now>=map_retry_at_[track]) {
+        requested_map_=track;snapshot_.map_loading=true;
+      }
+      REXLOG_INFO("PLAYER_CARD request={} stage=track_map event=cache track={} hit={} loading={}",
+          serial,track,snapshot_.track_map!=nullptr,snapshot_.map_loading);
+    }
     REXLOG_INFO("PLAYER_CARD request={} event=open user={} xuid={:016X} player_id={} preferred_view={}",
         request_serial_,user,xuid,id,preferred_view);
     REXLOG_INFO("PLAYER_CARD request={} event=cache hit={} fresh={}",serial,cached,fresh);
@@ -645,6 +732,7 @@ class State {
     gate->Close();
     cancellation_.request_stop();
     requested_id_.reset();
+    requested_map_.reset();
     if (notified_) { kernel_->BroadcastNotification(0x9, false); notified_ = false; }
   }
   void Stop() {
@@ -653,6 +741,7 @@ class State {
       stopping_ = true;
       cancellation_.request_stop();
       requested_id_.reset();
+      requested_map_.reset();
       gate->Close();
       if (notified_) { kernel_->BroadcastNotification(0x9, false); notified_ = false; }
     }
@@ -680,10 +769,39 @@ class State {
     std::shared_ptr<const Avatar> flag_atlas;
     try { flag_atlas=ReadFlags(); }
     catch(const std::exception&) { REXLOG_WARN("PLAYER_CARD stage=flags event=decode_failed"); }
+    std::shared_ptr<const Avatar> helmet;
+    try { helmet=ReadHelmet(); }
+    catch(const std::exception&) { REXLOG_WARN("PLAYER_CARD stage=default_avatar event=decode_failed"); }
+    REXLOG_INFO("PLAYER_CARD stage=default_avatar event=ready success={}",helmet!=nullptr);
     std::unique_lock lock(mutex_);
+    helmet_=std::move(helmet);
+    snapshot_.helmet=helmet_;
+    snapshot_.flags=flag_atlas;
     while (!stopping_) {
-      changed_.wait(lock, [this] { return stopping_ || requested_id_.has_value(); });
+      changed_.wait(lock, [this] { return stopping_ || requested_id_.has_value() || requested_map_.has_value(); });
       if (stopping_) break;
+      // Identity, records, metadata and photo have priority. The outline is
+      // optional and cannot delay publishing any of those existing fields.
+      if(!requested_id_&&requested_map_) {
+        const auto track=*requested_map_;
+        const auto serial=request_serial_;
+        const auto cancel=cancellation_.get_token();
+        requested_map_.reset();
+        lock.unlock();
+        std::shared_ptr<const Avatar> map;
+        try {map=ReadTrackMap(client,track,serial,cancel);}
+        catch(const RequestCancelled&) {REXLOG_INFO("PLAYER_CARD request={} stage=track_map event=cancelled",serial);}
+        catch(const std::exception& error) {
+          REXLOG_WARN("PLAYER_CARD request={} stage=track_map event=unavailable reason={}",serial,error.what());
+        }
+        lock.lock();
+        if(!stopping_&&!cancel.stop_requested()&&serial==snapshot_.serial&&gate->IsOpen()&&snapshot_.map_track==track) {
+          track_maps_[track]=std::move(map);
+          map_retry_at_[track]=std::chrono::steady_clock::now()+std::chrono::seconds(60);
+          snapshot_.track_map=track_maps_[track];snapshot_.map_loading=false;
+        } else REXLOG_INFO("PLAYER_CARD request={} stage=track_map event=discarded reason=card_changed_or_closed",serial);
+        continue;
+      }
       const auto id = *requested_id_;
       const auto serial = request_serial_;
       const auto cancel=cancellation_.get_token();
@@ -766,8 +884,12 @@ class State {
   std::thread worker_;
   std::stop_source cancellation_;
   std::vector<CachedProfile> cache_;
+  std::shared_ptr<const Avatar> helmet_;
+  std::array<std::shared_ptr<const Avatar>,std::size(kTracks)> track_maps_{};
+  std::array<std::chrono::steady_clock::time_point,std::size(kTracks)> map_retry_at_{};
   Snapshot snapshot_;
   std::optional<uint32_t> requested_id_;
+  std::optional<int> requested_map_;
   uint64_t request_serial_ = 0;
 };
 
@@ -789,23 +911,6 @@ bool AnimationsEnabled() {
 #endif
 }
 
-void Helmet(ImDrawList* draw, ImVec2 position, float size) {
-  const ImVec2 center(position.x + size * .5f, position.y + size * .48f);
-  draw->AddRectFilled(position, {position.x + size, position.y + size}, Color(12, 15, 20), 3);
-  draw->AddRect(position, {position.x + size, position.y + size}, Color(49, 54, 66), 3);
-  draw->AddCircleFilled(center, size * .32f, Color(177, 180, 186), 40);
-  draw->AddQuadFilled({center.x - size * .24f, center.y - size * .07f},
-      {center.x + size * .29f, center.y - size * .02f},
-      {center.x + size * .26f, center.y + size * .19f},
-      {center.x - size * .19f, center.y + size * .12f}, Color(22, 25, 32));
-  draw->AddTriangleFilled({center.x - size * .26f, center.y + size * .14f},
-      {center.x + size * .25f, center.y + size * .28f},
-      {center.x - size * .17f, center.y + size * .35f}, Color(137, 142, 152));
-  draw->AddTriangleFilled({position.x + size * .13f, position.y + size * .91f},
-      {position.x + size * .80f, position.y + size * .91f},
-      {position.x + size * .40f, position.y + size * .70f}, Color(77, 84, 99));
-}
-
 std::string Membership(int64_t timestamp,bool tr,bool compact=false) {
   if(!timestamp)return Tr(tr,"Membership date unavailable","Üyelik tarihi alınamadı");
   constexpr const char* months[]{"January","February","March","April","May","June","July",
@@ -817,6 +922,35 @@ std::string Membership(int64_t timestamp,bool tr,bool compact=false) {
   const auto month=unsigned(date.month())-1;
   return tr?std::string("Üyelik: ")+months_tr[month]+" "+std::to_string(int(date.year())):
       std::string("Member since ")+(compact?short_months[month]:months[month])+" "+std::to_string(int(date.year()));
+}
+
+std::string SetTime(int64_t timestamp,bool tr,bool full=false) {
+  if(timestamp<=0||timestamp>=4102444800LL)return "-";
+  if(!full) {
+    const auto now=std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    const auto age=std::max<int64_t>(0,now-timestamp);
+    if(age<60)return Tr(tr,"just now","az önce");
+    if(age<3600)return std::to_string(age/60)+Tr(tr," min ago"," dk önce");
+    if(age<86400)return std::to_string(age/3600)+Tr(tr," h ago"," sa önce");
+    if(age<86400*7)return std::to_string(age/86400)+
+        (tr?" gün önce":(age/86400==1?" day ago":" days ago"));
+  }
+  const auto raw=static_cast<std::time_t>(timestamp);
+  std::tm local{};
+#ifdef _WIN32
+  if(localtime_s(&local,&raw))return "-";
+#else
+  if(!localtime_r(&raw,&local))return "-";
+#endif
+  constexpr const char* months[]{"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+  constexpr const char* months_tr[]{"Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"};
+  auto result=std::to_string(local.tm_mday)+" "+(tr?months_tr[local.tm_mon]:months[local.tm_mon])+" "+std::to_string(local.tm_year+1900);
+  if(full) {
+    const auto two=[](int number){return (number<10?"0":"")+std::to_string(number);};
+    result+=" "+two(local.tm_hour)+":"+two(local.tm_min);
+  }
+  return result;
 }
 
 std::string Mode(int64_t mode,bool tr) {
@@ -899,25 +1033,27 @@ struct Canvas {
   ImVec2 origin;
   float scale;
   ImFont* font;
-  ImVec2 Point(float x,float y)const{return {origin.x+x*scale,origin.y+y*scale};}
+  ImVec2 Point(float x,float y)const{return {std::round(origin.x+x*scale),std::round(origin.y+y*scale)};}
+  FontFace Font(float pixels)const{return Face(font,pixels*scale);}
   float Measure(std::string_view text,float pixels)const {
-    return font->CalcTextSizeA(pixels*scale,FLT_MAX,0,text.data(),text.data()+text.size()).x/scale;
+    const auto face=Font(pixels);
+    return face.font->CalcTextSizeA(face.size,FLT_MAX,0,text.data(),text.data()+text.size()).x/scale;
   }
   void Line(float x,float y,float end_x,float end_y)const {
     draw->AddLine(Point(x,y),Point(end_x,end_y),Color(48,54,64),scale);
   }
   float Text(float x,float y,float pixels,ImVec4 color,std::string text,float width=10000.f)const {
-    const auto measure=[&](const std::string& value){return font->CalcTextSizeA(pixels*scale,FLT_MAX,0,value.c_str()).x;};
-    if(measure(text)>width*scale) {
-      while(!text.empty()&&measure(text+"...")>width*scale) {
+    const auto face=Font(pixels);
+    if(Measure(text,pixels)>width) {
+      while(!text.empty()&&Measure(text+"...",pixels)>width) {
         size_t end=text.size()-1;
         while(end&&(static_cast<unsigned char>(text[end])&0xC0)==0x80)--end;
         text.resize(end);
       }
       text+="...";
     }
-    draw->AddText(font,pixels*scale,Point(x,y),ImGui::GetColorU32(color),text.c_str());
-    return measure(text)/scale;
+    draw->AddText(face.font,face.size,Point(x,y),ImGui::GetColorU32(color),text.c_str());
+    return Measure(text,pixels);
   }
   void Centered(float x,float y,float pixels,ImVec4 color,std::string text,float width)const {
     const bool truncated=Measure(text,pixels)>width;
@@ -932,8 +1068,9 @@ struct Canvas {
   }
   void Rank(float x,float y,float width,float pixels,uint32_t rank,uint32_t total)const {
     const auto first=std::to_string(rank),rest=total?" / "+std::to_string(total):std::string{};
-    const auto measured=Measure(first+rest,pixels);
-    if(measured>width)pixels*=width/measured;
+    // Step down through actual baked sizes rather than scaling one texture.
+    while(pixels>1&&Measure(first+rest,pixels)>width)pixels-=1;
+    if(Measure(first+rest,pixels)>width){Centered(x,y,pixels,rank==1?kAccent:kWhite,first+rest,width);return;}
     const float at=x+(width-Measure(first+rest,pixels))*.5f;
     Text(at,y,pixels,rank==1?kAccent:kWhite,first);
     Text(at+Measure(first,pixels),y,pixels,kMuted,rest);
@@ -943,12 +1080,13 @@ struct Canvas {
 struct BioExcerpt {std::vector<std::string> lines;bool more=false;};
 BioExcerpt Excerpt(const Canvas& c,const std::string& bio,float last_width) {
   BioExcerpt result;
+  const auto face=c.Font(15.5f);
   size_t position=0;
   for(int line=0;line<3&&position<bio.size();++line) {
     const auto newline=bio.find('\n',position);
     const char* begin=bio.data()+position;
     const char* paragraph=bio.data()+(newline==std::string::npos?bio.size():newline);
-    const char* end=c.font->CalcWordWrapPosition(15.5f*c.scale,begin,paragraph,
+    const char* end=face.font->CalcWordWrapPosition(face.size,begin,paragraph,
         (line==2?last_width:196.f)*c.scale);
     if(end<=begin&&begin<paragraph) {
       end=begin+1;
@@ -973,7 +1111,7 @@ void BioPreview(const Snapshot& state,View& view,const Canvas& c,bool tr,bool re
     ImGui::SetCursorScreenPos(c.Point(194,455));
     ImGui::BeginDisabled(!ready);
     if(ImGui::Button("...##license_bio_more",{34*c.scale,24*c.scale}))view.bio_open=true;
-    if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",Tr(tr,"Read full bio (Y / R)","Biyografinin tamamını oku (Y / R)"));
+    if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",Tr(tr,"Read full bio","Biyografinin tamamını oku"));
     ImGui::EndDisabled();
   }
 }
@@ -1005,27 +1143,40 @@ void Stripes(const Canvas& c) {
     c.draw->PrimWriteVtx(point(b,0),uv,tint(b));
   }
 }
-void Portrait(const Canvas& c,rex::ui::ImmediateTexture* texture,float side) {
+void Portrait(const Canvas& c,rex::ui::ImmediateTexture* texture,float side,bool placeholder) {
   const auto position=c.Point(32,96);
   const float size=side*c.scale;
-  if(!texture){Helmet(c.draw,position,size);return;}
-  c.draw->AddRectFilled(position,{position.x+size,position.y+size},Color(12,15,20));
-  const float fit=size/std::max(texture->width,texture->height);
+  if(!texture)return;
+  if(!placeholder)c.draw->AddRectFilled(position,{position.x+size,position.y+size},Color(12,15,20));
+  const float fit=(side-(placeholder?16.f:0.f))*c.scale/std::max(texture->width,texture->height);
   const ImVec2 dimensions(texture->width*fit,texture->height*fit);
   const ImVec2 first(position.x+(size-dimensions.x)*.5f,position.y+(size-dimensions.y)*.5f);
   c.draw->AddImage(reinterpret_cast<ImTextureID>(texture),first,{first.x+dimensions.x,first.y+dimensions.y},
       {0,0},{1,1},ImGui::GetColorU32(ImVec4(1,1,1,1)));
-  c.draw->AddRect(position,{position.x+size,position.y+size},Color(49,54,66));
+  if(!placeholder)c.draw->AddRect(position,{position.x+size,position.y+size},Color(49,54,66));
 }
-void Overview(const Snapshot& state,const Canvas& c,float x,float width,bool tr) {
+void TrackOutline(const Snapshot& state,const Canvas& c,rex::ui::ImmediateTexture* texture,
+    int track,float x,float y,float width,float height,bool tr) {
+  if(texture&&state.map_track==track) {
+    const float fit=std::min(width/texture->width,height/texture->height)*c.scale;
+    const ImVec2 size(texture->width*fit,texture->height*fit);
+    const auto at=c.Point(x,y);
+    const ImVec2 first(std::round(at.x+(width*c.scale-size.x)*.5f),std::round(at.y+(height*c.scale-size.y)*.5f));
+    c.draw->AddImage(reinterpret_cast<ImTextureID>(texture),first,{first.x+size.x,first.y+size.y},
+        {0,0},{1,1},ImGui::GetColorU32(ImVec4(1,1,1,1)));
+  } else c.Centered(x,y+height*.5f-7,13,kMuted,state.map_loading?
+      Tr(tr,"Loading map...","Şema yükleniyor..."):Tr(tr,"Map unavailable","Şema bulunamadı"),width);
+}
+
+void Overview(const Snapshot& state,const Canvas& c,float x,float width,bool tr,rex::ui::ImmediateTexture* map) {
   if(!state.results){c.Text(x,160,16,kMuted,Tr(tr,"Statistics unavailable","İstatistikler alınamadı"),width);return;}
   const auto categories=Categories(state.results.get(),tr);
   const auto rows=OrderedRecords(*state.results,0,categories,0);
   std::set<int> tracks;
   unsigned firsts=0;
-  for(const auto* row:rows){if(row->track!=17)tracks.insert(row->track);if(row->rank==1)++firsts;}
+  for(const auto* row:rows)if(row->rank==1){if(row->track!=17)tracks.insert(row->track);++firsts;}
   const std::string values[]{std::to_string(tracks.size())+" / 20",std::to_string(firsts),std::to_string(rows.size())};
-  const char* labels[]{Tr(tr,"TRACKS RECORDED","KAYITLI PİSTLER"),Tr(tr,"RECORDS HELD","LİDER OLDUĞU TABLOLAR"),Tr(tr,"LEADERBOARDS","SIRALAMA TABLOLARI")};
+  const char* labels[]{Tr(tr,"TRACKS LED","LİDER OLDUĞU PİSTLER"),Tr(tr,"RECORDS HELD","LİDER OLDUĞU TABLOLAR"),Tr(tr,"LEADERBOARDS","SIRALAMA TABLOLARI")};
   const float column=width/3.f;
   for(int i=0;i<3;++i) {
     const float at=x+i*column;
@@ -1041,20 +1192,33 @@ void Overview(const Snapshot& state,const Canvas& c,float x,float width,bool tr)
   c.Line(x,346,x+width,346);
   c.Text(x,368,15,kMuted,Tr(tr,"PERSONAL BEST","KİŞİSEL EN İYİ"),width);
   if(!state.preferred_view) {
-    c.Text(x,418,19,kMuted,Tr(tr,"No track selected.","Seçili pist yok."),width);return;
+    c.Centered(x,434,19,kMuted,Tr(tr,"No track selected.","Seçili pist yok."),width);return;
   }
   const auto record=std::find_if(rows.begin(),rows.end(),[&](auto row){return row->view==state.preferred_view;});
+  const int track=int((state.preferred_view-1)%21);
+  constexpr float map_width=166.f,rank_width=142.f;
+  const float details=x+map_width+26.f,details_width=width-map_width-26.f-rank_width-20.f;
+  const float rank=x+width-rank_width;
+  TrackOutline(state,c,map,track,x+6,403,map_width-12,94,tr);
+  c.Line(x+map_width+10,400,x+map_width+10,496);
+  c.Line(rank,400,rank,496);
+  c.Text(details,399,18,kWhite,record!=rows.end()?(*record)->track_name:
+      (kTracks[track].empty()?Tr(tr,"Unknown circuit","Bilinmeyen pist"):std::string(kTracks[track])),details_width);
+  c.Centered(rank+10,399,13,kMuted,Tr(tr,"Rank","Sıra"),rank_width-10);
   if(record==rows.end()) {
-    c.Text(x,418,19,kMuted,Tr(tr,"No published lap for these conditions.","Bu koşullarda kayıtlı turu yok."),width);return;
+    c.Text(details,437,16,kMuted,Tr(tr,"No published lap for this board.","Bu tabloda yayımlanmış turu yok."),details_width);
+    c.Centered(rank+10,429,26,kMuted,"-",rank_width-10);
+    return;
   }
   const auto& row=**record;
-  const float time_width=std::min(222.f,width*.29f),rank_width=110.f,details=x+time_width;
-  c.Text(x,411,42,kAccent,row.result,time_width-16);
-  c.Text(details,413,19,kWhite,row.track_name,width-time_width-rank_width-20);
-  c.Text(details,447,16,kMuted,row.category+" · 2009 · "+Mode(row.mode,tr),width-time_width-rank_width-20);
-  c.Line(x+width-rank_width,406,x+width-rank_width,474);
-  c.Centered(x+width-rank_width+10,407,15,kMuted,Tr(tr,"Rank","Sıra"),rank_width-10);
-  c.Rank(x+width-rank_width+10,438,rank_width-10,28,row.rank,row.total);
+  c.Text(details,430,36,kAccent,row.result,166);
+  c.Text(details+182,435,14,kMuted,row.category+" · 2009",details_width-182);
+  c.Text(details+182,459,14,kWhite,Mode(row.mode,tr),details_width-182);
+  c.Rank(rank+10,423,rank_width-10,26,row.rank,row.total);
+  c.Centered(rank+10,465,12.5f,kMuted,std::string(Tr(tr,"Set · ","Tarih · "))+SetTime(row.updated,tr),rank_width-10);
+  if(row.updated>0&&ImGui::IsWindowHovered()&&
+      ImGui::IsMouseHoveringRect(c.Point(rank,460),c.Point(x+width,489)))
+    ImGui::SetTooltip("%s",SetTime(row.updated,tr,true).c_str());
 }
 void Records(const Snapshot& state,View& view,const Canvas& c,float x,float width,float bottom,bool tr,bool ready) {
   const auto categories=Categories(state.results.get(),tr);
@@ -1067,8 +1231,9 @@ void Records(const Snapshot& state,View& view,const Canvas& c,float x,float widt
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{12*c.scale,8*c.scale});
   ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding,4*c.scale);
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{8*c.scale,6*c.scale});
-  const float popup_height=(std::min<size_t>(categories.size(),8)*30.f+10.f)*c.scale;
-  ImGui::SetNextWindowSizeConstraints({174*c.scale,0},{300*c.scale,popup_height});
+  const float popup_height=(categories.size()*30.f+24.f)*c.scale;
+  ImGui::SetNextWindowSizeConstraints({174*c.scale,popup_height},{300*c.scale,popup_height});
+  ImGui::SetNextWindowScroll({0,0});
   if(ImGui::BeginCombo("##license_class",categories[view.category].c_str())) {
     for(int i=0;i<int(categories.size());++i) {
       if(ImGui::Selectable(categories[i].c_str(),view.category==i,0,{0,24*c.scale})){view.category=i;view.reset_scroll=true;}
@@ -1078,15 +1243,15 @@ void Records(const Snapshot& state,View& view,const Canvas& c,float x,float widt
   }
   ImGui::PopStyleVar(3);
   ImGui::EndDisabled();
-  c.Text(x+188,149,12,kMuted,"[X / F]",70);
   if(!state.results){c.Text(x,211,16,kMuted,Tr(tr,"Records unavailable","Tur kayıtları alınamadı"),width);return;}
   const auto rows=OrderedRecords(*state.results,state.preferred_view,categories,view.category);
   c.Text(x+width-90,149,13,kMuted,std::to_string(rows.size())+Tr(tr," records"," kayıt"),90);
-  const float track=x+100.f,time=x+width-236.f,mode=x+width-112.f;
+  const float track=x+100.f,time=x+width-342.f,mode=x+width-222.f,set=x+width-122.f;
   c.Centered(x+6,194,13,kMuted,Tr(tr,"Rank","Sıra"),82);
   c.Text(track,194,13,kMuted,Tr(tr,"Track / class","Pist / sınıf"),time-track-16);
   c.Centered(time,194,13,kMuted,Tr(tr,"Best lap","En iyi tur"),112);
-  c.Centered(mode,194,13,kMuted,Tr(tr,"Mode","Mod"),92);
+  c.Centered(mode,194,13,kMuted,Tr(tr,"Mode","Mod"),84);
+  c.Centered(set,194,13,kMuted,Tr(tr,"Set","Tarih"),104);
   const float top=220.f,available=bottom-top;
   const int visible=std::max(1,int(available/46.f));
   const float row_height=available/visible;
@@ -1108,7 +1273,11 @@ void Records(const Snapshot& state,View& view,const Canvas& c,float x,float widt
     c.Text(track,y+6,15,kWhite,row.track_name,time-track-18);
     c.Text(track,y+29,12.5f,kMuted,row.category+" · 2009",time-track-18);
     c.Centered(time,y+13,17,kAccent,row.result,112);
-    c.Centered(mode,y+15,14,kWhite,Mode(row.mode,tr),92);
+    c.Centered(mode,y+15,14,kWhite,Mode(row.mode,tr),84);
+    c.Centered(set,y+15,14,kMuted,SetTime(row.updated,tr),104);
+    if(ready&&row.updated>0&&ImGui::IsWindowHovered()&&
+        ImGui::IsMouseHoveringRect(c.Point(set,y),c.Point(set+104,y+row_height)))
+      ImGui::SetTooltip("%s",SetTime(row.updated,tr,true).c_str());
     c.Line(x,y+row_height,x+width-18,y+row_height);
   }
   if(maximum) {
@@ -1140,7 +1309,8 @@ void BioPopup(const Snapshot& state,View& view,const Canvas& parent,bool tr,bool
   const bool opening=view.bio_open&&!popup_open;
   if(opening)ImGui::OpenPopup(id);
   const float scale=parent.scale;
-  const float text_height=parent.font->CalcTextSizeA(18*scale,FLT_MAX,572*scale,state.player.bio.c_str()).y/scale;
+  const auto body_font=parent.Font(18);
+  const float text_height=body_font.font->CalcTextSizeA(body_font.size,FLT_MAX,572*scale,state.player.bio.c_str()).y/scale;
   const float height=std::clamp(text_height+176.f,240.f,440.f);
   const auto& io=ImGui::GetIO();
   ImGui::SetNextWindowPos({io.DisplaySize.x*.5f,io.DisplaySize.y*.5f},ImGuiCond_Always,{.5f,.5f});
@@ -1158,7 +1328,7 @@ void BioPopup(const Snapshot& state,View& view,const Canvas& parent,bool tr,bool
       c.Text(24,52,16,kMuted,state.player.name,572);
       c.Line(24,80,596,80);
       ImGui::SetCursorPos({24*scale,98*scale});
-      ImGui::PushFont(parent.font,18*scale);
+      ImGui::PushFont(body_font.font,body_font.size);
       if(opening)ImGui::SetNextWindowScroll({0,0});
       if(ImGui::BeginChild("##license_bio_text",{572*scale,(height-164)*scale},0,ImGuiWindowFlags_NoNavInputs)) {
         if(!opening&&view.bio_scroll)ImGui::SetScrollY(std::clamp(ImGui::GetScrollY()+view.bio_scroll,0.f,ImGui::GetScrollMaxY()));
@@ -1169,15 +1339,13 @@ void BioPopup(const Snapshot& state,View& view,const Canvas& parent,bool tr,bool
       ImGui::EndChild();
       ImGui::PopFont();
       c.Line(24,height-52,596,height-52);
-      ImGui::SetCursorPos({24*scale,(height-38)*scale});
+      ImGui::SetCursorPos({265*scale,(height-38)*scale});
       ImGui::BeginDisabled(!ready);
       if(ImGui::Button(Tr(tr,"Close","Kapat"),{90*scale,30*scale})) {
         view.bio_open=false;
         ImGui::CloseCurrentPopup();
       }
       ImGui::EndDisabled();
-      c.Text(140,height-29,13,kMuted,Tr(tr,"A / Enter: Close   B / Esc: Back   D-pad: Scroll",
-          "A / Enter: Kapat   B / Esc: Geri   Yön: Kaydır"),456);
     }
     ImGui::EndPopup();
   }
@@ -1188,7 +1356,8 @@ void BioPopup(const Snapshot& state,View& view,const Canvas& parent,bool tr,bool
 
 struct Action { bool profile = false, close = false; };
 Action DrawCard(const Snapshot& state, rex::ui::ImmediateTexture* texture,
-    rex::ui::ImmediateTexture* flag_atlas,View& view,bool tr, ImFont* font, ImFont* heading, bool ready,float alpha) {
+    rex::ui::ImmediateTexture* flag_atlas,rex::ui::ImmediateTexture* helmet,
+    rex::ui::ImmediateTexture* map,View& view,bool tr, ImFont* font, ImFont* heading, bool ready,float alpha) {
   (void)heading;
   const auto& io=ImGui::GetIO();
   const float scale=std::max(.1f,std::min({io.DisplaySize.x/1440.f,io.DisplaySize.y/900.f,1.35f}));
@@ -1196,7 +1365,8 @@ Action DrawCard(const Snapshot& state, rex::ui::ImmediateTexture* texture,
   const bool main_ready=ready&&!view.bio_open;
   ImGui::PushStyleVar(ImGuiStyleVar_Alpha,ImGui::GetStyle().Alpha*alpha);
   ImGui::GetBackgroundDrawList()->AddRectFilled({0,0},io.DisplaySize,Color(0,0,0,155));
-  ImGui::PushFont(font?font:ImGui::GetFont(),16.f*scale);
+  const auto body_font=Face(font?font:ImGui::GetFont(),16.f*scale);
+  ImGui::PushFont(body_font.font,body_font.size);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{0,0});
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,2.f);
   ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,2.f);
@@ -1226,7 +1396,7 @@ Action DrawCard(const Snapshot& state, rex::ui::ImmediateTexture* texture,
     c.Text(96,21,24,kWhite,Tr(tr,"RIDER LICENSE","PİLOT LİSANSI"),900);
     c.draw->AddLine(c.Point(0,64),c.Point(1100,64),ImGui::GetColorU32(kAccent),scale);
     c.Line(260,84,260,496);
-    Portrait(c,texture,196);
+    Portrait(c,texture?texture:helmet,196,!texture);
     const auto name=state.status==Status::Ready?state.player.name:
         Tr(tr,state.status==Status::Loading?"Loading...":"Player unavailable",state.status==Status::Loading?"Yükleniyor...":"Oyuncu bilgisi alınamadı");
     const float name_width=c.Text(32,310,26,kAccent,name,154);
@@ -1254,17 +1424,17 @@ Action DrawCard(const Snapshot& state, rex::ui::ImmediateTexture* texture,
     c.draw->AddLine(c.Point(tabs_x+view.tab*170,124),c.Point(tabs_x+view.tab*170+164,124),ImGui::GetColorU32(kAccent),3*scale);
     if(state.status!=Status::Ready)c.Text(content_x,170,16,kMuted,state.status==Status::Loading?
         Tr(tr,"Loading player...","Oyuncu yükleniyor..."):Tr(tr,"Could not load this profile. Close and try again.","Profil yüklenemedi. Kapatıp tekrar dene."),content_width);
-    else if(view.tab==0)Overview(state,c,content_x,content_width,tr);
+    else if(view.tab==0)Overview(state,c,content_x,content_width,tr,map);
     else Records(state,view,c,content_x,content_width,505,tr,main_ready);
     c.Line(32,516,1068,516);
     ImGui::SetCursorScreenPos(c.Point(32,534));
     ImGui::BeginDisabled(!main_ready||state.status!=Status::Ready);
     action.profile=ImGui::Button(Tr(tr,"Open NOBK Online profile","NOBK Online profilini aç"));
     ImGui::EndDisabled();
-    std::string controls=Tr(tr,"LB / RB: Tabs   A / Enter: Profile   B / Esc: Back",
-        "LB / RB: Sekmeler   A / Enter: Profil   B / Esc: Geri");
+    std::string controls=Tr(tr,"LB / RB: Tabs   A: Profile   B: Back",
+        "LB / RB: Sekmeler   A: Profil   B: Geri");
     if(view.tab==1)controls+=Tr(tr,"   D-pad: Scroll","   Yön: Kaydır");
-    if(!state.player.bio.empty())controls+="   Y / R: Bio";
+    if(!state.player.bio.empty())controls+="   Y: Bio";
     c.Text(474,543,12,kMuted,std::move(controls),594);
     BioPopup(state,view,c,tr,ready);
   }
@@ -1327,6 +1497,19 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
           rex::ui::ImmediateTextureFilter::kLinear,false,flags_->rgba.data());
       if(flags_)REXLOG_INFO("PLAYER_CARD request={} stage=flags event=texture_upload success={}",snapshot.serial,flag_texture_!=nullptr);
     }
+    if(snapshot.helmet!=helmet_) {
+      helmet_=snapshot.helmet;helmet_texture_.reset();
+      if(helmet_&&immediate_)helmet_texture_=immediate_->CreateTexture(helmet_->width,helmet_->height,
+          rex::ui::ImmediateTextureFilter::kLinear,false,helmet_->rgba.data());
+      if(helmet_)REXLOG_INFO("PLAYER_CARD request={} stage=default_avatar event=texture_upload success={}",snapshot.serial,helmet_texture_!=nullptr);
+    }
+    if(snapshot.track_map!=track_map_) {
+      track_map_=snapshot.track_map;map_texture_.reset();
+      if(track_map_&&immediate_)map_texture_=immediate_->CreateTexture(track_map_->width,track_map_->height,
+          rex::ui::ImmediateTextureFilter::kLinear,false,track_map_->rgba.data());
+      if(track_map_)REXLOG_INFO("PLAYER_CARD request={} stage=track_map event=texture_upload track={} success={}",
+          snapshot.serial,snapshot.map_track,map_texture_!=nullptr);
+    }
     if (snapshot.avatar!=avatar_) {
       avatar_=snapshot.avatar;
       texture_.reset();
@@ -1371,7 +1554,7 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
         if(repeat)scroll_at_=now+.12;
       }
     }
-    auto action = DrawCard(snapshot, texture_.get(),flag_texture_.get(),view_, tr_, font_, heading_, ready,alpha);
+    auto action = DrawCard(snapshot, texture_.get(),flag_texture_.get(),helmet_texture_.get(),map_texture_.get(),view_, tr_, font_, heading_, ready,alpha);
     action.close|=shortcuts.close;
     // Closing the bio consumes A/Enter and B/Esc. Neither action may also
     // open the website or dismiss the license behind the modal in that frame.
@@ -1391,8 +1574,12 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
   rex::ui::ImmediateDrawer* immediate_;
   std::shared_ptr<const Avatar> avatar_;
   std::shared_ptr<const Avatar> flags_;
+  std::shared_ptr<const Avatar> helmet_;
+  std::shared_ptr<const Avatar> track_map_;
   std::unique_ptr<rex::ui::ImmediateTexture> texture_;
   std::unique_ptr<rex::ui::ImmediateTexture> flag_texture_;
+  std::unique_ptr<rex::ui::ImmediateTexture> helmet_texture_;
+  std::unique_ptr<rex::ui::ImmediateTexture> map_texture_;
   View view_;
   double scroll_at_=0.;
   ImFont* font_;
@@ -1403,6 +1590,20 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
   uint64_t serial_ = 0, epoch_ = 0;
   uint16_t previous_ = 0;
 };
+}
+
+void ConfigureFonts(ImFontAtlas* atlas,const char* path) {
+  // The pinned renderer uploads a static atlas. All profile sizes must exist
+  // before that upload; scaling the 17px settings font blurs larger headings.
+  static const ImWchar ranges[]{0x20,0x1ff,0};
+  profile_fonts.fill(nullptr);
+  ImFontConfig config;
+  config.OversampleH=2;config.OversampleV=1;config.PixelSnapH=true;
+  for(size_t i=0;i<profile_fonts.size();++i)
+    profile_fonts[i]=atlas->AddFontFromFileTTF(path,float(kFontSizes[i]),&config,ranges);
+  REXLOG_INFO("PLAYER_CARD event=configure_fonts sizes={} loaded={} min_px={} max_px={}",
+      profile_fonts.size(),std::count_if(profile_fonts.begin(),profile_fonts.end(),[](auto* font){return font!=nullptr;}),
+      kFontSizes[0],kFontSizes[std::size(kFontSizes)-1]);
 }
 
 void Initialize(rex::Runtime* runtime, std::shared_ptr<settings::InputGate> gate) {

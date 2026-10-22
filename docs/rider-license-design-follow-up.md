@@ -2,9 +2,48 @@
 
 Recorded on 2026-10-22 from the user's native screenshots and feedback.
 Initially recorded as notes only. The user subsequently authorized implementation
-in order, including the in-game full-bio popup described below. These items are
-now implemented in source and await native visual review. No tests or builds
-were run for this design pass, and the changes have not been committed or pushed.
+in order, including the in-game full-bio popup described below. These items
+were implemented in commit `0c3aae0`, followed by the requested Actions build
+dispatch. The user then supplied the subsequent feedback recorded below. New
+helmet artwork, sharpness, metric and Personal Best changes are local and await
+native visual review; no tests or builds were run for that follow-up.
+
+## Subsequent feedback
+
+- Applied in the latest source pass: remove **(Y / R)** from the **Read full bio** tooltip,
+  since the same shortcut already appears in the footer. Keep the actual
+  shortcut and footer hint. The tooltip should read **Read full bio** /
+  **Biyografinin tamamını oku**. Keyboard bindings remain functional.
+- Replace the geometric generic helmet with the user's side-profile racing
+  helmet reference. The edited transparent PNG has an off-white shell, charcoal
+  visor and light silver outline to remain visible on the dark card. It is
+  embedded in the Windows executable and replaces the old generated geometry.
+  The icon has no opaque square backdrop or surrounding avatar frame; uploaded
+  profile photos keep their existing framing. Native review is pending.
+- Applied after the user's sharpness comparison with F1: dedicated preloaded
+  profile font sizes and pixel-aligned drawing replace arbitrary scaling of
+  the 17-pixel font. SDK/runtime and F1 fonts remain unchanged.
+- Remove the bio modal's entire shortcut footer and the class filter's X/F hint.
+  Show only controller hints in the main license footer; keep keyboard controls.
+- Size the class popup for every option with extra padding, without a scrollbar.
+- Add **Set** from the existing record `updated` timestamp, with relative time
+  and a full-date hover tooltip. No new request is required.
+- Correct the metric definition: the user selected **distinct circuits led / 20**
+  including DLC. The first caption becomes **Tracks led**, and Total Track
+  Domination uses that same numerator (16/20 = 80% in the supplied example).
+- Subsequently approved and implemented for Personal Best: selected-circuit
+  outline, lap/class/2009/mode, rank/board population and set date. Public NOBK
+  outline filenames map explicitly to native base-circuit indices; artwork is
+  optional, loaded after profile data, cancellable and cached per circuit for
+  the session. It never substitutes another circuit's map or personal best.
+  No published DLC outlines or directly usable local DLC artwork were found;
+  Silverstone, Shanghai and Istanbul show a missing-map state with their lap
+  data intact. The source assets were searched without committing game data.
+- The live public player endpoint returned HTTP 403 from this workspace during
+  the consistency review. The metric comparison uses the user's supplied
+  screenshots, the saved site JavaScript and the server API/write-path source;
+  a fresh live response was not verified here. Existing cache freshness and the
+  temporary 2009 scope remain unchanged.
 
 ## Alignment and consistency
 
@@ -24,11 +63,12 @@ were run for this design pass, and the changes have not been committed or pushed
 - Keep the percentage bar, but add a clear label explaining its meaning.
 - The user explicitly selected **Total Track Domination** after considering
   and rejecting **Track Coverage** and **Track Familiarisation**.
-- Current behavior is distinct circuits with a published personal best divided
-  by 20 playable circuits, including DLC. The illustrated 17/20 is therefore
-  85% track coverage, not first-place ownership or domination.
+- The original behavior counted circuits with any published personal best.
+  The subsequent screenshot review exposed the mismatch with the site's Tracks
+  metric. The user selected circuits led / 20, including DLC, for this follow-up.
 - Implemented label: **Total Track Domination** / **Toplam pist hâkimiyeti**.
-  The calculation remains unchanged; it is not first-place ownership.
+  The current calculation counts each circuit with at least one first-place
+  board once; 16 circuits led / 20 = 80% in the supplied example.
 
 ## Records dropdown
 
