@@ -18,6 +18,7 @@
     Tip(browse,L"Choose the folder containing your original game files.",L"Özgün oyun dosyalarının bulunduğu klasörü seç.");
     RefreshGameFilesAction();
     Tip(game_language,L"Changes game text and subtitles. Original voices are preserved.",L"Oyun metinlerini ve altyazıları değiştirir. Özgün seslendirmeler korunur.");
+    Tip(discord_presence,L"Shows your mode and circuit in the Discord desktop app. Applies on the next launch.",L"Discord masaüstü uygulamasında oyun modunu ve pistini gösterir. Sonraki açılışta uygulanır.");
     Tip(prompt_style,L"Automatic follows your input device. Choose PlayStation, Xbox or keyboard to force the button symbols.",L"Otomatik, kullandığın giriş aygıtına göre tuş simgelerini değiştirir. Simge türünü sabitlemek için PlayStation, Xbox veya Klavye seç.");
     Tip(crash_diagnostics,L"Collects an additional local crash report if the game fails. Reports are saved in Logs.",L"Oyun çökerse ek bir yerel çökme raporu oluşturur. Raporlar logs klasörüne kaydedilir.");
     Tip(render_resolution,L"1.5x uses a 720p source and FSR 1, 2 or 3. Windowed/fullscreen targets 1080p; Borderless uses desktop resolution. FSR 2 / 3 has limited temporal inputs.",L"1.5x, 720p kaynak ve FSR 1, 2 veya 3 kullanır. Pencereli/tam ekran 1080p'yi hedefler; Kenarlıksız masaüstü çözünürlüğünü kullanır. FSR 2 / 3'ün zamansal girdileri sınırlıdır.");

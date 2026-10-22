@@ -42,6 +42,7 @@
 #include "frame_pacing.h"
 #include "debug_overlay.h"
 #include "gamer_card.h"
+#include "discord_presence.h"
 #include "portable_paths.h"
 #include "config_file.h"
 #include "user_data_paths.h"
@@ -204,6 +205,11 @@ class Motogp0910App : public rex::ReXApp {
     motogp::prompts::LoadPS3ControlArtwork(runtime()->memory(),motogp::portable::Root(rex::filesystem::GetExecutableFolder())/"resources/controller/ps3-controls.bin");
     motogp::prompts::StartInputObserver(window());
     motogp::adaptive::Start(window()->HasFocus());
+    motogp::discord::Start(runtime(), []() -> std::optional<motogp::discord::Lobby> {
+      const auto room = motogp::lan::CurrentRoom();
+      if (!room) return {};
+      return motogp::discord::Lobby{rex::cvar::Query<std::string>("network_mode")=="online",room->members,room->capacity};
+    });
   }
   void OnKeyDown(rex::ui::KeyEvent& event) override {
     if(!event.prev_state()&&!event.is_ctrl_pressed()&&!event.is_alt_pressed()&&!event.is_super_pressed()&&
@@ -214,6 +220,7 @@ class Motogp0910App : public rex::ReXApp {
   bool OnWindowCloseRequested() override {
     // The pinned SDK hard-exits in OnClosing before OnShutdown can run.
     // Release controller firmware effects while SDL and the runtime are alive.
+    motogp::discord::Stop();
     motogp::adaptive::Stop();
     return true;
   }
@@ -263,6 +270,7 @@ class Motogp0910App : public rex::ReXApp {
         achievement_font_, achievement_preferences_);
   }
   void OnShutdown() override {
+    motogp::discord::Stop();
     motogp::gamer_card::Shutdown();
     gamer_card_dialog_.reset();
     motogp::splitscreen::Stop();

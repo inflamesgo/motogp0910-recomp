@@ -85,6 +85,13 @@ target_include_directories(motogp_local_splitscreen PUBLIC src)
 target_link_libraries(motogp_local_splitscreen PUBLIC rex::runtime)
 rexglue_apply_target_settings(motogp_local_splitscreen)
 
+# Optional local Discord IPC; no SDK, token, server or runtime DLL dependency.
+add_library(motogp_discord STATIC src/discord_presence.cpp src/discord/client.cpp)
+target_link_libraries(motogp_discord PUBLIC rex::runtime)
+rexglue_apply_target_settings(motogp_discord)
+add_executable(discord_presence_probe EXCLUDE_FROM_ALL tools/discord_presence_probe.cpp src/discord/client.cpp)
+target_include_directories(discord_presence_probe SYSTEM PRIVATE $<TARGET_PROPERTY:rex::runtime,INTERFACE_INCLUDE_DIRECTORIES>)
+
 # Sources
 set(MOTOGP0910_SOURCES
     src/main.cpp
@@ -244,7 +251,7 @@ add_custom_command(TARGET motogp0910 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/open-sans/OpenSans-Semibold.ttf"
         "$<TARGET_FILE_DIR:motogp0910>/resources/ui/OpenSans-Semibold.ttf")
-target_link_libraries(motogp0910 PRIVATE motogp_lan_guest motogp_achievements motogp_settings motogp_local_splitscreen)
+target_link_libraries(motogp0910 PRIVATE motogp_discord motogp_lan_guest motogp_achievements motogp_settings motogp_local_splitscreen)
 
 add_executable(button_prompt_input_probe EXCLUDE_FROM_ALL tools/button_prompt_input_probe.cpp)
 target_link_libraries(button_prompt_input_probe PRIVATE rex::runtime)
@@ -353,12 +360,12 @@ if(TARGET motogp0910_recomp)
     target_link_libraries(physics_asset_probe PRIVATE motogp0910_recomp rex::runtime)
     rexglue_apply_target_settings(physics_asset_probe)
     add_executable(button_prompt_window_probe EXCLUDE_FROM_ALL tools/button_prompt_window_probe.cpp src/ultrawide.cpp src/control_diagram.cpp src/ps3_prompt_textures.cpp src/frame_pacing.cpp)
-    target_link_libraries(button_prompt_window_probe PRIVATE motogp0910_recomp rex::runtime)
+    target_link_libraries(button_prompt_window_probe PRIVATE motogp_discord motogp0910_recomp rex::runtime)
     rexglue_apply_target_settings(button_prompt_window_probe)
     add_executable(button_prompt_gpu_probe EXCLUDE_FROM_ALL tools/button_prompt_gpu_probe.cpp src/ultrawide.cpp src/control_diagram.cpp src/ps3_prompt_textures.cpp src/physics_assets.cpp src/livery_readback.cpp src/frame_pacing.cpp src/display_settings.cpp src/lan/runtime.cpp src/quit_menu.cpp src/diagnostic_options.cpp src/debug_overlay.cpp)
     target_include_directories(button_prompt_gpu_probe PRIVATE ${REXGLUE_ENTRYPOINT_INCLUDE_DIR})
     target_sources(button_prompt_gpu_probe PRIVATE src/in_game_settings_input.cpp src/gamer_card.cpp)
-    target_link_libraries(button_prompt_gpu_probe PRIVATE motogp0910_recomp rex::runtime motogp_lan_guest motogp_achievements motogp_settings motogp_local_splitscreen)
+    target_link_libraries(button_prompt_gpu_probe PRIVATE motogp_discord motogp0910_recomp rex::runtime motogp_lan_guest motogp_achievements motogp_settings motogp_local_splitscreen)
     rexglue_apply_target_settings(button_prompt_gpu_probe)
     rexglue_configure_target(button_prompt_gpu_probe GPU_PLUGINS xenos)
     if(WIN32)
@@ -370,7 +377,7 @@ if(TARGET motogp0910_recomp)
     add_executable(button_prompt_probe EXCLUDE_FROM_ALL
         tools/button_prompt_probe.cpp src/ultrawide.cpp src/button_prompts.cpp src/control_diagram.cpp src/ps3_prompt_textures.cpp src/frame_pacing.cpp)
     target_include_directories(button_prompt_probe PRIVATE ${REXGLUE_ENTRYPOINT_INCLUDE_DIR})
-    target_link_libraries(button_prompt_probe PRIVATE motogp0910_recomp rex::runtime)
+    target_link_libraries(button_prompt_probe PRIVATE motogp_discord motogp0910_recomp rex::runtime)
     rexglue_apply_target_settings(button_prompt_probe)
     if(WIN32)
         target_link_libraries(button_prompt_probe PRIVATE xinput)

@@ -12,6 +12,11 @@ The launcher opens on **General** every time. The default language is English; *
 interface immediately and retains the choice in the shared root `config.json`.
 File names stay English. No CMD file is required.
 
+General also includes **Discord → Show Discord activity**. It shares the current
+mode, circuit and activity duration with the Discord desktop app; disable it to
+keep gameplay activity private. The choice applies on the next launch. See
+[Discord presence](discord-presence.md) for supported states and validation limits.
+
 ## Importing an Xbox 360 ISO
 
 General uses one game-file action in the existing button position:

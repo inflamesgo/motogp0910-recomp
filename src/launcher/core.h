@@ -142,6 +142,7 @@ struct Settings {
   motogp::adaptive::Profile adaptive;
   std::string aspect="auto";
   bool debug_overlay_enabled=false;
+  bool discord_presence_enabled=true;
   bool lan_enabled=false;
   std::string network_mode="online",online_server=kCommunityServer;
   std::string lan_player_name="Player",lan_room_name="MotoGP room",lan_bind_ip,lan_host_ip;
@@ -158,6 +159,7 @@ struct Settings {
   static Settings Load(const toml::table& t) {
     Settings s;
     s.debug_overlay_enabled=Get(t,"debug_overlay_enabled",false);
+    s.discord_presence_enabled=Get(t,"discord_presence_enabled",true);
     s.adaptive.enabled=Get(t,"dualsense_adaptive_triggers",false);
     for(int side=0;side<2;++side){auto& p=side?s.adaptive.left:s.adaptive.right;std::string key=side?"dualsense_lt_":"dualsense_rt_";
       p.mode=Get(t,key+"mode",p.mode);p.start=Get<int64_t>(t,key+"start",p.start);p.end=Get<int64_t>(t,key+"end",p.end);p.strength=Get<int64_t>(t,key+"strength",p.strength);
@@ -267,6 +269,7 @@ struct Settings {
     Put(t,"aspect_ratio",aspect);
     Put(t,"engine_shadow_distance",shadow_distance);
     Put(t,"debug_overlay_enabled",debug_overlay_enabled);
+    Put(t,"discord_presence_enabled",discord_presence_enabled);
     // The removed launcher toggle must not leave older saved builds unable to
     // skip intros. Keep the runtime's internal diagnostic switch out of the UI.
     Put(t,"allow_intro_skip",true);

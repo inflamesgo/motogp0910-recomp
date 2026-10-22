@@ -6,6 +6,7 @@
 #include "ps3_prompt_textures.h"
 #include "control_diagram.h"
 #include "frame_pacing.h"
+#include "discord_presence.h"
 
 #include <rex/cvar.h>
 #include <rex/hook.h>
@@ -341,6 +342,7 @@ REX_HOOK_RAW(sub_82284DB0) {
 }
 REX_HOOK_RAW(sub_823D1008) {
   motogp::PaceGameFrame();
+  motogp::discord::ObserveGuestFrame(base);
   using namespace motogp::prompts;
   if(ready.load(std::memory_order_relaxed)) {
     active.SetKeyboardEnabled(rex::cvar::Query<bool>("mnk_mode"));

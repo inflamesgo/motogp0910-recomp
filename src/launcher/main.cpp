@@ -64,7 +64,7 @@ struct App {
   std::map<HWND,HWND> help_labels;
   std::array<HWND,7> navigation{};
   std::array<HWND,kEngineEffects.size()> engine_choices{};
-  HWND adaptive_triggers{},crash_diagnostics{},shadow_distance{},debug_overlay{};
+  HWND adaptive_triggers{},crash_diagnostics{},shadow_distance{},debug_overlay{},discord_presence{};
   std::vector<int> shadow_distances{kShadowDistances.begin(),kShadowDistances.end()};
   std::array<HWND,kBindings.size()> binding_buttons{};
   HWND reset_bindings{};
@@ -404,6 +404,7 @@ struct App {
   }
   void SetControls(const Settings& s){
     SetCheck(debug_overlay,s.debug_overlay_enabled);
+    SetCheck(discord_presence,s.discord_presence_enabled);
     SetNetworkControls(s);
     SendMessageW(display_monitor,CB_SETCURSEL,s.monitor>=1 && s.monitor<=static_cast<int>(monitors.size())?s.monitor-1:0,0);
     RefreshMonitorSizes(s.width,s.height);
@@ -447,6 +448,7 @@ struct App {
   Settings GetControls()const{
     Settings s=settings;
     s.debug_overlay_enabled=Checked(debug_overlay);
+    s.discord_presence_enabled=Checked(discord_presence);
     const auto screen=SendMessageW(display_monitor,CB_GETCURSEL,0,0);
     if(screen<0 || screen>=static_cast<LRESULT>(monitors.size()))throw std::runtime_error("Invalid monitor selection");
     s.monitor=SelectedMonitor();

@@ -253,6 +253,9 @@
     game_language=field(3,L"Game language",L"Oyun dili",0,198,kGameLanguage);FillCombo(game_language,{L"English",L"Français",L"Deutsch",L"Español",L"Italiano",L"Türkçe"});
     prompt_style=field(3,L"Button prompts",L"Tuş simgeleri",0,268,kPromptStyle);
     BuildSteam();
+    LabelControl(3,L"Discord",L"Discord",kColumnX,338,kColumnWidth,22);
+    discord_presence=check(3,kColumnX,364,kColumnWidth,kDiscordPresence);
+    labels.push_back({discord_presence,L"Show Discord activity",L"Discord aktivitesini göster"});
     adapter=field(0,L"Graphics adapter",L"Ekran kartı",0,0,kAdapter);
     render_resolution=field(0,L"Internal resolution",L"İşleme çözünürlüğü",kColumnX,0,kRenderResolution);
     display_monitor=field(0,L"Monitor",L"Monitör",0,68,kMonitor);
