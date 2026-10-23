@@ -227,7 +227,7 @@ for automatic switching and forced-style testing.
 
 The launcher and game use one root `config.json`. Unknown supported keys,
 nested tables and custom save/cache roots are retained. Existing game/launcher
-TOMLs migrate automatically and remain as exact `.legacy.bak` backups. F1 saves
+TOMLs migrate automatically and remain as exact `.legacy.bak` backups. F2 saves
 the same JSON. External edits are protected from accidental overwrite; saves
 use atomic replacement. See [portable settings and validation](portable-launcher.md).
 
@@ -381,7 +381,7 @@ checks; their GPU rendering has not been visually checked in a race. All ten
 settings have concise English/Turkish hover explanations on
 both the label and field, and occupy five aligned rows of two columns. Debug
 and crash diagnostics sit side by side below the last row, within the page
-viewport. The F1 menu exposes the same choices
+viewport. The F2 live-settings menu exposes the same choices
 and persists them through the shared JSON configuration. Every new setting
 defaults to `game`; existing configurations retain their original behavior.
 

@@ -52,12 +52,12 @@ int main(int argc,char** argv) {try {
   for(const auto row:std::array<std::array<int,4>,5>{{{1,4,4,90},{2,2,4,100},{3,3,5,1},{4,1,3,1},{5,5,4,100}}})
     players["players"].push_back({{"id",row[0]},{"pos",row[1]},{"firsts",row[2]},{"points",row[3]}});
   Json boards={{"views",Json::array()}};
-  for(const auto row:std::array<std::array<int,2>,12>{{{1,4},{2,4},{3,4},{43,3},{44,3},{22,2},{23,2},{45,1},{46,1},{24,5},{25,5},{19,5}}})
+  for(const auto row:std::array<std::array<int,2>,13>{{{1,4},{2,4},{3,4},{43,3},{44,3},{22,2},{23,2},{45,1},{46,1},{24,5},{25,5},{19,5},{18,5}}})
     boards["views"].push_back({{"view",row[0]},{"best",{{"id",row[1]},{"columns",{{"13",1}}}}}});
   const auto ranking=ParseRanking(players,boards);
-  const uint32_t expected[]{4,3,2,5,1};
-  for(size_t i=0;i<5;++i)Check(ranking->players[i].id==expected[i],"Website order honors held tracks, firsts, points and raw-position tie-break");
-  Check(ranking->players[3].tracks.size()==2,"Website rank excludes unpublished DLC catalogue entries without filtering season");
+  const uint32_t expected[]{3,5,2,1,4};
+  for(size_t i=0;i<5;++i)Check(ranking->players[i].id==expected[i],"Website order prioritizes records held, then tracks including DLC, points and source position");
+  Check(ranking->players[1].tracks.size()==3,"Website rank includes DLC circuits and excludes reserved track slot 17 without filtering season");
   auto invalid=players;invalid["players"][1]["id"]=1;
   Reject([&]{ParseRanking(invalid,boards);},"Duplicate rider IDs cannot create a misleading rank");
   invalid=players;invalid["players"][0]["points"]=-1;

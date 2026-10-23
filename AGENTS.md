@@ -18,6 +18,10 @@
   native Windows GPU playthroughs and physical controller testing.
 - Preserve Offline, LAN and community Online modes. Do not make speculative
   physics/handling changes or add frame generation; both are outside scope.
+- Before changing the NOBK panel, Rider Rank or updater integration, read the
+  maintenance map in `docs/nobk-panel.md`. Preserve F1 for the panel, F2 for live
+  settings, the public/read-only data boundaries and the separate record-upload,
+  Discord and track-menu leaderboard paths.
 - Use the SDK/toolchain pins in sdk-version.json and the custom runtime manifest.
 - Write commit subjects in English as `type(scope): short imperative summary`.
   Use `feat` for new features, `fix` for corrections, `ci` for Actions changes,

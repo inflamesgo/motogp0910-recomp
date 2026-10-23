@@ -140,16 +140,16 @@ does not add another summary column or alter the Records table.
 
 The website does not display the raw `pos` from `/api/motogp/ranking` directly.
 Its current `withTracks` code joins that endpoint's players with leaders from
-`/api/motogp/views`, counts distinct circuits led, sorts by that count descending,
-then `firsts` descending, then `points` descending, and finally raw `pos`
+`/api/motogp/views`, counts distinct circuits led, sorts by `firsts` (records held) descending,
+then circuit count descending, then `points` descending, and finally raw `pos`
 ascending. The client follows that exact ordering and looks up the selected
 MotoGP player ID, never the current launcher user or a display-name guess.
 The live ranking page, its current JavaScript and both public endpoints were
 retrieved successfully during this implementation; the responses contained 15
 ranked riders and 38 populated boards at that time.
 
-This rank intentionally follows the site's current 17-base-circuit catalogue
-and full ranking scope. It does not apply the card's separate DLC denominator
+This rank follows the site's 23 October catalogue: 17 base circuits plus DLC
+indices 18–20, excluding reserved slot 17, and the full ranking scope. It does not apply the card's separate DLC denominator
 or temporary 2009 summary filter. The public ranking API currently returns at
 most 100 riders; an absent rider is shown with a hyphen, not an invented rank.
 The hover explanation distinguishes a rider not listed from a lookup failure.

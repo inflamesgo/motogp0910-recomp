@@ -9,6 +9,13 @@ or production service was modified during this investigation.
 
 ## Integration status at a glance
 
+PR #1 was merged into ChunchunQ's `nobk-online` on 23 October 2026.
+The subsequent upstream commits `dc2a40a`, `75169ac` and `c432d67` are now
+integrated into our main history: website-aligned ranking with DLC, launcher
+1.1.12 and its manifest endpoint, and the NOBK Online panel. Our later Discord
+presence and track-menu leaderboard fixes are retained. The earlier transfer
+baseline and feature milestone descriptions below remain historical context.
+
 The comparison baseline is ChunchunQ's `nobk-online` at
 `6ca5339e47b1d55ea33486f5da3dead4c29ff290`, fetched on 21 October 2026.
 The baseline is already included in the integration source. This document
@@ -29,7 +36,7 @@ CI/workspace rules, build archives or unrelated launcher layout fixes.
 
 | Component | Implemented in our client | Remaining integration |
 | --- | --- | --- |
-| Launcher updates | **FIFA 09's update-service contract is implemented**, with the existing MotoGP UI and local rollback fallback. | Configure the MotoGP manifest endpoint and publish its ZIP, checksum and notes. See section 5; no new client update backend or UI redesign is needed. |
+| Launcher updates | **FIFA 09's update-service contract is implemented**, with the existing MotoGP UI and local rollback fallback. | The MotoGP endpoint is now configured by upstream; publishing the ZIP, checksum and notes and validating installation remain operator work. See section 5 for the protocol. |
 | Timed boards | Correct native read-column projection and mode labels for Lap Times, All Time Ghost and Monthly Ghost. | Carry the client fix; preserve stored units and metadata. This display correction itself needs no server migration. |
 | DLC installation/loading | Required three-package import plus runtime enumeration/mounting from portable `dlc/434307F0`. | Carry the runtime/path support; extend website metadata and verify Moto2/season behavior below. |
 | Public room capacity | Private Slots row removed; new PC-hosted rooms use zero private slots. | Carry client menu/bridge changes; retain wire fields for compatibility. No server schema change is needed for this alone. |
@@ -232,7 +239,7 @@ client implementation; it requires no new friends/social service or SDK patch.
   current 17-base-track catalogue.
 - **Rider Rank:** a separate compact header value reproduces the website's
   ordering. Join `/api/motogp/ranking` players with first-place owners from
-  `/api/motogp/views`, then sort by distinct tracks held descending, `firsts`
+  `/api/motogp/views`, then sort by `firsts` (records held) descending, distinct tracks held
   descending, `points` descending and original API `pos` ascending. Renumber
   the result and select by MotoGP player ID. Using raw API `pos` alone can give
   the wrong displayed rank. The current API exposes at most 100 riders; an

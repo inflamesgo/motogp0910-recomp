@@ -7,7 +7,7 @@ installation instructions or validation limits.
 
 ## Platform and delivery
 
-Windows 10/11 x64 is the product target. Launcher **1.1.11** and the supported
+Windows 10/11 x64 is the product target. Launcher **1.1.12** and the supported
 game title update **0.0.1.1** have independent versions. ReXGlue is pinned to
 `0.10.0.24-dev.gbd833a2` (`bd833a2ab69d305f99ddf57418fc38ffec8af93d`) in
 `sdk-version.json`, with the matching custom DLLs in the runtime manifest.
@@ -36,11 +36,12 @@ not increment the launcher version.
 | Settings and saves | Shared JSON, legacy backups, Windows save-folder migration and custom-root preservation | Isolated format/persistence/UI coverage; preserve original saves/configuration during upgrades |
 | Input and local play | Xbox/PS3/keyboard prompts, corrected Default action labels, explicit preference preservation, controller/keyboard splitscreen, non-career rider availability | Native gameplay, reconnects and physical-device combinations remain to be checked |
 | Native menus | PC menu cleanup, zero private slots, native Quit/Press Start confirmation, themed system dialogs | Native visual/gameplay review remains separate from CPU/input evidence |
-| Live settings and achievements | F1 immediate controls, F7/launcher read-only achievement list, shared notification preferences | CPU/persistence/UI checks; GPU, listening and physical-controller acceptance remain outstanding |
+| Live settings and achievements | F2 immediate controls, F7/launcher read-only achievement list, shared notification preferences | CPU/persistence/UI checks; GPU, listening and physical-controller acceptance remain outstanding |
 | Turkish localization | Native text/font overlay, launcher/account/update strings and 50 achievements | Native-bank/CPU checks; full Windows career/tutorial/HUD visual sweep remains outstanding |
 | LAN | LAN02 discovery, direct-IP fallback, guest session/socket bridge and lobby retry repairs | User confirmed earlier two-PC Radmin racing; revised retry/rejoin, larger grids and poor networks need native checks |
 | NOBK Online | Fixed production service, shared-site sign-in/token refresh, PC linking, authenticated relay, 378 native statistics views | Source and local protocol coverage; no new production deployment or Internet race acceptance is claimed |
 | Native leaderboard display | Lap Times, All Time Ghost and Monthly Ghost column/mode projection | Included in local regression; replay transfer and calendar-based Monthly rollover are not implemented/validated by this display fix |
+| NOBK Online panel | F1 or held Back+Start opens friends, server/rooms, records and achievements; English/Turkish UI and notifications | Integrated from upstream `c432d67`; native Windows and live service acceptance remain required; see [panel](nobk-panel.md) |
 | Discord activity | Local Windows Rich Presence with Arcade/Career, circuit/class/season, Online/LAN room counts and launcher toggle | Uses public Application ID 1562961932061904906; real Discord/native gameplay verification remains required; see [details](discord-presence.md) |
 | Rider License | View profile, Overview/Records, avatar/flag/bio with general emoji, Rider Rank, selected-board lap/map/date and isolated input | Local CPU/ImGui checks and user screenshots; lobby circuit context, season/Moto2 integration and DLC outlines remain deferred |
 | Launcher updates | FIFA-compatible manifest/download contract, helper, restart acknowledgement and rollback | Endpoint remains empty; update-preview checks exist, but real download/install/restart/rollback acceptance remains outstanding |
@@ -50,8 +51,8 @@ not increment the launcher version.
 
 ## Rider License statistics
 
-- **Rider Rank:** website overall rider ordering, including its 17-base-track
-  catalogue and full ranking scope; separate from a selected board's rank.
+- **Rider Rank:** website overall rider ordering, prioritizing records held, then
+  tracks held (17 base circuits plus DLC), points and source position; separate from a selected board's rank.
 - **Tracks Held:** distinct playable circuits led, including DLC, out of **20**.
 - **Records Held:** circuit/class boards where the rider is first.
 - **Boards Entered:** published circuit/class personal-best entries, not unique
