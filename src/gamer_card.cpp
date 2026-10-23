@@ -1151,16 +1151,16 @@ struct View {
 std::vector<std::string> Categories(const Results* results,bool tr) {
   std::vector<std::string> categories{Tr(tr,"All classes","Tüm sınıflar")};
   if(results)for(const auto& row:results->rows)
-    if(row.season!=1&&!row.category.empty()&&std::find(categories.begin()+1,categories.end(),row.category)==categories.end())
+    if(!row.category.empty()&&std::find(categories.begin()+1,categories.end(),row.category)==categories.end())
       categories.push_back(row.category);
   return categories;
 }
 std::vector<const Record*> OrderedRecords(const Results& results,uint32_t preferred_view,
     const std::vector<std::string>& categories,int category) {
   std::vector<const Record*> rows;
-  // 2009 is the agreed initial scope. Do not relabel known 2010 records as 2009.
+  // Match the website: every published season, including DLC, is in scope.
   for(const auto& row:results.rows)
-    if(row.season!=1&&(category==0||row.category==categories[category]))rows.push_back(&row);
+    if(category==0||row.category==categories[category])rows.push_back(&row);
   if(preferred_view) {
     const auto weight=[&](const Record* row) {
       if(row->view==preferred_view)return 0;
@@ -1169,6 +1169,12 @@ std::vector<const Record*> OrderedRecords(const Results& results,uint32_t prefer
     std::stable_sort(rows.begin(),rows.end(),[&](auto a,auto b){return weight(a)<weight(b);});
   }
   return rows;
+}
+
+std::string ClassSeason(const Record& row) {
+  if(row.season!=0&&row.season!=1)return row.category;
+  const std::string year=row.season==0?"2009":"2010";
+  return row.category.empty()?year:row.category+" · "+year;
 }
 
 // Coordinates below share one design canvas. Text and hit targets use the same
@@ -1356,7 +1362,7 @@ void Overview(const Snapshot& state,const Canvas& c,float x,float width,bool tr,
   }
   const auto& row=**record;
   c.Centered(details,430,36,kAccent,row.result,details_width);
-  c.Centered(details,475,14,kMuted,row.category+" · 2009 · "+Mode(row.mode,tr),details_width);
+  c.Centered(details,475,14,kMuted,ClassSeason(row)+" · "+Mode(row.mode,tr),details_width);
   c.Rank(rank+10,423,rank_width-10,26,row.rank,row.total);
   c.Centered(rank+10,465,12.5f,kMuted,std::string(Tr(tr,"Set · ","Tarih · "))+SetTime(row.updated,tr),rank_width-10);
   if(row.updated>0&&ImGui::IsWindowHovered()&&
@@ -1414,7 +1420,7 @@ void Records(const Snapshot& state,View& view,const Canvas& c,float x,float widt
     if(row.view==state.preferred_view)c.draw->AddRectFilled(c.Point(x,y),c.Point(x+width-18,y+row_height),ImGui::GetColorU32(overlay::AccentTint(.10f)));
     c.Rank(x+6,y+(row_height-18)*.5f,82,18,row.rank,row.total);
     c.Text(track,y+6,15,kWhite,row.track_name,time-track-18);
-    c.Text(track,y+29,12.5f,kMuted,row.category+" · 2009",time-track-18);
+    c.Text(track,y+29,12.5f,kMuted,ClassSeason(row),time-track-18);
     c.Centered(time,y+13,17,kAccent,row.result,112);
     c.Centered(mode,y+15,14,kWhite,Mode(row.mode,tr),84);
     c.Centered(set,y+15,14,kMuted,SetTime(row.updated,tr),104);

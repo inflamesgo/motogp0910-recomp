@@ -60,19 +60,43 @@ cached. The inputs are removed at job completion, including failures.
 After the private secret is configured and the owner requests a build:
 
 1. Open **Actions > Windows build > Run workflow**.
-2. Select `main`, leave **quality_checks** off for an ordinary build-only
-   request, and click **Run workflow**. Other branches are skipped.
+2. Select `main`, enter a short English **build_label** describing the changes
+   (for example `discord-track-artwork`), leave **quality_checks** off for an
+   ordinary build-only request, and click **Run workflow**. Other branches are
+   skipped. If the label is blank, the latest commit subject supplies it.
 3. Also dispatch **Quick quality checks** on `main`, as the owner requested for
    ordinary build requests. This is separate from the optional Windows probe suite.
-4. The downloadable Windows artifact is named after the checked-out commit title.
-   GitHub's artifact ZIP contains a second, prepared application ZIP. Extract
-   that inner ZIP to obtain the launcher, `bin/`, `resources/`, `game/` and
-   `dlc/`. A workflow build does not create a GitHub release.
+4. Both the downloadable artifact and its application ZIP use the descriptive
+   name `MotoGP0910-Windows-x64-<change-label>` (plus `.zip` for the ZIP).
+   The downloaded ZIP opens directly to the launcher, `bin/`, `resources/`,
+   `game/` and `dlc/`; there is no second application ZIP inside it. A workflow
+   build does not create a GitHub release.
 
-The packaging script validates a uniquely named application ZIP before upload.
-Uploading that prepared ZIP preserves the empty `game/` and `dlc/` directories;
-GitHub's outer artifact wrapper alone would otherwise omit empty directories.
-An updater manifest must point to the application ZIP, not that outer wrapper.
+The shared naming helper lowercases the label, removes a Conventional Commit
+prefix and replaces spaces/punctuation with hyphens. Version numbers, dates,
+commit hashes and Actions run IDs are not appended automatically. When dispatching
+on the owner's behalf, choose an explicit meaningful label for the delivered work.
+The packaging script validates the named application ZIP locally on the runner,
+then Actions uploads only the staged application files in `out/package-windows/`.
+GitHub creates the single downloadable ZIP from those files. Artifact uploads
+omit empty directories, so the workflow adds empty hidden `.keep` files only to
+the Actions staging copies of `game/` and `dlc/` and includes hidden files from
+that staging directory. Local application ZIPs retain genuinely empty setup
+directories. Historical artifacts with nested ZIPs are unchanged; this applies
+to future builds. Updater manifests still need a publicly downloadable application
+ZIP URL; an authenticated Actions web page is not a download endpoint.
+
+Local packaging uses the same convention, for example:
+
+```powershell
+python scripts/package-windows.py --build-dir out/build/win-amd64-release --label discord-track-artwork
+```
+
+Without `--label`, the latest commit subject supplies the description; source ZIP
+checkouts without Git history must provide a label. The legacy explicit
+`--archive` filename override remains available. Existing local archives are
+preserved by adding `-2`, `-3`, etc. on a filename collision. Naming a future
+build does not authorize starting one.
 
 The workflow uses a fresh Windows 2025 runner, LLVM 20.1.8, the SDK pin from
 `sdk-version.json` and the matching custom runtime manifest. The Windows helper

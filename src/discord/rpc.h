@@ -24,7 +24,14 @@ inline uint32_t Word(const char* bytes) {
 }
 inline Json Command(const Activity& a, int64_t started, uint32_t pid, uint64_t nonce) {
   Json activity = {{"details", a.details}, {"timestamps", {{"start", started}}}, {"instance", false}};
+  activity["assets"] = {{"large_image", a.large_image}, {"large_text", a.large_text}};
+  if(!a.small_image.empty()) {
+    activity["assets"]["small_image"]=a.small_image;
+    activity["assets"]["small_text"]=a.small_text;
+  }
   if (!a.state.empty()) activity["state"] = a.state;
+  if(a.party_size&&a.party_size<=a.party_capacity&&a.party_capacity<=INT32_MAX)
+    activity["party"]={{"size",Json::array({a.party_size,a.party_capacity})}};
   return {{"cmd", "SET_ACTIVITY"}, {"args", {{"pid", pid}, {"activity", activity}}}, {"nonce", std::to_string(nonce)}};
 }
 inline Json Clear(uint32_t pid, uint64_t nonce) {

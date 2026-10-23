@@ -4,6 +4,11 @@ name: Windows build
 on:
   workflow_dispatch:
     inputs:
+      build_label:
+        description: 'Short English change name, e.g. discord-track-artwork (blank: latest commit subject)'
+        type: string
+        required: false
+        default: ''
       quality_checks:
         description: 'Run available Windows CPU/UI checks (full-disc checks reported as skipped)'
         type: boolean
@@ -77,24 +82,26 @@ jobs:
 
       - name: Package application
         id: package
+        env:
+          BUILD_LABEL: ${{ inputs.build_label }}
         run: |
-          $title = (git log -1 --format=%s).Trim()
-          $title = [regex]::Replace($title, '[<>:"/\\|?*\x00-\x1F\x7F]', '-')
-          $title = $title.Trim().TrimEnd('.')
-          if ($title.Length -gt 100) { $title = $title.Substring(0, 100).Trim().TrimEnd('.') }
-          if (!$title) { $title = 'Windows build' }
-          "title=$title" >> $env:GITHUB_OUTPUT
+          $archive = python scripts/windows_archive_name.py --label "$env:BUILD_LABEL"
+          if ($LASTEXITCODE -ne 0) { throw 'Invalid Windows build label.' }
+          "name=$([IO.Path]::GetFileNameWithoutExtension($archive))" >> $env:GITHUB_OUTPUT
           $sdk = Get-Content sdk-version.json -Raw | ConvertFrom-Json
-          $shortSha = $env:GITHUB_SHA.Substring(0, 7)
-          $archive = "MotoGP0910-Windows-x64-$shortSha-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT.zip"
           python scripts/package-windows.py --build-dir out/build/win-amd64-release --sdk-root "out/sdk-$($sdk.version)/win-amd64" --archive $archive
+          if ($LASTEXITCODE -ne 0) { throw 'Windows packaging failed.' }
+          # Artifact uploads omit empty directories. Keep these setup folders
+          # without adding README files or wrapping a ZIP inside another ZIP.
+          New-Item -ItemType File -Path 'out/package-windows/game/.keep', 'out/package-windows/dlc/.keep' -Force | Out-Null
 
       - name: Upload downloadable Windows ZIP
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: MotoGP0910-Windows-x64 - ${{ steps.package.outputs.title }}
-          # Upload the prepared ZIP so empty game/ and dlc/ folders survive.
-          path: out/dist/*.zip
+          name: ${{ steps.package.outputs.name }}
+          # GitHub creates the only downloadable ZIP from these staged files.
+          path: out/package-windows/
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
           compression-level: 6

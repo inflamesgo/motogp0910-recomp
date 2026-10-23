@@ -1,6 +1,10 @@
 // Windows executable: actual pinned runtime ImGui and real achievement storage.
 #include "../src/achievement_ui.h"
 #include "../src/audio_settings.h"
+#include "../src/nobk_panel.h"
+#include "../src/in_game_settings.h"
+#include <rex/cvar.h>
+#include <rex/input/input_system.h>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <rex/ui/imgui_drawer.h>
@@ -14,6 +18,11 @@
 #include <iostream>
 #include <stdexcept>
 #include <thread>
+// Isolated panel fixture: no guest game, public HTTP requests or quit dialog.
+REXCVAR_DEFINE_STRING(network_mode,"offline","Network","Panel mode fixture");
+REXCVAR_DEFINE_STRING(online_server,"https://motogp.nobkonline.com","Network","Panel service fixture");
+REXCVAR_DEFINE_STRING(lan_player_name,"","Network","Empty name prevents HTTP worker startup");
+namespace motogp::quit { bool Pending(){return false;} }
 using namespace motogp::achievements;
 using rex::system::AchievementInfo;
 using rex::system::AchievementEvent;
@@ -130,6 +139,61 @@ int main(int argc,char** argv) {try {
     ctx.ExecutePendingFunctionsFromUIThread();Check(!menu,"Expired deferred close cannot reopen manually closed menu");
     rex::cvar::SetFlagByName("bind_achievements","F8");toggle();Check(menu!=nullptr,"Remapped overlay binding opens normally");toggle();Check(!menu,"Remapped binding closes normally");
     rex::ui::UnregisterBind("bind_achievements");
+  }
+  for(const char* mode:{"offline","lan","online"}) {
+    rex::cvar::SetFlagByName("network_mode",mode);
+    TestContext ctx;auto window=rex::ui::Window::Create(ctx,"NOBK achievements integration probe");
+    rex::input::InputSystem input(window.get());
+    auto gate=std::make_shared<motogp::settings::InputGate>();gate->Initialize(&input);gate->SetFocused(true);
+    motogp::settings::SetGuestGate(nullptr,nullptr,gate.get());
+    rex::ui::ImGuiDrawer drawer(window.get(),100);auto& panel_io=drawer.GetIO();
+    panel_io.IniFilename=nullptr;panel_io.LogFilename=nullptr;panel_io.DeltaTime=1.f/60;panel_io.DisplaySize=ImVec2(1280,720);
+    auto* panel_font=panel_io.Fonts->AddFontFromFileTTF(argv[1],17,nullptr,ranges);
+    panel_io.Fonts->GetTexDataAsRGBA32(&pixels,&tw,&th);panel_io.Fonts->SetTexID(1);
+    auto prefs=std::make_shared<Preferences>();prefs->sound=false;
+    motogp::nobk::Initialize(nullptr,gate);
+    auto menu=motogp::nobk::CreateMenu(&drawer,window.get(),&manager,panel_font,nullptr,false,nullptr,nullptr,prefs);
+    auto* listener=dynamic_cast<rex::ui::WindowInputListener*>(menu.get());Check(listener!=nullptr,"Panel installs input listener");
+    auto frame=[&]{gate->PollGuest();drawer.GetIO();ImGui::NewFrame();menu->Draw();ImGui::Render();};
+    auto toggle=[&]{rex::ui::KeyEvent key(window.get(),rex::ui::VirtualKey::kF1,1,false,false,false,false,false);listener->OnKeyDown(key);};
+    toggle();frame();frame();
+    const bool online=std::string_view(mode)=="online";
+    Check(gate->IsOpen()==online,"F1 opens only in Online mode");
+    if(online) {
+      const auto old_flags=panel_io.ConfigFlags;const auto old_backend=panel_io.BackendFlags;
+      panel_io.AddKeyEvent(ImGuiKey_Q,true);frame();panel_io.AddKeyEvent(ImGuiKey_Q,false);frame();frame();
+      auto* context=ImGui::GetCurrentContext();ImGuiWindow* list=nullptr;
+      for(auto* candidate:context->Windows)if(candidate->Active&&std::string_view(candidate->Name).find("achievement_list")!=std::string_view::npos&&std::string_view(candidate->Name).find("/##row_")==std::string_view::npos)list=candidate;
+      Check(list&&list->ScrollMax.y>0,"F1 renders the full scrollable local catalog before online data loads");
+      Check(panel_io.ConfigFlags&ImGuiConfigFlags_NavEnableGamepad,"F1 achievement controls enable controller navigation");
+      const float before_scroll=list->Scroll.y;
+      panel_io.AddMousePosEvent(list->Pos.x+80,list->Pos.y+50);panel_io.AddMouseWheelEvent(0,-3);frame();frame();
+      Check(list->Scroll.y>before_scroll,"Mouse wheel scrolls the embedded achievement list");
+      // Focus the actual search field by mouse, then type shortcut letters.
+      ImGuiWindow* body=list->ParentWindow;
+      panel_io.AddMousePosEvent(body->InnerRect.Min.x+100,list->Pos.y-25);panel_io.AddMouseButtonEvent(0,true);frame();
+      panel_io.AddMouseButtonEvent(0,false);frame();
+      Check(panel_io.WantTextInput,"Panel achievement search accepts text input");
+      for(auto key:{ImGuiKey_Q,ImGuiKey_E,ImGuiKey_W}){panel_io.AddKeyEvent(key,true);panel_io.AddInputCharacter(key==ImGuiKey_Q?'q':key==ImGuiKey_E?'e':'w');frame();panel_io.AddKeyEvent(key,false);frame();}
+      Check(list->Active&&gate->IsOpen(),"Typing Q/E/W in achievement search cannot switch tabs or close the panel");
+      panel_io.AddKeyEvent(ImGuiMod_Ctrl,true);panel_io.AddKeyEvent(ImGuiKey_A,true);frame();
+      panel_io.AddKeyEvent(ImGuiKey_A,false);panel_io.AddKeyEvent(ImGuiMod_Ctrl,false);frame();
+      panel_io.AddKeyEvent(ImGuiKey_Backspace,true);frame();panel_io.AddKeyEvent(ImGuiKey_Backspace,false);frame();frame();
+      Check(list->ScrollMax.y>0,"Clearing the search restores the complete achievement list");
+      ImGui::ClearActiveID();
+      for(bool tr:{false,true})for(ImVec2 size:{ImVec2(1280,720),ImVec2(1920,1080),ImVec2(640,480)}) {
+        prefs->turkish=tr;panel_io.DisplaySize=size;frame();frame();
+        auto* host=ImGui::FindWindowByName("##nobk_panel");
+        Check(host&&host->Pos.x>=0&&host->Pos.y>=0&&host->Pos.x+host->Size.x<=size.x+1&&host->Pos.y+host->Size.y<=size.y+1,"Embedded achievement host stays inside the viewport");
+        Check(context->ColorStack.Size==0&&context->StyleVarStack.Size==0&&context->FontStack.Size==0,"Embedded achievement styles remain balanced");
+        if(size.x==1280)Dump(out/(tr?"nobk-achievements-turkish":"nobk-achievements-english"));
+      }
+      panel_io.AddKeyEvent(ImGuiKey_Escape,true);frame();panel_io.AddKeyEvent(ImGuiKey_Escape,false);frame();
+      Check(!gate->IsOpen()&&!gate->Blocking(),"Esc closes F1 and releases guest input after neutral polling");
+      Check(panel_io.ConfigFlags==old_flags&&panel_io.BackendFlags==old_backend,"Closing F1 restores previous navigation flags");
+      Check(Progress(manager).earned==before.earned&&Progress(manager).score==before.score,"Embedded catalog never changes unlock progress");
+    }
+    menu.reset();motogp::nobk::Shutdown();gate->PollGuest();motogp::settings::SetGuestGate(nullptr);
   }
   std::cout<<checks<<" achievement UI, storage, notification and sound checks passed\n";return 0;
 } catch(const std::exception& e) {std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}}

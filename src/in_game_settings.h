@@ -77,6 +77,7 @@ std::unique_ptr<rex::ui::ImGuiDialog> CreateMenu(rex::ui::ImGuiDrawer* drawer,
 void SetGuestGate(InputGate* gate, InputGate* player_card_gate=nullptr, InputGate* nobk_panel_gate=nullptr);
 void PollGuestInput();
 bool GuestInputBlocked();
+bool MenuOpen();
 // Compatibility access to InputStateMutex: serialize device polling and MnK
 // binding edits. UI key handlers and binding edits run on the same UI thread.
 std::mutex& InputValueMutex();

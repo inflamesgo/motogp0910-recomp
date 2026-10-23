@@ -1,6 +1,12 @@
 # MotoGP achievement interface
 
-The custom F7 overlay and lower-right unlock notification use a dark MotoGP
+Online mode embeds the full achievement interface in **F1 > Achievements**,
+using the NOBK panel layout. F7 is disabled in Online mode. In Offline/LAN,
+F1 stays closed and **F7** opens the standalone achievement interface.
+Both hosts render the same list and notification/sound preferences from
+`achievement_ui.cpp::DrawContents`; there is no second unlock store.
+
+The achievement interface and lower-right unlock notification use a dark MotoGP
 palette, orange highlights and packaged Open Sans. Search and All / Unlocked /
 Locked filters expose the real title catalog. Progress and gamerscore come from
 the existing SDK achievement manager, including the original icons. A small
@@ -11,11 +17,15 @@ English/Turkish UI labels follow `General > Launcher language` at game startup.
 Catalog names/descriptions remain the title's extracted metadata. Reopen the
 game after changing the launcher language.
 
-F7 toggles the list; Esc or Close returns to the game. The current remapped SDK
+In Offline/LAN, F7 toggles the list; Esc or Close returns to the game. The remapped SDK
 achievement binding also works. Close requests defer the SDK-owned unique_ptr
 reset until after drawing, using a weak lifetime token. They do not invoke the
 SDK base dialog's self-deleting Close method. A pending close cannot reopen a
-menu already dismissed by F7. Notifications don't capture gameplay input.
+menu already dismissed by F7. In Online mode, the F1 host owns closing,
+exclusive input gating and controller navigation. Its local achievement tab
+remains usable while public server data is loading or unavailable. Typing Q/E/W
+in search does not trigger panel shortcuts. Notifications do not capture
+gameplay input.
 
 ## Native Windows follow-up — implemented, 15 October 2026
 
@@ -67,7 +77,7 @@ also apply. The launcher never unlocks, resets or rewrites achievements.
 
 The page remains usable while the game is running; visible progress refreshes
 within about 500 ms of a successful SDK save. Pop-up in game and Unlock sound
-are independent, immediately saved preferences shared with F7. The running game
+are independent, immediately saved preferences shared with the F1 achievement tab and Offline/LAN F7 list. The running game
 refreshes them within about 500 ms. Turning off visual pop-ups does not disable
 unlock tracking or force sound off. Opening either list plays no unlock sound.
 Concurrent preference changes merge only changed fields, retain volume and
@@ -84,7 +94,7 @@ The envelope has a gentle attack and zero-valued ends to avoid clicks. The cue
 is generated as PCM, needs no downloaded audio assets, and runs asynchronously
 through Windows WinMM. No system mixer volume is changed.
 
-F7 > Pop-up in game controls visual notifications; Unlock sound / volume disables or
+Achievements > Pop-up in game controls visual notifications; Unlock sound / volume disables or
 adjusts the cue. Game master volume and
 mute also apply; mute/disable interrupts active playback within the worker's
 20 ms polling interval, excluding driver scheduling. Sound preferences save
@@ -93,11 +103,25 @@ game, launcher and achievement save files are preserved. Device failure leaves
 the visual notification available and produces one warning per sound worker.
 
 Guest-thread notifications enter a bounded, synchronized queue. Repeated events
-with the same achievement ID/unlock timestamp are suppressed. Opening F7 or
+with the same achievement ID/unlock timestamp are suppressed. Opening either achievement interface or
 loading existing progress does not play a sound. Notifications wait while the
 game lacks focus; individual visible cards last 4.5 seconds with short fades.
 
-## Windows validation
+## F1 integration validation — 23 October 2026
+
+The changed achievement library and NOBK panel cross-compiled for Windows,
+and the application passed its Windows syntax check. The focused
+`achievement_ui_probe` passed under Wine with the shared content in both hosts:
+Offline/LAN rejects F1; Online can show the complete local catalog before any
+website data loads. Coverage includes mouse-wheel scrolling, search entry and
+clearing, Q/E/W shortcut isolation, EN/TR layouts at 640x480, 720p and 1080p,
+Escape closing/input release, navigation-flag restoration and unchanged unlock
+progress. Existing standalone F7, storage, preference, toast and sound checks
+also pass. These checks do not establish native Windows GPU rendering or
+physical-controller acceptance. Ignored evidence is stored under
+`out/achievement-f1-validation/`.
+
+## Previous Windows validation
 
 The actual pinned runtime's ImGui, achievement manager, dialog registration and
 keybinding dispatch were exercised under Wine: **286 checks passed**. Coverage:

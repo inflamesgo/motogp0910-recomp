@@ -123,8 +123,8 @@ tracks led / 20**. The first statistic is now **Tracks Held**, and the **Total T
 Domination** percentage uses that same distinct-first-place circuit count. In
 the supplied example, 17 boards led across 16 circuits means 16/20 = 80%; 19 is
 the total board count. The site's 16/17 uses its smaller catalogue. The previous
-17/20 counted circuits with any saved result, a different statistic. The initial
-2009 season filter still applies; multiple first-place boards on one circuit
+17/20 counted circuits with any saved result, a different statistic. All published
+seasons are now included, matching the site; multiple first-place boards on one circuit
 increase Records held but count only once toward Tracks Held. The third caption
 is **Boards Entered** (**Katıldığı tablolar**), replacing **Leaderboards**. This
 counts separate published circuit/class boards with a personal best, not unique
@@ -149,9 +149,10 @@ retrieved successfully during this implementation; the responses contained 15
 ranked riders and 38 populated boards at that time.
 
 This rank follows the site's 23 October catalogue: 17 base circuits plus DLC
-indices 18–20, excluding reserved slot 17, and the full ranking scope. It does not apply the card's separate DLC denominator
-or temporary 2009 summary filter. The public ranking API currently returns at
-most 100 riders; an absent rider is shown with a hyphen, not an invented rank.
+indices 18–20, excluding reserved slot 17, and the full ranking scope. It uses
+the same all-season record scope as the summary; the rank itself does not use
+the summary's denominator. The public ranking API currently returns at most
+100 riders; an absent rider is shown with a hyphen, not an invented rank.
 The hover explanation distinguishes a rider not listed from a lookup failure.
 Loading shows an ellipsis; a failed or malformed response shows a hyphen while
 the rest of the profile remains available.
@@ -171,14 +172,25 @@ verification remains pending.
 ## Records table
 
 Records has five columns: rank/board population on one line, circuit with
-class/2009 underneath, best lap, stored mode, and **Set**. Results use the site's
+class and the published season underneath, best lap, stored mode, and **Set**. Results use the site's
 `display.text`; game mode comes from uploaded property 6. Unknown data uses an
 ASCII hyphen to avoid a missing-glyph diamond. The empty bike column is removed.
 Class labels follow published metadata, preserving the existing server-side
-Moto2 integration limits. As requested, this initial view is scoped to 2009:
-known 2010 rows (property 13 = 1) are excluded from the list, filters and summary;
-legacy rows without a season remain in the initial 2009 presentation. The source
-season property is retained for the later server integration.
+Moto2 integration limits. The temporary 2009 restriction has been removed:
+2009 and 2010 records, including DLC, participate in the list, class filters and
+summary. Property 13 supplies the displayed year (0 = 2009, 1 = 2010); legacy
+rows without a known season remain visible without an invented year.
+
+A live API comparison on 23 October 2026 reproduced the reported mismatch:
+25 boards / 24 firsts / 20 circuits became 20 / 19 / 16 after the old filter
+excluded five 2010 rows. This was a client-side scope error, not API lag. The
+all-season regression reproduces the 25 / 24 / 20 totals, including all three DLC
+slots and the reserved-slot gap. The affected game and probe cross-compiled for
+Windows; the focused `gamer_card_probe ... --data-only` run passed under Wine.
+It verifies mixed-season totals, DLC inclusion, class filtering and real/unknown
+year labels without starting the unrelated font/emoji/ImGui checks. Evidence is
+kept in ignored `out/rider-season-fix-validation/`; native Windows UI acceptance
+is separate.
 
 **Set** uses each row's existing `updated` Unix timestamp, the same field used
 by the site's results table. It shows localized relative time below seven days,
@@ -263,10 +275,10 @@ the input font's SHA-256. Its SIL OFL attribution is retained in
 ## Personal-best circuit panel
 
 The user subsequently approved the circuit-panel layout. Personal Best now has
-a small circuit outline on the left, circuit name and lap/class/2009/mode in
+a small circuit outline on the left, circuit name and lap/class/season/mode in
 the middle, and rank/board population plus **Set** on the right. The middle
 column has equal insets between its dividers: circuit name at the top, the
-larger lap below, then class/2009/mode on one line, all centered on the same
+larger lap below, then class/season/mode on one line, all centered on the same
 axis. A missing-lap message shares that center. The date uses
 the same accepted-result timestamp and formatter as Records; hovering it shows
 the full local date and time. All lap details come from the exact selected

@@ -38,6 +38,20 @@
   Windows build and Quick quality checks dispatch; do not repeat that the
   results are not being monitored.
 
+- Only an explicit build request authorizes a local application build/package
+  or CI dispatch. Do not carry an earlier build request into a later fix or
+  enhancement; complete requested source work and focused verification first.
+- Name future Windows application ZIPs `MotoGP0910-Windows-x64-<change-label>.zip`.
+  Choose a short, meaningful English lowercase hyphenated label describing the
+  delivered changes (for example `launcher-polish` or `discord-track-artwork`).
+  Pass `--label` to the local packager and `build_label` to Windows workflow
+  dispatches. Do not substitute a version, date, commit hash or run ID for the
+  description. Preserve existing archives; local name collisions use `-2`, `-3`.
+- Actions must upload the staged application files, not a prepared ZIP inside
+  another artifact ZIP. The downloaded ZIP must open directly to the launcher,
+  `bin/`, `resources/`, `game/` and `dlc/`. Empty `.keep` files in the Actions
+  staging folders preserve `game/` and `dlc/`; local ZIPs retain empty entries.
+
 ## General working principles and partner judgment
 
 - Apply these principles to every activity: implementation, debugging, research,

@@ -15,6 +15,8 @@ std::mutex capture_mutex;
 std::atomic<bool> enabled{false};
 rex::Runtime* guest_runtime = nullptr;
 LobbyProvider lobby_provider = nullptr;
+SettingsProvider settings_provider = nullptr;
+Menu menu_context=Menu::Unknown;
 std::chrono::steady_clock::time_point next_capture{};
 std::optional<uint32_t> Read(uint8_t* base, uint32_t address) {
   if (!address || (address & 3) || uint64_t(address) + 4 > 0x100000000ull) return {};
@@ -27,17 +29,17 @@ std::optional<uint32_t> Read(uint8_t* base, uint32_t address) {
   return rex::memory::load_and_swap<uint32_t>(base + address);
 }
 }
-void Start(rex::Runtime* runtime, LobbyProvider lobby) {
+void Start(rex::Runtime* runtime, LobbyProvider lobby,SettingsProvider settings) {
   Stop();
   if (!runtime || !rex::cvar::Query<bool>("discord_presence_enabled")) return;
-  { const std::lock_guard lock(capture_mutex); guest_runtime = runtime; lobby_provider = lobby; next_capture = {}; }
+  { const std::lock_guard lock(capture_mutex); guest_runtime = runtime; lobby_provider = lobby; settings_provider=settings; menu_context=Menu::Unknown; next_capture = {}; }
   client.Publish(Present({}));
   client.Start();
   enabled.store(true, std::memory_order_release);
 }
 void Stop() {
   enabled.store(false, std::memory_order_release);
-  { const std::lock_guard lock(capture_mutex); guest_runtime = nullptr; lobby_provider = nullptr; }
+  { const std::lock_guard lock(capture_mutex); guest_runtime = nullptr; lobby_provider = nullptr; settings_provider=nullptr; menu_context=Menu::Unknown; }
   client.Stop();
 }
 void ObserveGuestFrame(uint8_t* base) {
@@ -47,12 +49,17 @@ void ObserveGuestFrame(uint8_t* base) {
   const auto now = std::chrono::steady_clock::now();
   if (now < next_capture) return;
   next_capture = now + std::chrono::milliseconds(500);
-  auto snapshot = Capture([&](uint32_t address) { return Read(base, address); });
-  if (!snapshot.event && lobby_provider) {
+  auto snapshot = Capture([&](uint32_t address) { return Read(base, address); },menu_context);
+  menu_context=snapshot.context;
+  snapshot.network_lan=rex::cvar::Query<std::string>("network_mode")=="lan";
+  if (!snapshot.event && CanShowLobby(snapshot.menu) && lobby_provider) {
     if (const auto lobby = lobby_provider()) {
       snapshot.lobby = true; snapshot.online = lobby->online;
       snapshot.members = lobby->members; snapshot.capacity = lobby->capacity;
     }
+  }
+  if(settings_provider&&settings_provider()) {
+    snapshot.menu=Menu::Settings;snapshot.event=false;snapshot.lobby=false;
   }
   client.Publish(Present(snapshot));
 }

@@ -462,6 +462,10 @@ void PollGuestInput(){
   if(auto* gate=player_card_gate.load(std::memory_order_acquire))gate->PollGuest();
   if(auto* gate=nobk_panel_gate.load(std::memory_order_acquire))gate->PollGuest();
 }
+bool MenuOpen(){
+  auto* gate=guest_gate.load(std::memory_order_acquire);
+  return gate&&gate->IsOpen();
+}
 bool GuestInputBlocked(){
   auto* gate=guest_gate.load(std::memory_order_acquire);
   auto* card=player_card_gate.load(std::memory_order_acquire);

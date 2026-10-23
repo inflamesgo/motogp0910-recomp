@@ -202,7 +202,8 @@ class Motogp0910App : public rex::ReXApp {
     gamer_card_dialog_=motogp::gamer_card::CreateMenu(imgui_drawer(),window(),immediate_drawer(),
         achievement_font_,achievement_heading_font_,achievement_preferences_->turkish);
     nobk_dialog_=motogp::nobk::CreateMenu(imgui_drawer(),window(),&achievements(),
-        achievement_font_,achievement_heading_font_,achievement_preferences_->turkish);
+        achievement_font_,achievement_heading_font_,achievement_preferences_->turkish,
+        immediate_drawer(),runtime(),achievement_preferences_);
     motogp::settings::SetGuestGate(settings_gate_.get(),gamer_card_gate_.get(),nobk_gate_.get());
     motogp::SetFrameObserver(&Motogp0910App::FrameTick);
     motogp::quit::SetOtherMenuCheck(motogp::settings::GuestInputBlocked);
@@ -215,7 +216,7 @@ class Motogp0910App : public rex::ReXApp {
       const auto room = motogp::lan::CurrentRoom();
       if (!room) return {};
       return motogp::discord::Lobby{rex::cvar::Query<std::string>("network_mode")=="online",room->members,room->capacity};
-    });
+    },&motogp::settings::MenuOpen);
   }
   void OnKeyDown(rex::ui::KeyEvent& event) override {
     if(!event.prev_state()&&!event.is_ctrl_pressed()&&!event.is_alt_pressed()&&!event.is_super_pressed()&&
@@ -231,6 +232,9 @@ class Motogp0910App : public rex::ReXApp {
     return true;
   }
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
+    // Online achievements live in F1; keep the separate list for Offline/LAN.
+    if(rex::cvar::Query<std::string>("network_mode")=="online")
+      rex::ui::UnregisterBind("bind_achievements");
     // The SDK has just registered F3; replace it before the game is launched.
     motogp::debug::RegisterToggle([this]{
       if(debug_dialog_)debug_dialog_.reset();else debug_dialog_=motogp::debug::Create(imgui_drawer(),window(),achievement_preferences_->turkish);
@@ -262,7 +266,8 @@ class Motogp0910App : public rex::ReXApp {
     motogp::overlay::ConfigureDialogs(style);
   }
   std::unique_ptr<rex::ui::ImGuiDialog> CreateAchievementsOverlay() override {
-    if(!imgui_drawer() || !runtime()) return nullptr;
+    if(!imgui_drawer() || !runtime() || rex::cvar::Query<std::string>("network_mode")=="online" ||
+       motogp::settings::GuestInputBlocked() || motogp::quit::Pending())return nullptr;
     return motogp::achievements::CreateMenu(imgui_drawer(), immediate_drawer(), runtime(),
         achievements(), achievement_font_, achievement_heading_font_, achievement_preferences_, [this](std::weak_ptr<void> lifetime) {
       // ReXApp owns the dialog in a unique_ptr. Never call ImGuiDialog::Close(),

@@ -9,7 +9,8 @@
 struct ImFont;
 namespace rex { class Runtime; }
 namespace rex::system { class AchievementManager; }
-namespace rex::ui { class Window; }
+namespace rex::ui { class Window; class ImmediateDrawer; }
+namespace motogp::achievements { struct Preferences; }
 namespace motogp::settings { class InputGate; }
 
 namespace motogp::nobk {
@@ -19,5 +20,7 @@ bool Active();
 // Called once per game frame (guest thread): Back + Start held opens the panel.
 void PollPad();
 std::unique_ptr<rex::ui::ImGuiDialog> CreateMenu(rex::ui::ImGuiDrawer* drawer, rex::ui::Window* window,
-    rex::system::AchievementManager* achievements, ImFont* font, ImFont* heading, bool turkish);
+    rex::system::AchievementManager* achievements, ImFont* font, ImFont* heading, bool turkish,
+    rex::ui::ImmediateDrawer* immediate, rex::Runtime* runtime,
+    std::shared_ptr<motogp::achievements::Preferences> preferences);
 }

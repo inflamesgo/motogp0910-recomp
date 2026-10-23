@@ -10,6 +10,7 @@
 #include <rex/runtime.h>
 #include <rex/input/input_system.h>
 #include <rex/ui/keybinds.h>
+#include <rex/ui/overlay/achievement_icon_cache.h>
 #include <rex/ui/window.h>
 #include <imgui.h>
 
@@ -41,7 +42,7 @@
 #include <winhttp.h>
 #endif
 
-REXCVAR_DEFINE_STRING(bind_nobk_panel,"F1","Keybinds","Open the NOBK Online panel (friends, server, records)");
+REXCVAR_DEFINE_STRING(bind_nobk_panel,"F1","Keybinds","Open the NOBK panel (friends, server, records, achievements)");
 
 namespace motogp::nobk {
 namespace {
@@ -204,7 +205,7 @@ class State {
   ~State(){Stop();}
   void Toggle() {
     if(gate->IsOpen()){gate->Close();return;}
-    if(quit::Pending()||settings::GuestInputBlocked())return;
+    if(!snapshot_.available||quit::Pending()||settings::GuestInputBlocked())return;
     gate->Open();
     if(gate->IsOpen()){std::lock_guard lock(mutex_);wake_=true;changed_.notify_one();}
   }
@@ -423,12 +424,14 @@ ImU32 WhereColor(Where w) {
 class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputListener {
  public:
   Dialog(rex::ui::ImGuiDrawer* drawer,rex::ui::Window* window,rex::system::AchievementManager* achievements,
-      std::shared_ptr<State> state,ImFont* font,ImFont* heading,bool tr)
-      :ImGuiDialog(drawer),window_(window),achievements_(achievements),state_(std::move(state)),font_(font),heading_(heading),tr_(tr) {
+      std::shared_ptr<State> state,ImFont* font,ImFont* heading,bool tr,
+      rex::ui::ImmediateDrawer* immediate,rex::Runtime* runtime,std::shared_ptr<achievements::Preferences> preferences)
+      :ImGuiDialog(drawer),window_(window),achievements_(achievements),state_(std::move(state)),font_(font),heading_(heading),tr_(tr),
+       achievement_preferences_(std::move(preferences)),achievement_icons_(immediate,runtime) {
     state_->tr_=tr;
     if(window_)window_->AddInputListener(this,61);
   }
-  ~Dialog() override {if(window_)window_->RemoveInputListener(this);state_->Close();}
+  ~Dialog() override {if(window_)window_->RemoveInputListener(this);RestoreNavigation(GetIO());state_->Close();}
   void OnKeyDown(rex::ui::KeyEvent& e) override {
     const auto bind=rex::ui::ParseVirtualKey(rex::cvar::Query<std::string>("bind_nobk_panel"));
     if(bind!=rex::ui::VirtualKey::kNone&&e.virtual_key()==bind&&!e.is_alt_pressed()&&!e.is_ctrl_pressed()) {
@@ -443,7 +446,7 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
  protected:
   void OnDraw(ImGuiIO& io) override {
     DrawToast(io);
-    if(!state_->gate->IsOpen()){armed_=false;previous_=0;return;}
+    if(!state_->gate->IsOpen()){RestoreNavigation(io);armed_=false;previous_=0;return;}
     const auto snapshot=state_->Read();
     if(epoch_!=state_->gate->Epoch()){epoch_=state_->gate->Epoch();armed_=false;previous_=0;selected_=0;ImGui::SetNextWindowFocus();}
     const auto buttons=state_->gate->Buttons();
@@ -452,18 +455,41 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
     previous_=buttons;
     using namespace rex::input;
     if(armed_) {
-      if((fresh&X_INPUT_GAMEPAD_B)||ImGui::IsKeyPressed(ImGuiKey_Escape,false)){state_->Close();return;}
-      if((fresh&X_INPUT_GAMEPAD_LEFT_SHOULDER)||ImGui::IsKeyPressed(ImGuiKey_Q,false)){tab_=(tab_+3)%4;selected_=0;}
-      if((fresh&X_INPUT_GAMEPAD_RIGHT_SHOULDER)||ImGui::IsKeyPressed(ImGuiKey_E,false)){tab_=(tab_+1)%4;selected_=0;}
-      if((fresh&X_INPUT_GAMEPAD_DPAD_DOWN)||ImGui::IsKeyPressed(ImGuiKey_DownArrow))++selected_;
-      if((fresh&X_INPUT_GAMEPAD_DPAD_UP)||ImGui::IsKeyPressed(ImGuiKey_UpArrow))--selected_;
+      if((fresh&X_INPUT_GAMEPAD_B)||ImGui::IsKeyPressed(ImGuiKey_Escape,false)){state_->Close();RestoreNavigation(io);return;}
+      const bool typing=io.WantTextInput;
+      if((fresh&X_INPUT_GAMEPAD_LEFT_SHOULDER)||(!typing&&ImGui::IsKeyPressed(ImGuiKey_Q,false))){tab_=(tab_+3)%4;selected_=0;}
+      if((fresh&X_INPUT_GAMEPAD_RIGHT_SHOULDER)||(!typing&&ImGui::IsKeyPressed(ImGuiKey_E,false))){tab_=(tab_+1)%4;selected_=0;}
+      if(tab_!=3&&((fresh&X_INPUT_GAMEPAD_DPAD_DOWN)||ImGui::IsKeyPressed(ImGuiKey_DownArrow)))++selected_;
+      if(tab_!=3&&((fresh&X_INPUT_GAMEPAD_DPAD_UP)||ImGui::IsKeyPressed(ImGuiKey_UpArrow)))--selected_;
       activate_=(fresh&X_INPUT_GAMEPAD_A)||ImGui::IsKeyPressed(ImGuiKey_Enter,false);
-      web_=(fresh&X_INPUT_GAMEPAD_Y)||ImGui::IsKeyPressed(ImGuiKey_W,false);
+      web_=(fresh&X_INPUT_GAMEPAD_Y)||(!typing&&ImGui::IsKeyPressed(ImGuiKey_W,false));
     } else activate_=web_=false;
+    AchievementNavigation(io,armed_?buttons:0);
     Draw(io,snapshot);
+    if(tab_!=3)RestoreNavigation(io);
   }
 
  private:
+  void RestoreNavigation(ImGuiIO& io) {
+    if(!nav_owned_)return;
+    achievement_preferences_->Save(); // Commit a slider edit when leaving the tab or closing F1.
+    for(auto key:{ImGuiKey_GamepadDpadUp,ImGuiKey_GamepadDpadDown,ImGuiKey_GamepadDpadLeft,ImGuiKey_GamepadDpadRight,ImGuiKey_GamepadFaceDown})io.AddKeyEvent(key,false);
+    io.ConfigFlags=old_flags_;io.BackendFlags=old_backend_;nav_owned_=false;nav_previous_=0;
+  }
+  void AchievementNavigation(ImGuiIO& io,uint16_t buttons) {
+    if(tab_!=3){RestoreNavigation(io);return;}
+    if(!nav_owned_) {
+      old_flags_=io.ConfigFlags;old_backend_=io.BackendFlags;
+      io.ConfigFlags|=ImGuiConfigFlags_NavEnableKeyboard|ImGuiConfigFlags_NavEnableGamepad;
+      io.BackendFlags|=ImGuiBackendFlags_HasGamepad;nav_owned_=true;
+    }
+    using namespace rex::input;
+    for(auto [bit,key]:{std::pair{X_INPUT_GAMEPAD_DPAD_UP,ImGuiKey_GamepadDpadUp},
+        {X_INPUT_GAMEPAD_DPAD_DOWN,ImGuiKey_GamepadDpadDown},{X_INPUT_GAMEPAD_DPAD_LEFT,ImGuiKey_GamepadDpadLeft},
+        {X_INPUT_GAMEPAD_DPAD_RIGHT,ImGuiKey_GamepadDpadRight},{X_INPUT_GAMEPAD_A,ImGuiKey_GamepadFaceDown}})
+      if((buttons&bit)!=(nav_previous_&bit))io.AddKeyEvent(key,bool(buttons&bit));
+    nav_previous_=buttons;
+  }
   void DrawToast(ImGuiIO& io) {
     const double now=ImGui::GetTime();
     if(!toast_||now-toast_at_>6.0) {
@@ -532,13 +558,16 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
       }
       ImGui::Spacing();
       const float footer=ImGui::GetTextLineHeightWithSpacing()+8;
+      // Keep search fields and achievement cards distinct from their host.
+      ImGui::PushStyleColor(ImGuiCol_ChildBg,tab_==3?ink:card);
       ImGui::BeginChild("##nobk_body",ImVec2(0,-footer),ImGuiChildFlags_None);
-      if(!s.available)ImGui::TextWrapped("%s",Tr(tr_,"The NOBK panel works in Online mode on the NOBK Online server.","NOBK paneli NOBK Online sunucusunda Online modda çalışır."));
+      ImGui::PopStyleColor();
+      if(tab_==3)Achievements();
+      else if(!s.available)ImGui::TextWrapped("%s",Tr(tr_,"The NOBK panel works in Online mode on the NOBK Online server.","NOBK paneli NOBK Online sunucusunda Online modda çalışır."));
       else if(!s.loaded)ImGui::TextDisabled("%s",s.failed?Tr(tr_,"Cannot reach nobkonline.com right now.","nobkonline.com'a şu an ulaşılamıyor."):Tr(tr_,"Loading…","Yükleniyor…"));
       else if(tab_==0)Friends(s);
       else if(tab_==1)Server(s);
       else if(tab_==2)Records(s);
-      else Achievements();
       ImGui::EndChild();
       auto bind=rex::cvar::Query<std::string>("bind_nobk_panel");if(bind.empty())bind="F1";
       ImGui::TextDisabled("%s",(std::string(Tr(tr_,"LB/RB · Q/E tabs   A · Enter select   Y · W website   B · Esc · ","LB/RB · Q/E sekme   A · Enter seç   Y · W site   B · Esc · "))+bind+Tr(tr_," close"," kapat")).c_str());
@@ -669,17 +698,7 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
   }
   void Achievements() {
     if(!achievements_){ImGui::TextDisabled("%s",Tr(tr_,"Achievements are not available.","Başarımlar kullanılamıyor."));return;}
-    const auto p=motogp::achievements::Progress(*achievements_);
-    ImFont* f=heading_?heading_:ImGui::GetFont();
-    ImGui::PushFont(f,30.f);
-    ImGui::Text("%zu / %zu",p.earned,p.total);
-    ImGui::PopFont();
-    ImGui::TextColored(muted,tr_?"Gamerscore %llu / %llu":"Gamerscore %llu / %llu",
-        static_cast<unsigned long long>(p.score),static_cast<unsigned long long>(p.available_score));
-    ImGui::ProgressBar(p.total?float(p.earned)/float(p.total):0.f,ImVec2(-1,14),"");
-    ImGui::Spacing();
-    auto key=rex::cvar::Query<std::string>("bind_achievements");if(key.empty())key="F7";
-    ImGui::TextWrapped(tr_?"Bütün başarımlar ve ilerleme için oyun içinde %s tuşuna bas.":"Press %s in game for every achievement and its progress.",key.c_str());
+    achievements::DrawContents(*achievements_,achievement_state_,*achievement_preferences_,&achievement_icons_);
   }
 
   rex::ui::Window* window_;
@@ -687,6 +706,13 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
   std::shared_ptr<State> state_;
   ImFont* font_;ImFont* heading_;
   bool tr_;
+  std::shared_ptr<achievements::Preferences> achievement_preferences_;
+  achievements::MenuState achievement_state_;
+  rex::ui::AchievementIconCache achievement_icons_;
+  bool nav_owned_=false;
+  ImGuiConfigFlags old_flags_=0;
+  ImGuiBackendFlags old_backend_=0;
+  uint16_t nav_previous_=0;
   bool armed_=false,activate_=false,web_=false;
   uint16_t previous_=0;
   uint64_t epoch_=0;
@@ -712,8 +738,9 @@ void PollPad() {
   if(auto state=current.load(std::memory_order_acquire))state->PollPad(input_system.load(std::memory_order_acquire));
 }
 std::unique_ptr<rex::ui::ImGuiDialog> CreateMenu(rex::ui::ImGuiDrawer* drawer,rex::ui::Window* window,
-    rex::system::AchievementManager* achievements,ImFont* font,ImFont* heading,bool turkish) {
+    rex::system::AchievementManager* achievements,ImFont* font,ImFont* heading,bool turkish,
+    rex::ui::ImmediateDrawer* immediate,rex::Runtime* runtime,std::shared_ptr<achievements::Preferences> preferences) {
   auto state=current.load(std::memory_order_acquire);
-  return state?std::make_unique<Dialog>(drawer,window,achievements,std::move(state),font,heading,turkish):nullptr;
+  return state?std::make_unique<Dialog>(drawer,window,achievements,std::move(state),font,heading,turkish,immediate,runtime,std::move(preferences)):nullptr;
 }
 }  // namespace motogp::nobk

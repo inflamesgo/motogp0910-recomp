@@ -46,7 +46,7 @@ REX_EXTERN(__imp__sub_82303260) {(void)ctx;(void)base;observed_view=motogp::game
 int main(int argc,char** argv) {try {
   using namespace motogp::gamer_card;
   using Json=nlohmann::json;
-  Check(argc==3,"Supply packaged font and evidence directory");
+  Check(argc==3||(argc==4&&std::string_view(argv[3])=="--data-only"),"Supply packaged font and evidence directory [--data-only]");
   const std::filesystem::path output=argv[2];std::filesystem::create_directories(output);
   Json players={{"players",Json::array()}};
   for(const auto row:std::array<std::array<int,4>,5>{{{1,4,4,90},{2,2,4,100},{3,3,5,1},{4,1,3,1},{5,5,4,100}}})
@@ -82,9 +82,26 @@ int main(int argc,char** argv) {try {
   const auto summary=SummarizeRecords(rows);
   Check(summary.tracks_held==16&&summary.records_held==17&&summary.boards_entered==19,"Distinct tracks, records held and boards entered have different correct meanings");
   Check(rows.front()->view==43,"The exact selected board precedes other circuit/category results");
-  add(61,1,1,"MotoGP");
+  add(61,1,1,"Moto2");
   auto mixed=ReadResults(identity,1);
-  Check(OrderedRecords(*mixed,0,Categories(mixed.get(),false),0).size()==19,"Temporary 2009 scope excludes known 2010 submissions");
+  const auto mixed_categories=Categories(mixed.get(),false);
+  const auto all_seasons=OrderedRecords(*mixed,61,mixed_categories,0);
+  Check(all_seasons.size()==20&&all_seasons.front()->view==61,"Known 2010 DLC records remain visible and the selected board stays first");
+  Check(std::find(mixed_categories.begin(),mixed_categories.end(),"Moto2")!=mixed_categories.end(),"Classes present only in 2010 are available in the dropdown");
+  const auto moto2=std::find(mixed_categories.begin(),mixed_categories.end(),"Moto2")-mixed_categories.begin();
+  Check(OrderedRecords(*mixed,0,mixed_categories,int(moto2)).size()==1,"Class filtering retains 2010 results");
+  Check(ClassSeason(*all_seasons.front())=="Moto2 · 2010"&&ClassSeason(results->rows.front())=="MotoGP · 2009","Displayed years come from record metadata");
+  Record legacy;legacy.category="MotoGP";
+  Check(ClassSeason(legacy)=="MotoGP","Missing season metadata does not invent a year");
+  identity["records"]=Json::array();
+  for(int track=0;track<21;++track)if(track!=17) {
+    const int view=43+track;
+    add(view,1,(view==46||view==58||view==61||view==63)?1:0,"MotoGP");
+  }
+  add(1,1,0,"125cc");add(14,1,0,"125cc");add(22,1,0,"250cc");add(37,1,1,"250cc");add(28,2,0,"250cc");
+  const auto parity=ReadResults(identity,1);
+  const auto totals=SummarizeRecords(OrderedRecords(*parity,0,Categories(parity.get(),false),0));
+  Check(totals.tracks_held==20&&totals.records_held==24&&totals.boards_entered==25,"Mixed-season DLC regression matches the site's 20/20 tracks, 24 records and 25 boards");
   Check(kTracks[18]=="Silverstone"&&kTracks[19]=="Shanghai"&&kTracks[20]=="Istanbul Park","DLC slot indices preserve the reserved hole");
   Check(AvatarPath("https://www.nobkonline.com/api/avatar/u/test?v=2")=="/api/avatar/u/test?v=2","Versioned public avatar paths retain their query");
   Check(!AvatarPath("https://www.nobkonline.com.evil.invalid/api/avatar/u/test"),"Avatar origin lookalikes are rejected");
@@ -96,6 +113,10 @@ int main(int argc,char** argv) {try {
   Check(ReadBio(Json{{"bio","Life is a gimmick 🃏"}})=="Life is a gimmick 🃏","Public bio preserves non-BMP emoji before display conversion");
   Check(SetTime(0,false)=="-"&&SetTime(4102444800LL,false)=="-","Invalid timestamps cannot invent a set date");
   Check(Mode(0x10000002,false)=="Championship"&&Mode(14,false)=="Online","Stored native mode bits are preserved");
+  if(argc==4) {
+    std::cout<<checks<<" Rider License data checks passed\n";
+    return 0;
+  }
   {
     PublicClient client;std::stop_source stop;stop.request_stop();bool cancelled=false;
     try{client.Get("/api/motogp/ranking",256*1024,1,"ranking",stop.get_token());}

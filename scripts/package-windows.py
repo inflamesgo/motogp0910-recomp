@@ -6,6 +6,7 @@ import shutil
 import zipfile
 import json
 import argparse
+from windows_archive_name import archive_name, available_archive
 
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "out/build/windows-cross-release"
@@ -20,7 +21,9 @@ def main():
     global BUILD
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build-dir',type=Path,default=ROOT/'out/build/windows-nightly-release')
-    parser.add_argument('--archive',default='MotoGP0910-Windows-x64-stability-update.zip')
+    naming=parser.add_mutually_exclusive_group()
+    naming.add_argument('--archive',help='Explicit ZIP filename (legacy override)')
+    naming.add_argument('--label',help='Short English change description, e.g. discord-track-artwork; default: latest commit subject')
     parser.add_argument('--sdk-root', type=Path, default=Path('/workspace/shared/rexglue-nightly-packages/win-amd64'), help='SDK root containing optional additional dependency licenses')
     parser.add_argument('--lan-preview',action='store_true',help='Include the experimental LAN multiplayer integration and Windows test instructions')
     parser.add_argument('--online-preview',action='store_true',help='Include community Online/LAN/Offline instructions')
@@ -28,8 +31,13 @@ def main():
     parser.add_argument('--include-readmes', action='store_true', help='Include optional release instructions; disabled for development builds')
     args=parser.parse_args();BUILD=args.build_dir.resolve()
     if args.online_preview:args.lan_preview=True
-    if Path(args.archive).name!=args.archive or not args.archive.endswith('.zip'):
+    try:
+        filename=args.archive if args.archive is not None else archive_name(args.label)
+    except ValueError as error:
+        parser.error(str(error))
+    if Path(filename).name!=filename or not filename.endswith('.zip'):
         parser.error('--archive must be a ZIP filename')
+    archive=available_archive(DIST,filename)
     sdk=json.loads((ROOT/'sdk-version.json').read_text())
     # Recreate only our packaging directory so previous checksums or stale
     # files cannot leak into a new release.
@@ -312,7 +320,6 @@ def main():
         if notice.is_file() and notice.read_text(encoding="utf-8-sig") not in notices:
             raise SystemExit(f"Missing embedded notice: {notice.relative_to(STAGE / 'licenses')}")
     shutil.rmtree(STAGE / "licenses")
-    archive = DIST / args.archive
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:
         # Preserve empty setup destinations without including any player content.
         package.writestr("game/", b"")
