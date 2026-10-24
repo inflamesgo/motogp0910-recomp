@@ -149,6 +149,11 @@ int main(int argc,char** argv){try{
     model->Set("keybind_a","Space");key(rex::ui::VirtualKey::kSpace,true);Check(buttons()&X_INPUT_GAMEPAD_A,"Original live key produces A");
     Check(model->Set("keybind_a","J")&&!(buttons()&X_INPUT_GAMEPAD_A),"Old held binding stops producing A immediately");key(rex::ui::VirtualKey::kSpace,false);
     key(rex::ui::VirtualKey::kJ,true);Check(buttons()&X_INPUT_GAMEPAD_A,"New binding works without recreating keyboard driver");key(rex::ui::VirtualKey::kJ,false);
+    Check(model->Set("keybind_a",launcher::AddBindingAlternative(model->Value("keybind_a"),"K")),"Add a second live keyboard alternative");
+    for(auto vk:{rex::ui::VirtualKey::kJ,rex::ui::VirtualKey::kK}){key(vk,true);Check(buttons()&X_INPUT_GAMEPAD_A,"Each alternative independently activates the real keyboard action");key(vk,false);}
+    key(rex::ui::VirtualKey::kJ,true);key(rex::ui::VirtualKey::kK,true);key(rex::ui::VirtualKey::kJ,false);Check(buttons()&X_INPUT_GAMEPAD_A,"Releasing one alternative retains the other held key");key(rex::ui::VirtualKey::kK,false);
+    Check(model->Set("keybind_a",launcher::RemoveBindingAlternative(model->Value("keybind_a"),1)),"Remove only the additional live keyboard alternative");
+    key(rex::ui::VirtualKey::kK,true);Check(!(buttons()&X_INPUT_GAMEPAD_A),"Removed alternative stops activating the real keyboard action");key(rex::ui::VirtualKey::kK,false);
     // The pinned SDK ignores releases while MnK is disabled. It is not safe
     // to expose that toggle as a live control until the driver is repaired.
     key(rex::ui::VirtualKey::kJ,true);rex::cvar::SetFlagByName("mnk_mode","false");key(rex::ui::VirtualKey::kJ,false);rex::cvar::SetFlagByName("mnk_mode","true");
@@ -229,6 +234,16 @@ int main(int argc,char** argv){try{
   io.AddKeyEvent(ImGuiKey_J,true);ImGui::NewFrame();Check(!DrawMenu(*model,view,false,font,heading),"Key capture does not close menu");ImGui::Render();Check(model->Value("keybind_a")=="J"&&view.capture.empty(),"Production key capture writes current binding");
   io.AddKeyEvent(ImGuiKey_J,false);ImGui::NewFrame();DrawMenu(*model,view,false,font,heading);ImGui::Render();
   view.capture="keybind_a";view.capture_wait=false;io.AddKeyEvent(ImGuiKey_Escape,true);ImGui::NewFrame();Check(!DrawMenu(*model,view,false,font,heading),"Esc cancels capture rather than closing menu");ImGui::Render();Check(view.capture.empty()&&model->Value("keybind_a")=="J","Canceled capture leaves binding unchanged");
+  io.AddKeyEvent(ImGuiKey_Escape,false);ImGui::NewFrame();DrawMenu(*model,view,false,font,heading);ImGui::Render();
+  view.capture="keybind_a";view.capture_wait=false;view.capture_append=true;
+  io.AddKeyEvent(ImGuiKey_K,true);ImGui::NewFrame();DrawMenu(*model,view,false,font,heading);ImGui::Render();
+  Check(model->Value("keybind_a")=="J,K"&&view.capture.empty(),"In-game append capture keeps the original keyboard binding");
+  io.AddKeyEvent(ImGuiKey_K,false);ImGui::NewFrame();DrawMenu(*model,view,false,font,heading);ImGui::Render();
+  view.capture="keybind_a";view.capture_wait=false;io.AddKeyEvent(ImGuiKey_K,true);ImGui::NewFrame();DrawMenu(*model,view,false,font,heading);ImGui::Render();
+  Check(model->Value("keybind_a")=="J,K","In-game append capture ignores an existing alternative");
+  io.AddKeyEvent(ImGuiKey_K,false);ImGui::NewFrame();DrawMenu(*model,view,false,font,heading);ImGui::Render();
+  view.capture="keybind_a";view.capture_wait=false;io.AddKeyEvent(ImGuiKey_Escape,true);ImGui::NewFrame();DrawMenu(*model,view,false,font,heading);ImGui::Render();
+  Check(view.capture.empty()&&model->Value("keybind_a")=="J,K","Escape cancels in-game append capture without losing alternatives");
   io.AddKeyEvent(ImGuiKey_Escape,false);ImGui::NewFrame();DrawMenu(*model,view,false,font,heading);ImGui::Render();
   rex::ui::RegisterBind("bind_settings","F4","SDK settings binding fixture",[]{});
   io.DisplaySize=ImVec2(1280,720);auto menu=CreateMenu(&drawer,model,gate,font,heading,false,window.get());auto* listener=dynamic_cast<rex::ui::WindowInputListener*>(menu.get());Check(listener,"Production menu installs keyboard interception");

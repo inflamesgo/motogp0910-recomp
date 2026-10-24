@@ -276,7 +276,7 @@
     for(size_t i=0;i<engine_choices.size();++i){const auto slot=i<3?i:i+1;
       engine_choices[i]=field(4,kEngineEffects[i].english,kEngineEffects[i].turkish,(slot%2)*kColumnX,(slot/2)*82,kEngineBase+i);}
     shadow_distance=field(4,L"Shadow render distance",L"Gölge çizim mesafesi",kColumnX,82,kShadowDistance);
-    debug_overlay=check(4,0,410,kColumnWidth,kDebugOverlay);labels.push_back({debug_overlay,L"Enable debug overlay",L"Hata ayıklama bilgilerini göster"});
+    debug_overlay=check(4,0,410,kColumnWidth,kDebugOverlay);labels.push_back({debug_overlay,L"Enable debug log and overlay",L"Hata ayıklama bilgilerini göster"});
     crash_diagnostics=check(4,kColumnX,410,kColumnWidth,kCrashDiagnostics);SetCheck(crash_diagnostics,Get(config.table,"launcher_crash_monitor",true));
     LabelControl(1,L"Master volume",L"Ana ses düzeyi",0,0,kFormWidth-104);volume_value=PageControl(1,L"STATIC",L"100%",SS_RIGHT,kFormWidth-80,0,80,22);
     volume=PageControl(1,TRACKBAR_CLASSW,L"",WS_TABSTOP|TBS_HORZ|TBS_NOTICKS,0,36,kFormWidth,40,kVolume);SendMessageW(volume,TBM_SETRANGE,TRUE,MAKELPARAM(0,100));
@@ -285,8 +285,9 @@
     adaptive_triggers=PageControl(2,L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,0,76,kFormWidth,32,kAdaptiveTriggers);
     for(size_t i=0;i<kBindings.size();++i){const int y=124+static_cast<int>(i)*38;
       LabelControl(2,kBindings[i].english,kBindings[i].turkish,0,y+3,kFormWidth-196,26);
-      binding_buttons[i]=PageControl(2,L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,kFormWidth-176,y,176,32,kCaptureBase+i);
+      binding_buttons[i]=PageControl(2,L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,kFormWidth-176,y,136,32,kCaptureBase+i);
       SetWindowSubclass(binding_buttons[i],BindingProc,1,reinterpret_cast<DWORD_PTR>(this));
+      binding_add_buttons[i]=PageControl(2,L"BUTTON",L"+",WS_TABSTOP|BS_PUSHBUTTON,kFormWidth-32,y,32,32,kAddBindingBase+i);
     }
     reset_bindings=PageControl(2,L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,0,136+static_cast<int>(kBindings.size())*38,270,32,kResetBindings);
     BuildNetworkPage();

@@ -11,6 +11,10 @@ The four tabs show:
 - Friends: NOBK friends and whether they are offline, in MotoGP menus, in a room
   or racing. The shared friends endpoint can also report FIFA 09 activity.
   Selecting a friend opens the public account profile in the browser.
+  With the optional matching server update, Invite sends a community lobby
+  invitation; incoming invitations can be accepted or declined. The native
+  lobby Invite entry opens this tab as a friend picker. See the
+  [friends/invitations implementation and deployment](online-friends-invites.md).
 - Server: status, rider/record totals, open rooms, hosts, membership/capacity and
   which rooms contain friends. This is a view of existing rooms, not a join API.
 - Records: the current rider's summary, recent public records and an activity
@@ -26,7 +30,9 @@ The four tabs show:
 
 The panel is available for the configured production Online service. It reads
 public website/API data on a background worker and does not send launcher tokens
-or passwords. Refresh intervals depend on whether the panel is open; the live
+or passwords. Community invitations use a separate worker and the existing
+authenticated MotoGP profile; public website requests receive no profile secret.
+Refresh intervals depend on whether the panel is open; the live
 snapshot is polled about every five seconds while open and twenty while closed.
 Other public datasets use their own longer refresh intervals. The panel shares
 the existing input gates so settings, Rider License, quit handling and the panel
@@ -56,6 +62,7 @@ controller combo. Preserve that observer composition when changing frame work.
 | Source | Consumer | Meaning |
 | --- | --- | --- |
 | `/api/account/friends_of?name=...` | Friends list | Existing shared NOBK friendship data; its `online` flag denotes the shared FIFA lobby presence |
+| `/api/fifa09/player?name=...` | Local profile header | Existing shared account metadata used by Rider License; country and `member_since` only, with the returned account name required to match |
 | `/api/motogp/live` | Friends and room state | MotoGP connection, room members, hosts and room race state; not precise solo Career/Arcade activity |
 | `/api/motogp/status` | Server counters | `in_race` counts racing rooms, not individual racing riders |
 | `/api/motogp/player?name=...` | Own record/podium/board counters | Website summaries across published player-best entries |
@@ -76,18 +83,25 @@ ownership-based notification separate from personal-best improvement messages.
 The event feed holds at most 30 entries and the toast queue at most six; these
 are session memory, not persistent history. Toasts last about six seconds.
 
-Friend selection opens a browser profile; room rows are informational. Adding
-friends, joining rooms, downloading ghosts, and changing records are not panel
-operations. Offline/LAN/custom service origins must not be sent to the production
+Friend selection opens a browser profile outside the native invite picker;
+room rows remain informational. Accepting a community invitation triggers the
+game's native join flow. Adding friends, downloading ghosts and changing records
+are not panel operations. Offline/LAN/custom service origins must not be sent to the production
 public APIs. The keyboard shortcut is configurable through `bind_nobk_panel`;
 its F1 default and the F2 live-settings migration must remain coordinated.
 Keep exclusive input gates, focus/neutral rearming, guest keystroke blocking and
 shutdown lifetime intact when adding panel actions. The Achievements tab owns
 keyboard/controller navigation only while visible and restores the previous
-ImGui navigation flags on exit. Q/E/W shortcuts must not run while typing in
-the achievement search field. HTTP and JSON processing
+ImGui navigation flags on exit. Q/E shortcuts must not run while typing in
+the achievement search field. W has no browser shortcut in the panel. HTTP and JSON processing
 belong on the worker; game input and local achievement access keep their current
 thread ownership.
+
+Friends, room and record rows highlight the mouse selection without requesting
+scrolling. Only explicit keyboard/D-pad row navigation reveals the selected row;
+mouse-wheel and scrollbar scrolling must remain stable instead of repeatedly
+centering the selection. Keyboard/D-pad navigation takes priority over hover for
+that frame.
 
 Rider Rank uses MotoGP player IDs and current first-place board ownership,
 not panel nickname matching. Its order is `firsts`, unique playable circuits,
@@ -117,3 +131,78 @@ live API/update transaction was exercised for this merge.
 The later full Achievements integration shares its renderer and preferences with
 the Offline/LAN F7 overlay. Its focused Windows/Wine validation is documented in
 [achievements.md](achievements.md#f1-integration-validation--23-october-2026).
+
+## Apex presentation
+
+The current F1 renderer follows the user-approved left-side Apex concept. The
+approved image is a visual reference, not a shipped game background. The game
+scene remains live behind a feathered left-to-right dark scrim. Darkening extends
+across the full content width, including the right-aligned times and scores,
+before fading out over the remaining game scene. There is no outer
+panel border, card stack, diagonal row strip or footer shortcut text.
+
+The Friends reference positions use a 1920 x 1080 canvas: wordmark at (94,76),
+profile avatar at (398,70), vertical sections at x=96, and list origin at
+(356,214). Friend avatars, names, national flags and activity occupy fixed
+columns; seven 100-pixel rows with 2-pixel spacing reproduce the reference.
+The layout scales with viewport height and constrains its width on narrow
+screens. The right side stays available for the game scene.
+
+The cover-inspired racing decoration uses seven thin strands in orange,
+silver-violet, champagne, coral, cream, muted violet and amber. Four secondary
+strands are shorter and dimmer. Their sampled geometry is cached once; small
+light highlights travel at staggered 8.5–17 second periods using elapsed time,
+without moving the paths or content. Drawing stops while F1 is closed and uses
+ordinary batched lines, without textures, blur passes or background work.
+The selected row
+has a small orange pointer and underline, without a filled background. Friend
+avatars are charcoal initials with separate presence dots; the local profile
+avatar is orange. National flags use the existing embedded atlas also used by
+Rider License, with the uppercase two-letter country code beside each flag.
+The local profile header adds its small country flag, country code, localized
+membership month/year and friend count on one secondary line. It reads optional
+shared account metadata on the existing public-data worker only while the panel
+is open, refreshing every five minutes or retrying after one minute on failure.
+Live panel data is published before this optional request. The response must
+match the current account name; absent data is hidden, and request failure keeps
+the last valid metadata without changing the panel's live-service error state.
+Friend, lobby, record and session-feed rows do not repeat their contents in
+hover tooltips. Achievement descriptions appear directly in their rows.
+Invalid or missing country data does not
+invent a flag. No HTTP request or new asset download is required for flags.
+
+The four sections retain their existing actions, shortcuts and input gates.
+Their vertical navigation shows Q/E, Xbox LB/RB or PlayStation L1/R1 according
+to the same active prompt style and manual override used by the native game.
+Scrollbar styling is thin and rounded. Achievement filters, search, original
+icons, trophy fallback and notification/audio preferences are preserved, with
+the volume control occupying the remaining F1 width. F7 retains its separate
+layout. The other sections follow their separately approved Apex references:
+
+- Server uses three large live counters, rider/record totals and spacious lobby
+  rows with host, membership/capacity, racing/lobby status and friend-room hints.
+- Records keeps all previous fields: rider, rank, first-place record action,
+  circuit/class, relative update time and lap time. Its three personal totals
+  remain above the list. The record list and complete session feed scroll
+  independently; keyboard reveal does not interfere with manual scrolling.
+  Record initials have no online-status dot because recent entries do not
+  provide presence. Unavailable personal summaries display a dash.
+- Achievements uses larger original icons, wrapped full titles/descriptions,
+  right-aligned gamerscore and unlock state, progress, inline filters and search.
+  The preferences remain shared. The thin volume track uses the native slider
+  for mouse, controller and Ctrl-click numeric input; only its drawing changes.
+
+These sections use a wider content area than Friends while keeping the same
+header, vertical section navigation, cover-inspired animated lines and scrim.
+
+`nobk_panel_visuals.h` owns presentation measurements and drawing primitives.
+The existing `Http` and `State` class bodies remain unchanged. The three font
+roles reuse Open Sans Regular, SemiBold and Bold; CMake and the Windows packager
+stage these under `resources/ui`. The fonts are already covered by the bundled
+Open Sans notice. Missing optional faces fall back to the existing UI font.
+
+`MOTOGP_NOBK_VISUAL_PROBE` is defined only for the isolated UI probe, not the game
+target. Its reference fixture reproduces the seven sample users and flags; its
+larger fixture covers scrolling, long names and non-ASCII text. Draw captures
+include the actual decoded flag texture. Test profiles and synthetic data are
+never added to application packages.

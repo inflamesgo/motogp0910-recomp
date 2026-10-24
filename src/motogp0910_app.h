@@ -258,6 +258,9 @@ class Motogp0910App : public rex::ReXApp {
       achievement_font_ = atlas->AddFontFromFileTTF(utf8_path.c_str(),17.f,nullptr,ranges);
       achievement_heading_font_ = atlas->AddFontFromFileTTF(utf8_path.c_str(),30.f,nullptr,ranges);
       motogp::gamer_card::ConfigureFonts(atlas,utf8_path.c_str());
+      const auto regular=rex::path_to_utf8(path.parent_path()/"OpenSans-Regular.ttf");
+      const auto bold=rex::path_to_utf8(path.parent_path()/"OpenSans-Bold.ttf");
+      motogp::nobk::ConfigureFonts(atlas,regular.c_str(),utf8_path.c_str(),bold.c_str());
       if(achievement_font_)ImGui::GetIO().FontDefault=achievement_font_;
     }
     else REXLOG_WARN("Achievement font is missing; extract the complete build including resources/ui");

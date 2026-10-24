@@ -42,11 +42,16 @@ struct ModalStyle {
     return DefSubclassProc(control,message,wp,lp);
   }
   void AttachCombo(HWND control){SendMessageW(control,CB_SETITEMHEIGHT,0,S(32));PopupAnimation::Attach(control);SetWindowSubclass(control,ComboProc,19,reinterpret_cast<DWORD_PTR>(this));}
+  RECT CheckboxBounds(HWND control)const{
+    RECT r{};GetClientRect(control,&r);
+    return {S(1),(r.bottom-S(18))/2,S(19),(r.bottom+S(18))/2};
+  }
   static LRESULT CALLBACK CheckboxProc(HWND control,UINT message,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_PTR data){
     auto& style=*reinterpret_cast<ModalStyle*>(data);
+    LRESULT pointer_result{};
+    if(CheckboxPointerInput(control,message,wp,lp,style.CheckboxBounds(control),pointer_result))return pointer_result;
     if(message==BM_GETCHECK)return style.checks.at(control)?BST_CHECKED:BST_UNCHECKED;
     if(message==BM_SETCHECK){style.checks.at(control)=wp==BST_CHECKED;InvalidateRect(control,nullptr,FALSE);return 0;}
-    if(message==WM_LBUTTONDBLCLK)return DefSubclassProc(control,WM_LBUTTONDOWN,wp,lp);
     if(message==WM_ERASEBKGND)return 1;
     if(message==WM_PAINT||message==WM_PRINTCLIENT){
       PAINTSTRUCT paint{};const auto target=message==WM_PAINT?BeginPaint(control,&paint):reinterpret_cast<HDC>(wp);
@@ -59,7 +64,7 @@ struct ModalStyle {
       RECT bounds;GetClientRect(control,&bounds);
       PaintBuffered(target,bounds,[&](HDC dc,RECT){const int saved=SaveDC(dc);
       RECT r;GetClientRect(control,&r);SetDCBrushColor(dc,RGB(23,26,33));FillRect(dc,&r,reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
-      RECT box{S(1),(r.bottom-S(18))/2,S(19),(r.bottom+S(18))/2};
+      const RECT box=CheckboxBounds(control);
       PaintCheckbox(dc,box,SendMessageW(control,BM_GETCHECK,0,0)==BST_CHECKED,IsWindowEnabled(control),bool(SendMessageW(control,BM_GETSTATE,0,0)&BST_PUSHED));
       std::wstring text(GetWindowTextLengthW(control)+1,L'\0');text.resize(GetWindowTextW(control,text.data(),static_cast<int>(text.size())));
       SelectObject(dc,font);SetBkMode(dc,TRANSPARENT);SetTextColor(dc,IsWindowEnabled(control)?RGB(242,244,247):RGB(117,125,138));r.left+=S(29);

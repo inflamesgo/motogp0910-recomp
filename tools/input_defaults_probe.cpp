@@ -14,10 +14,12 @@ int main(int argc, char** argv) {
   rex::cvar::ApplyEnvironment();
   rex::cvar::LoadConfig("input-probe.toml");
   const auto backend = rex::cvar::GetFlagByName("input_backend");
-  const auto keybind = rex::cvar::GetFlagByName("keybind_a");
-  const auto backbind = rex::cvar::GetFlagByName("keybind_b");
-  const auto upgraded_default=[](unsigned index){const auto key=launcher::kBindings[index].key;const auto source=rex::cvar::GetFlagSource(key);return source==rex::cvar::Source::kDefault||(source==rex::cvar::Source::kConfig&&launcher::IsLegacyDefaultBinding(index,rex::cvar::GetFlagByName(key)));};
-  const bool default_a=upgraded_default(0),default_b=upgraded_default(1);
+  std::array<std::string,launcher::kBindings.size()> expected_bindings;
+  for(unsigned i=0;i<expected_bindings.size();++i){
+    const auto& binding=launcher::kBindings[i];const auto source=rex::cvar::GetFlagSource(binding.key);
+    const auto value=rex::cvar::GetFlagByName(binding.key);
+    expected_bindings[i]=(source==rex::cvar::Source::kDefault||(source==rex::cvar::Source::kConfig&&launcher::IsLegacyDefaultBinding(i,value)))?binding.defaults:value;
+  }
   ApplyMotogpInputDefaults();
 
   using Source = rex::cvar::Source;
@@ -38,14 +40,15 @@ int main(int argc, char** argv) {
   } else {
     return 2;
   }
-  if (!rex::cvar::GetFlagInfo("mnk_mode") || backend.empty() || keybind.empty() ||
+  if (!rex::cvar::GetFlagInfo("mnk_mode") || backend.empty() ||
       rex::cvar::Query<bool>("mnk_mode") != expected ||
       rex::cvar::GetFlagSource("mnk_mode") != expected_source ||
-      rex::cvar::GetFlagByName("input_backend") != backend ||
-      rex::cvar::GetFlagByName("keybind_a") != (default_a?"Space":keybind) ||
-      rex::cvar::GetFlagByName("keybind_b")!=(default_b?"Backspace":backbind)) {
+      rex::cvar::GetFlagByName("input_backend") != backend) {
     std::cerr << "FAIL: " << scenario << '\n';
     return 1;
+  }
+  for(unsigned i=0;i<expected_bindings.size();++i)if(rex::cvar::GetFlagByName(launcher::kBindings[i].key)!=expected_bindings[i]){
+    std::cerr<<"FAIL: "<<launcher::kBindings[i].key<<" defaults/precedence\n";return 1;
   }
   // The application must also leave runtime changes alone if invoked again.
   rex::cvar::SetFlagByName("mnk_mode", "false");

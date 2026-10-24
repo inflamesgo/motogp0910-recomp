@@ -125,7 +125,7 @@ void CheckSharpnessPersistence(App& app){
   app.SetControls(saved);
   toml::table legacy;Put(legacy,"keybind_a","Semicolon,Space");Put(legacy,"keybind_b","Quote,Backspace");
   const auto upgraded=Settings::Load(legacy);
-  CheckUI(upgraded.bindings[0]=="Space"&&upgraded.bindings[1]=="Backspace","Only the former shipped confirm/back aliases upgrade to the single-key defaults");
+  CheckUI(upgraded.bindings[0]=="R,Return"&&upgraded.bindings[1]=="Q,Backspace","Former shipped confirm/back aliases upgrade to the MotoGP keyboard defaults");
   Put(legacy,"keybind_a","Ctrl+K,Space");CheckUI(Settings::Load(legacy).bindings[0]=="Ctrl+K,Space","Upgrading old defaults retains a custom multi-key binding");
 }
 std::vector<uint32_t> PrintedControl(HWND control,HWND owner=nullptr,App* combo=nullptr){
@@ -605,6 +605,60 @@ void CheckViewportLayouts(App& app,const fs::path& pictures){
       }
     }
 }
+void CheckKeyboardBindings(App& app,const fs::path& pictures){
+  const auto saved=app.GetControls();app.Command(kDefaults,BN_CLICKED);app.ShowPage(2);
+  constexpr std::array<std::string_view,25> expected{"R,Return","Q,Backspace","Space","E","S","W","C","V","Up","Down","A","D","","","","","","","1","2","3","4","Tab","Escape",""};
+  CheckUI(app.GetControls().bindings==Settings{}.bindings,"Launcher defaults match the shared preset");
+  for(size_t i=0;i<expected.size();++i){
+    CheckUI(app.GetControls().bindings[i]==expected[i],"Approved MotoGP keyboard action has the expected default");
+    SendMessageW(app.binding_buttons[i],BM_CLICK,0,0);MSG key{};key.message=WM_KEYDOWN;key.wParam='K';
+    CheckUI(app.capturing&&!app.capture_append&&app.CaptureKey(key)&&app.GetControls().bindings[i]=="K","Replace capture replaces the selected action only");
+    SendMessageW(app.binding_add_buttons[i],BM_CLICK,0,0);key.wParam='J';
+    CheckUI(app.capturing&&app.capture_append&&app.CaptureKey(key)&&app.GetControls().bindings[i]=="K,J","Plus captures an additional key without removing the first");
+    SendMessageW(app.binding_add_buttons[i],BM_CLICK,0,0);key.wParam='K';
+    CheckUI(app.CaptureKey(key)&&app.GetControls().bindings[i]=="K,J","Repeated alternate capture does not duplicate a key");
+    SendMessageW(app.binding_add_buttons[i],BM_CLICK,0,0);key.wParam=VK_ESCAPE;
+    CheckUI(app.CaptureKey(key)&&!app.capturing&&app.GetControls().bindings[i]=="K,J","Escape cancels append without removing existing alternatives");
+  }
+  app.SetBinding(0,"K,J");app.Reveal(app.binding_buttons[0]);PumpUI();
+  // Select the last real native context-menu item: remove J, keeping K.
+  const auto thread_id=GetCurrentThreadId();std::atomic<bool> menu_finished=false;
+  std::thread choose([&]{
+    bool sent=false;
+    for(int n=0;n<300&&!menu_finished;++n){
+      GUITHREADINFO info{sizeof(info)};
+      if(!sent&&GetGUIThreadInfo(thread_id,&info)&&(info.flags&GUI_INMENUMODE)){
+        PostMessageW(app.window,WM_KEYDOWN,VK_END,1);PostMessageW(app.window,WM_KEYDOWN,VK_RETURN,1);sent=true;
+      }
+      Sleep(10);
+    }
+    if(!menu_finished)PostMessageW(app.window,WM_CANCELMODE,0,0);
+  });
+  SendMessageW(app.binding_buttons[0],WM_CONTEXTMENU,reinterpret_cast<WPARAM>(app.binding_buttons[0]),MAKELPARAM(-1,-1));
+  menu_finished=true;choose.join();
+  CheckUI(app.GetControls().bindings[0]=="K","Native right-click menu removes one alternative without clearing the action");
+  CheckUI(AddBindingAlternative("Control+Shift+K,Space","Shift+Ctrl+K")=="Ctrl+Shift+K,Space","Modifier aliases and order do not create duplicate alternatives");
+  CheckUI(AddBindingAlternative("","J")=="J"&&RemoveBindingAlternative("J",0).empty(),"Unbound actions accept a key and removing the final key unbinds");
+  CheckUI(RemoveBindingAlternative("K,J,Space",1)=="K,Space","Removing a middle alternate preserves remaining order");
+  toml::table prior;
+  const std::array<std::string_view,25> old{"Space","Backspace","L","P","Q,I","E,O","1","3","W","S","A","D","","","","","","","Shift+Up","Shift+Down","Shift+Left","Shift+Right","Z,Tab","X,Return",""};
+  for(size_t i=0;i<old.size();++i)Put(prior,kBindings[i].key,std::string(old[i]));
+  CheckUI(Settings::Load(prior).bindings==Settings{}.bindings,"All previous shipped defaults upgrade together");
+  Put(prior,"keybind_a","Ctrl+J,Return");Put(prior,"keybind_b","");
+  CheckUI(Settings::Load(prior).bindings[0]=="Ctrl+J,Return"&&Settings::Load(prior).bindings[1].empty(),"Custom multi-key bindings and explicit unbinds survive preset migration");
+  app.Command(kResetBindings,BN_CLICKED);app.SaveSettings();Config reloaded(app.config.path);
+  CheckUI(Settings::Load(reloaded.table).bindings==Settings{}.bindings,"New default preset round-trips through the shared configuration");
+  app.SetBinding(0,"R,Return,J");app.SaveSettings();Config alternatives(app.config.path);
+  CheckUI(Settings::Load(alternatives.table).bindings[0]=="R,Return,J","Additional keys survive save and reload");
+  for(bool tr:{false,true})for(double scale:{.75,1.,1.25}){
+    app.turkish=tr;app.Localize();app.Rescale(scale);app.ShowPage(2);app.ScrollPage(0);
+    CheckBindingLabelWidths(app);
+    for(size_t i=0;i<kBindings.size();++i){RECT key{},add{};GetWindowRect(app.binding_buttons[i],&key);GetWindowRect(app.binding_add_buttons[i],&add);
+      CheckUI(key.right<add.left&&key.top==add.top&&key.bottom==add.bottom,"Key and plus controls stay aligned and separated at every launcher scale");}
+    if(scale==1.)Screenshot(app.window,pictures/(tr?L"keyboard-turkish.bmp":L"keyboard-english.bmp"));
+  }
+  app.SetControls(saved);
+}
 int wmain(int argc,wchar_t** argv){
   if(argc==2&&std::wstring_view(argv[1])==L"--fixture-child")return 0;
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
@@ -622,7 +676,7 @@ int wmain(int argc,wchar_t** argv){
   }
   try{
     if(argc!=3&&argc!=4)throw std::runtime_error("Usage: launcher_ui_probe GAME_ROOT SCREENSHOT_DIRECTORY [--sliders-only|--graphics-only|--iso-only|--updates-only|--layout-only|--remaining-only] (run in an isolated executable folder)");
-    CheckSteamShortcuts();
+    if(argc!=4||std::wstring_view(argv[3])!=L"--bindings-only")CheckSteamShortcuts();
     const auto pictures=fs::path(argv[2]);fs::create_directories(pictures);
     App app;app.scale=1;const auto game=fs::path(argv[1]);
     WNDCLASSW cls{};cls.hInstance=GetModuleHandleW(nullptr);cls.lpfnWndProc=WindowProc;cls.lpszClassName=L"MotoGPLauncherUIProbe";cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);RegisterClassW(&cls);
@@ -634,6 +688,10 @@ int wmain(int argc,wchar_t** argv){
     CheckUI(!app.dlc_complete&&!IsWindowEnabled(app.play),"A base-only installation remains blocked before DLC setup");
     DlcFixture dlc_fixture(app.exe);app.dlc_checked=false;app.ReadyStatus();
     CheckUI(app.dlc_complete&&IsWindowEnabled(app.play),"Complete inventory enables the launcher without running synthetic content");
+    if(argc==4&&std::wstring_view(argv[3])==L"--bindings-only"){
+      CheckKeyboardBindings(app,pictures);DestroyWindow(window);std::cout<<ui_checks<<" targeted keyboard UI checks passed\n";
+      Gdiplus::GdiplusShutdown(token);CoUninitialize();return 0;
+    }
     if(argc==4 && std::wstring_view(argv[3])==L"--updates-only"){
       app.StartUpdateCheck();CheckUI(!IsWindowVisible(app.update_notice),"Unconfigured normal launch has no update notification");
       app.update_preview=true;app.StartUpdateCheck();
@@ -1047,8 +1105,8 @@ int wmain(int argc,wchar_t** argv){
       CheckUI(app.capturing&&app.binding_index==static_cast<int>(i)&&app.Text(app.binding_buttons[i])==app.T(L"Press a key…",L"Bir tuşa bas…"),"Each full-width key button enters localized capture mode");
       MSG pressed{};pressed.message=WM_KEYDOWN;pressed.wParam='K';
       CheckUI(app.CaptureKey(pressed)&&app.GetControls().bindings[i]=="K"&&app.Text(app.binding_buttons[i])==L"K","Captured key replaces the label and pending binding");
-      SendMessageW(app.binding_buttons[i],WM_RBUTTONUP,0,0);
-      CheckUI(app.GetControls().bindings[i].empty()&&!app.capturing&&app.Text(app.binding_buttons[i])==app.T(L"Unbound",L"Atanmamış"),"Right-click clears the selected binding directly without a popup");
+      app.Command(kClearBinding,BN_CLICKED);
+      CheckUI(app.GetControls().bindings[i].empty()&&!app.capturing&&app.Text(app.binding_buttons[i])==app.T(L"Unbound",L"Atanmamış"),"Clear all unbinds the selected action");
       app.SetBinding(i,"Ctrl+K");
     }
     app.Command(kCaptureBase,BN_CLICKED);app.Command(kCaptureBase+1,BN_CLICKED);

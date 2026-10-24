@@ -3,14 +3,18 @@
 Online mode embeds the full achievement interface in **F1 > Achievements**,
 using the NOBK panel layout. F7 is disabled in Online mode. In Offline/LAN,
 F1 stays closed and **F7** opens the standalone achievement interface.
-Both hosts render the same list and notification/sound preferences from
-`achievement_ui.cpp::DrawContents`; there is no second unlock store.
+Both hosts enter through `achievement_ui.cpp::DrawContents` and share catalog,
+filter/search rules and notification/sound preferences; there is no second
+unlock store. F1's optional Apex appearance selects its approved larger layout;
+F7 retains its standalone layout.
 
 The achievement interface and lower-right unlock notification use a dark MotoGP
 palette, orange highlights and packaged Open Sans. Search and All / Unlocked /
 Locked filters expose the real title catalog. Progress and gamerscore come from
-the existing SDK achievement manager, including the original icons. A small
-trophy replaces an unavailable icon. The UI never unlocks achievements itself
+the existing SDK achievement manager, including the original icons. Icons keep
+their original colors in locked and unlocked rows; the text shows unlock state.
+A small trophy is used only when the original icon is unavailable.
+The UI never unlocks achievements itself
 or rewrites the user's achievement progress.
 
 English/Turkish UI labels follow `General > Launcher language` at game startup.

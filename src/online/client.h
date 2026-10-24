@@ -26,6 +26,7 @@ class Client {
   void BeginWrite()const;void EndWrite()const;void Flush()const;
   Page Read(uint32_t view,uint32_t start,uint32_t count,
                         std::span<const uint64_t> users={},uint64_t around=0)const;
+  std::vector<uint8_t> Social(std::span<const uint8_t> body)const;
 };
 // Binds this PC's online profile for `url` to a NOBK Online site account, using
 // the launcher token from the site's sign-in API. Returns the account name the

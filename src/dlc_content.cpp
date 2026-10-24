@@ -13,6 +13,7 @@
 #include <rex/system/xthread.h>
 #include <rex/system/xio.h>
 #include <fstream>
+#include <atomic>
 #include <map>
 #include <mutex>
 #ifdef _WIN32
@@ -23,6 +24,7 @@
 
 using rex::X_RESULT;
 using rex::X_HRESULT;
+REX_EXTERN(__imp__sub_8229FF00);
 namespace motogp::dlc {
 namespace {
 namespace fs=std::filesystem;
@@ -34,6 +36,7 @@ struct Store {
   fs::path root;
   std::mutex mutex;
   bool active=true;
+  std::atomic<unsigned> bike_param_failures{0};
   std::map<std::string,std::unique_ptr<ContentPackage>> mounts;
 };
 std::mutex store_mutex;
@@ -51,6 +54,46 @@ bool Valid(rex::system::KernelState* kernel,uint32_t address,size_t length,bool 
     const auto next=uint64_t(info.base_address)+info.region_size;if(next<=at)return false;at=next;
   }
   return true;
+}
+// Diagnose a failed native parameter load without changing its inputs, result,
+// grid, selected rider or file routing. Keep ordinary successful loads silent.
+void TraceFailedBikeParameters(uint8_t* base,uint32_t bike_class){
+  auto content=Current();if(!content||content->bike_param_failures.fetch_add(1)>=4)return;
+  const auto word=[&](uint32_t at){
+    return !(at&3)&&Valid(content->kernel,at,4)
+        ?rex::memory::load_and_swap<uint32_t>(base+at):0u;
+  };
+  const auto text=[&](uint32_t at){
+    std::string result;
+    for(unsigned i=0;at&&i<80;++i){
+      if(uint64_t(at)+i>UINT32_MAX||!Valid(content->kernel,at+i,1))return std::string("<unavailable>");
+      const auto c=base[at+i];if(!c)return result;
+      if(c<0x20||c>0x7e)return std::string("<invalid>");
+      result+=static_cast<char>(c);
+    }
+    return std::string("<unavailable>");
+  };
+  const auto count=word(0x8291749C),bikes=word(0x829F3118),table=word(0x829F311C);
+  const auto manager=word(0x834F9494);
+  uint32_t profile=0;
+  if(manager&&uint64_t(manager)+0x80<=0x100000000ull&&Valid(content->kernel,manager,0x80)){
+    const auto user=word(manager+0x18);
+    if(user<4){const auto slot=word(manager+0x70+user*4);if(slot<4)profile=0x82AEC2A8+slot*0x1EED44;}
+  }
+  const auto selected_class=profile?word(profile+0xF75A4):UINT32_MAX;
+  const auto selected_rider=profile?word(profile+0xF75D0):UINT32_MAX;
+  REXLOG_WARN("DLC_BIKE_PARAMS_FAILED native_class={} season={} frontend={} race_mode={} grid_count={} selected_class={} selected_rider={} bike_table_count={}",
+      bike_class,word(0x82926FC0),word(0x828DA060),word(word(0x8292710C)),count,selected_class,selected_rider,bikes);
+  // 8229FF00 scans all 20 native slots, including slots beyond grid_count.
+  // Record the same enabled flag and params field (+20 in 44-byte bike rows).
+  for(unsigned i=0;i<20;++i){
+    const uint32_t entry=0x8291E130+i*1824;
+    if(!word(word(entry+12)))continue;
+    const auto bike=word(entry+1764);
+    const bool valid=bikes&&bikes<=512&&bike<bikes&&table&&uint64_t(table)+uint64_t(bikes)*44<=0x100000000ull;
+    const auto params=valid?text(word(table+bike*44+20)):std::string("<unavailable>");
+    REXLOG_WARN("DLC_BIKE_PARAMS_SLOT slot={} in_grid={} bike_id={} params={}",i,i<count,bike,params);
+  }
 }
 std::string Name(const XCONTENT_DATA& data){
   const auto* end=std::find(std::begin(data.file_name_raw),std::end(data.file_name_raw),'\0');
@@ -126,6 +169,14 @@ void Stop(){
   if(!old)return;std::lock_guard lock(old->mutex);old->active=false;
   while(!old->mounts.empty())CloseMount(*old,old->mounts.begin()->first);
 }
+}
+
+REX_HOOK_RAW(sub_8229FF00){
+  const auto bike_class=ctx.r3.u32;
+  const bool load=(ctx.r4.u32&0xff)==0;
+  __imp__sub_8229FF00(ctx,base);
+  // A logging failure must not replace the native loader's result.
+  if(load&&ctx.r3.u32==0)try{motogp::dlc::TraceFailedBikeParameters(base,bike_class);}catch(...){}
 }
 
 REX_HOOK_RAW(__imp__XamContentCreateEnumerator){

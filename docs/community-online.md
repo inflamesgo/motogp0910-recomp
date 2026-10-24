@@ -17,8 +17,10 @@ with Python 3.11 or newer**, using only Python's standard library.
 One player's game still runs the race simulation, as in the original peer-hosted
 multiplayer. The VDS is **not an unattended dedicated race simulation**. Leaving
 as the race host ends that session. This service does not restore Microsoft's
-Xbox Live accounts, friends, invitations, voice, Marketplace or official ranked
-arbitration. Use **Player Match** for community racing. It has no authoritative
+Xbox Live accounts, voice, Marketplace or official ranked arbitration. Optional
+community NOBK friends/invitations require the matching client/server source
+update and `--friends-api`; see [deployment and acceptance](online-friends-invites.md).
+Use **Player Match** for community racing. It has no authoritative
 anti-cheat: a modified client can submit fabricated records for its own identity.
 
 ## Player setup

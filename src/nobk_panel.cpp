@@ -1,4 +1,8 @@
 #include "nobk_panel.h"
+#include "nobk_panel_visuals.h"
+#include "button_prompts.h"
+#include "gamer_card_flags.h"
+#include "online/social.h"
 #include "achievement_ui.h"
 #include "in_game_settings.h"
 #include "overlay_theme.h"
@@ -12,9 +16,12 @@
 #include <rex/ui/keybinds.h>
 #include <rex/ui/overlay/achievement_icon_cache.h>
 #include <rex/ui/window.h>
+#include <rex/ui/image_decode.h>
+#include <rex/ui/immediate_drawer.h>
 #include <imgui.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cfloat>
 #include <optional>
@@ -49,6 +56,8 @@ namespace {
 using namespace motogp::overlay;
 using json = nlohmann::json;
 using Clock = std::chrono::steady_clock;
+struct VisualFonts {ImFontAtlas* atlas=nullptr;std::array<ImFont*,3> faces{};};
+VisualFonts visual_fonts;
 
 // Native track index (view - 1) % 21. Slot 17 is reserved and empty in every package.
 constexpr const char* kTracks[21]={"Losail","Motegi","Jerez","Le Mans","Mugello","Catalunya","Assen",
@@ -80,6 +89,19 @@ std::string Clean(const json& object,const char* key,size_t limit=40) {
 int64_t Int(const json& object,const char* key) {
   const auto it=object.find(key);
   return it!=object.end()&&it->is_number_integer()?it->get<int64_t>():0;
+}
+std::string CountryCode(std::string value) {
+  if(value.size()!=2)return {};
+  for(char& c:value){if(c>='a'&&c<='z')c-=32;if(c<'A'||c>'Z')return {};}
+  return value=="UK"?"GB":value;
+}
+std::string MemberSince(int64_t timestamp,bool tr) {
+  if(timestamp<946684800||timestamp>=4102444800LL)return {};
+  constexpr const char* months[]{"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+  constexpr const char* months_tr[]{"Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"};
+  const std::chrono::year_month_day date{std::chrono::floor<std::chrono::days>(std::chrono::sys_seconds{std::chrono::seconds{timestamp}})};
+  const auto month=unsigned(date.month())-1;
+  return std::string(tr?"Üyelik: ":"member since ")+(tr?months_tr[month]:months[month])+" "+std::to_string(int(date.year()));
 }
 bool OpenUrl(const std::string& url) {
 #ifdef _WIN32
@@ -164,6 +186,8 @@ struct Event { std::string text; int64_t at=0; int kind=0; };  // kind 0 info, 1
 struct Snapshot {
   bool available=false,loaded=false,failed=false;
   std::string me;
+  std::string country;
+  int64_t member_since=0;
   std::vector<Friend> friends;
   std::vector<Room> rooms;
   std::vector<Recent> recent;
@@ -173,6 +197,9 @@ struct Snapshot {
   bool server_up=false;
   uint64_t serial=0;
 };
+#ifdef MOTOGP_NOBK_VISUAL_PROBE
+std::optional<Snapshot> visual_fixture;
+#endif
 
 std::string BoardName(const json& row,bool tr) {
   auto track=Clean(row,"track",32);
@@ -260,7 +287,7 @@ class State {
     return !out.is_discarded()&&out.is_object();
   }
   void Run() {
-    Clock::time_point next_friends{},next_me{},next_recent{};
+    Clock::time_point next_friends{},next_me{},next_recent{},next_account{};
     bool first=true;
     for(;;) {
       {
@@ -283,10 +310,31 @@ class State {
       if(got_me)next_me=now+std::chrono::seconds(open?15:45);
       const bool got_recent=open&&now>=next_recent&&Fetch("/api/motogp/recent?limit=12",recent);
       if(got_recent)next_recent=now+std::chrono::seconds(15);
-      std::lock_guard lock(mutex_);
-      if(stopping_)return;
-      Apply(live,got_live,status,got_status,friends,got_friends,me,got_me,recent,got_recent,first);
+      {
+        std::lock_guard lock(mutex_);
+        if(stopping_)return;
+        Apply(live,got_live,status,got_status,friends,got_friends,me,got_me,recent,got_recent,first);
+      }
       first=false;
+      // Optional shared account metadata uses the same public name-based
+      // endpoint as Rider License. Publish live data first; no UI-thread I/O,
+      // launcher credentials or extra per-frame work is introduced.
+      if(open&&Clock::now()>=next_account){
+        json account;
+        const bool got_account=Fetch("/api/fifa09/player?name="+Encode(snapshot_.me),account)&&
+            SameName(Clean(account,"player"),snapshot_.me);
+        next_account=Clock::now()+(got_account?std::chrono::minutes(5):std::chrono::minutes(1));
+        if(got_account){
+          std::lock_guard lock(mutex_);
+          if(stopping_)return;
+          if(account.contains("country")&&account["country"].is_string())snapshot_.country=CountryCode(Clean(account,"country",8));
+          if(account.contains("member_since")&&account["member_since"].is_number_integer()){
+            const auto joined=Int(account,"member_since");
+            snapshot_.member_since=joined>=946684800&&joined<4102444800LL?joined:0;
+          }
+          ++snapshot_.serial;
+        }
+      }
     }
   }
   void Apply(const json& live,bool got_live,const json& status,bool got_status,const json& friends,bool got_friends,
@@ -406,8 +454,8 @@ ImU32 Rgb(int r,int g,int b,int a=255){return IM_COL32(r,g,b,a);}
 const char* WhereText(const Friend& f,bool tr) {
   switch(f.where) {
     case Where::Racing:return tr?"Yarışta":"Racing";
-    case Where::Room:return tr?"Odada":"In a room";
-    case Where::Menus:return tr?"MotoGP'de":"In MotoGP";
+    case Where::Room:return tr?"Lobide":"In a lobby";
+    case Where::Menus:return tr?"Menülerde":"In menus";
     case Where::Site:return tr?"FIFA 09'da":"In FIFA 09";  // friends_of: online in the FIFA 09 lobby
     default:return tr?"Çevrimdışı":"Offline";
   }
@@ -415,7 +463,8 @@ const char* WhereText(const Friend& f,bool tr) {
 ImU32 WhereColor(Where w) {
   switch(w) {
     case Where::Racing:return Rgb(255,106,19);
-    case Where::Room:case Where::Menus:return Rgb(34,197,94);
+    case Where::Room:return Rgb(106,225,18);
+    case Where::Menus:return Rgb(255,190,12);
     case Where::Site:return Rgb(96,165,250);
     default:return Rgb(90,96,110);
   }
@@ -429,6 +478,11 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
       :ImGuiDialog(drawer),window_(window),achievements_(achievements),state_(std::move(state)),font_(font),heading_(heading),tr_(tr),
        achievement_preferences_(std::move(preferences)),achievement_icons_(immediate,runtime) {
     state_->tr_=tr;
+    if(immediate) {
+      int width=0,height=0;
+      const auto rgba=rex::ui::DecodeImageRGBA(gamer_card::flags::png,sizeof(gamer_card::flags::png),width,height);
+      if(width==768&&height==544&&!rgba.empty())flag_texture_=immediate->CreateTexture(width,height,rex::ui::ImmediateTextureFilter::kLinear,false,rgba.data());
+    }
     if(window_)window_->AddInputListener(this,61);
   }
   ~Dialog() override {if(window_)window_->RemoveInputListener(this);RestoreNavigation(GetIO());state_->Close();}
@@ -446,24 +500,31 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
  protected:
   void OnDraw(ImGuiIO& io) override {
     DrawToast(io);
+    const bool invite_request=online::social::ConsumeOpenRequest();
+    if(invite_request){if(!state_->gate->IsOpen())state_->Toggle();tab_=0;selected_=0;invite_picker_=true;}
     if(!state_->gate->IsOpen()){RestoreNavigation(io);armed_=false;previous_=0;return;}
-    const auto snapshot=state_->Read();
-    if(epoch_!=state_->gate->Epoch()){epoch_=state_->gate->Epoch();armed_=false;previous_=0;selected_=0;ImGui::SetNextWindowFocus();}
+    auto snapshot=state_->Read();
+#ifdef MOTOGP_NOBK_VISUAL_PROBE
+    if(visual_fixture)snapshot=*visual_fixture;
+#endif
+    if(epoch_!=state_->gate->Epoch()){epoch_=state_->gate->Epoch();armed_=false;previous_=0;selected_=0;invite_picker_=invite_request;opened_at_=ImGui::GetTime();tab_at_=opened_at_;animated_tab_=-1;ImGui::SetNextWindowFocus();}
     const auto buttons=state_->gate->Buttons();
     if(!armed_&&state_->gate->NeutralReady()&&!buttons)armed_=true;
     const uint16_t fresh=armed_?buttons&~previous_:0;
     previous_=buttons;
+    reveal_selected_=false;
     using namespace rex::input;
     if(armed_) {
       if((fresh&X_INPUT_GAMEPAD_B)||ImGui::IsKeyPressed(ImGuiKey_Escape,false)){state_->Close();RestoreNavigation(io);return;}
       const bool typing=io.WantTextInput;
       if((fresh&X_INPUT_GAMEPAD_LEFT_SHOULDER)||(!typing&&ImGui::IsKeyPressed(ImGuiKey_Q,false))){tab_=(tab_+3)%4;selected_=0;}
       if((fresh&X_INPUT_GAMEPAD_RIGHT_SHOULDER)||(!typing&&ImGui::IsKeyPressed(ImGuiKey_E,false))){tab_=(tab_+1)%4;selected_=0;}
-      if(tab_!=3&&((fresh&X_INPUT_GAMEPAD_DPAD_DOWN)||ImGui::IsKeyPressed(ImGuiKey_DownArrow)))++selected_;
-      if(tab_!=3&&((fresh&X_INPUT_GAMEPAD_DPAD_UP)||ImGui::IsKeyPressed(ImGuiKey_UpArrow)))--selected_;
+      if(tab_!=3&&((fresh&X_INPUT_GAMEPAD_DPAD_DOWN)||ImGui::IsKeyPressed(ImGuiKey_DownArrow))){++selected_;reveal_selected_=true;}
+      if(tab_!=3&&((fresh&X_INPUT_GAMEPAD_DPAD_UP)||ImGui::IsKeyPressed(ImGuiKey_UpArrow))){--selected_;reveal_selected_=true;}
       activate_=(fresh&X_INPUT_GAMEPAD_A)||ImGui::IsKeyPressed(ImGuiKey_Enter,false);
-      web_=(fresh&X_INPUT_GAMEPAD_Y)||(!typing&&ImGui::IsKeyPressed(ImGuiKey_W,false));
-    } else activate_=web_=false;
+      decline_=(fresh&X_INPUT_GAMEPAD_X)||ImGui::IsKeyPressed(ImGuiKey_Delete,false);
+      web_=(fresh&X_INPUT_GAMEPAD_Y)!=0;
+    } else activate_=web_=decline_=false;
     AchievementNavigation(io,armed_?buttons:0);
     Draw(io,snapshot);
     if(tab_!=3)RestoreNavigation(io);
@@ -492,6 +553,14 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
   }
   void DrawToast(ImGuiIO& io) {
     const double now=ImGui::GetTime();
+    const auto social=online::social::Read();
+    std::set<std::string> pending;
+    for(const auto& invite:social.invites)pending.insert(invite.id);
+    std::erase_if(invite_notified_,[&](const auto& id){return !pending.contains(id);});
+    if(!toast_||now-toast_at_>6.0)for(const auto& invite:social.invites)if(!invite_notified_.contains(invite.id)) {
+      invite_notified_.insert(invite.id);
+      toast_=Event{invite.from+Tr(tr_," invited you to their lobby. Open F1 to respond."," seni lobisine davet etti. Yanıtlamak için F1'i aç."),0,1};toast_at_=now;break;
+    }
     if(!toast_||now-toast_at_>6.0) {
       Event next;
       if(state_->PopToast(next)){toast_=next;toast_at_=now;}
@@ -532,173 +601,367 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
     const auto wb=f->CalcTextSizeA(size,FLT_MAX,0,b).x;
     ImGui::Dummy(ImVec2(wa+size*.64f+wb,size*1.1f));
   }
-  void Draw(ImGuiIO& io,const Snapshot& s) {
-    Theme theme(font_);
-    const ImVec2 size(std::min(920.f,io.DisplaySize.x*.92f),std::min(620.f,io.DisplaySize.y*.86f));
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x*.5f,io.DisplaySize.y*.5f),ImGuiCond_Always,ImVec2(.5f,.5f));
-    ImGui::SetNextWindowSize(size,ImGuiCond_Always);
-    if(ImGui::Begin("##nobk_panel",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove)) {
-      Brand(26.f);
-      ImGui::SameLine();
-      const float right=ImGui::GetWindowContentRegionMax().x;
-      const std::string who=s.me+"  ·  MotoGP 09/10";
-      ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),right-ImGui::CalcTextSize(who.c_str()).x));
-      ImGui::SetCursorPosY(ImGui::GetCursorPosY()+6);
-      ImGui::TextColored(muted,"%s",who.c_str());
-      // tabs
-      const char* tabs[4]={Tr(tr_,"FRIENDS","ARKADAŞLAR"),Tr(tr_,"SERVER","SUNUCU"),Tr(tr_,"RECORDS","REKORLAR"),Tr(tr_,"ACHIEVEMENTS","BAŞARIMLAR")};
-      ImGui::Spacing();
-      const float tab_w=(ImGui::GetContentRegionAvail().x-ImGui::GetStyle().ItemSpacing.x*3)/4;
-      for(int i=0;i<4;++i) {
-        if(i)ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button,i==tab_?AccentTint(.55f):card);
-        ImGui::PushStyleColor(ImGuiCol_Text,i==tab_?white:muted);
-        if(ImGui::Button(tabs[i],ImVec2(tab_w,38))){tab_=i;selected_=0;}
-        ImGui::PopStyleColor(2);
+  ImFont* Face(int weight=0) const {
+    if(visual_fonts.atlas==ImGui::GetIO().Fonts&&visual_fonts.faces[weight])return visual_fonts.faces[weight];
+    return weight&&heading_?heading_:(font_?font_:ImGui::GetFont());
+  }
+  void Header(const Snapshot& snapshot) {
+    const float s=layout_.scale,shift=-18*s*(1-alpha_);
+    auto* draw=ImGui::GetWindowDrawList();
+    const ImVec2 logo(94*s+shift,76*s);
+    float x=logo.x;
+    for(int i=0;i<3;++i) {
+      const char* word=i==0?"NOBK":i==1?".":"ONLINE";
+      ImFont* f=Face(i==0?2:0);const float size=36*s;
+      const int first=draw->VtxBuffer.Size;
+      draw->AddText(f,size,ImVec2(x,logo.y),ImGui::GetColorU32(i==1?orange:white),word);
+      for(int v=first;v<draw->VtxBuffer.Size;++v) {
+        auto& point=draw->VtxBuffer[v].pos;
+        point.x=x+(point.x-x)*1.4f+(logo.y+size-point.y)*.18f;
       }
-      ImGui::Spacing();
-      const float footer=ImGui::GetTextLineHeightWithSpacing()+8;
-      // Keep search fields and achievement cards distinct from their host.
-      ImGui::PushStyleColor(ImGuiCol_ChildBg,tab_==3?ink:card);
-      ImGui::BeginChild("##nobk_body",ImVec2(0,-footer),ImGuiChildFlags_None);
-      ImGui::PopStyleColor();
+      x+=f->CalcTextSizeA(size,FLT_MAX,0,word).x*1.4f;
+    }
+    RowLabel("MotoGP 09/10",94*s+shift,112*s,23*s,ImVec4(.65f,.67f,.7f,1),370*s);
+    const std::string name=snapshot.me.empty()?Tr(tr_,"RIDER","PİLOT"):snapshot.me;
+    Initial(ImVec2(398*s+shift,70*s),56*s,name,0,true);
+    RowLabel(name,479*s+shift,76*s,26*s,white,layout_.width-24*s,Face(1));
+    float metadata_x=479*s+shift;
+    std::string metadata;
+    if(!snapshot.country.empty()){
+      if(Flag(ImVec2(metadata_x,109*s),snapshot.country,.52f,false))metadata_x+=32*s;
+      metadata=snapshot.country;
+    }
+    const auto membership=MemberSince(snapshot.member_since,tr_);
+    if(!membership.empty()){if(!metadata.empty())metadata+=" · ";metadata+=membership;}
+    if(!metadata.empty())metadata+=" · ";
+    metadata+=std::to_string(snapshot.friends.size())+Tr(tr_," friends"," arkadaş");
+    RowLabel(metadata,metadata_x,108*s,18*s,ImVec4(.72f,.73f,.76f,1),layout_.width-24*s);
+  }
+  void Tabs() {
+    const float s=layout_.scale,shift=-18*s*(1-alpha_);
+    auto* draw=ImGui::GetWindowDrawList();const auto hints=visual::Hints(prompts::CurrentStyle());
+    const char* names[]{Tr(tr_,"FRIENDS","ARKADAŞLAR"),Tr(tr_,"SERVER","SUNUCU"),
+        Tr(tr_,"RECORDS","REKORLAR"),Tr(tr_,"ACHIEVEMENTS","BAŞARIMLAR")};
+    const float x=96*s+shift,top=250*s,height=60*s;
+    draw->AddLine(ImVec2(64*s+shift,268*s),ImVec2(64*s+shift,448*s),visual::Color(255,106,19,.18f*alpha_),s);
+    for(int side=0;side<2;++side) {
+      const char* label=side?hints.next:hints.previous;
+      const ImVec2 a(x,(side?508.f:196.f)*s),b(x+34*s,a.y+28*s);
+      draw->AddRect(a,b,visual::Color(213,216,220,.65f*alpha_),4*s,0,1.4f*s);
+      const auto size=Face()->CalcTextSizeA(18*s,FLT_MAX,0,label);
+      visual::Text(draw,Face(),18*s,ImVec2((a.x+b.x-size.x)*.5f,(a.y+b.y-size.y)*.5f),
+          ImGui::GetColorU32(white),label,b.x);
+    }
+    for(int i=0;i<4;++i) {
+      const ImVec2 pos(x,top+i*height);const bool active=i==tab_;
+      RowLabel(names[i],pos.x,pos.y,28*s,active?white:ImVec4(.63f,.65f,.68f,1),318*s,Face(active?1:0));
+      ImGui::SetCursorScreenPos(ImVec2(50*s+shift,pos.y-8*s));ImGui::PushID(i);
+      if(ImGui::InvisibleButton("##nobk_tab",ImVec2(252*s,48*s))){tab_=i;selected_=0;}
+      ImGui::PopID();
+    }
+    const float target=(268+60*tab_)*s;
+    if(nav_marker_y_<0)nav_marker_y_=target;
+    nav_marker_y_+=(target-nav_marker_y_)*std::min(1.f,ImGui::GetIO().DeltaTime*18.f);
+    visual::Marker(draw,ImVec2(64*s+shift,nav_marker_y_),s,alpha_);
+  }
+  void Curve() {
+    visual::ApexLines(ImGui::GetWindowDrawList(),layout_.scale,alpha_,ImGui::GetTime()-opened_at_);
+  }
+  void Draw(ImGuiIO& io,const Snapshot& snapshot) {
+    layout_=visual::Measure(io.DisplaySize);const float s=layout_.scale;
+    if(tab_!=0) {
+      layout_.body_left=364*s;layout_.body_top=(tab_==1?208.f:168.f)*s;
+      layout_.body_width=std::max(1.f,std::min((tab_==3?936.f:836.f)*s,io.DisplaySize.x-layout_.body_left-24*s));
+      layout_.width=std::min(io.DisplaySize.x,layout_.body_left+layout_.body_width+32*s);
+      layout_.body_height=std::max(40.f,io.DisplaySize.y-layout_.body_top-24*s);
+    }
+    const double now=ImGui::GetTime();alpha_=visual::Entrance(now,opened_at_);
+    bool reset=animated_tab_!=tab_;
+    if(reset){animated_tab_=tab_;tab_at_=now;}
+    auto* background=ImGui::GetBackgroundDrawList();
+    const float middle=std::min(io.DisplaySize.x,780*s);
+    const float content_end=std::min(io.DisplaySize.x,std::max(layout_.width,980*s));
+    const float end=std::min(io.DisplaySize.x,std::max(1640*s,content_end+280*s));
+    background->AddRectFilledMultiColor(ImVec2(0,0),ImVec2(middle,io.DisplaySize.y),
+        visual::Color(0,0,0,.84f*alpha_),visual::Color(0,0,0,.62f*alpha_),
+        visual::Color(0,0,0,.62f*alpha_),visual::Color(0,0,0,.84f*alpha_));
+    background->AddRectFilledMultiColor(ImVec2(middle,0),ImVec2(content_end,io.DisplaySize.y),
+        visual::Color(0,0,0,.62f*alpha_),visual::Color(0,0,0,.50f*alpha_),
+        visual::Color(0,0,0,.50f*alpha_),visual::Color(0,0,0,.62f*alpha_));
+    background->AddRectFilledMultiColor(ImVec2(content_end,0),ImVec2(end,io.DisplaySize.y),
+        visual::Color(0,0,0,.50f*alpha_),visual::Color(0,0,0,0),
+        visual::Color(0,0,0,0),visual::Color(0,0,0,.50f*alpha_));
+    Theme theme(font_);
+    ImGui::PushFont(Face(),20*s);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(0,0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding,0);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize,0);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(10*s,2*s));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,ImVec2(9*s,6*s));
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,alpha_);
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize,8*s);
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding,4*s);
+    ImGui::PushStyleColor(ImGuiCol_ChildBg,ImVec4(0,0,0,0));
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarBg,ImVec4(0,0,0,0));
+    ImGui::SetNextWindowPos(ImVec2(0,0),ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(layout_.width,io.DisplaySize.y),ImGuiCond_Always);
+    if(ImGui::Begin("##nobk_panel",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoSavedSettings|
+        ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoBackground|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse)) {
+      Curve();Header(snapshot);Tabs();
+      if(animated_tab_!=tab_){animated_tab_=tab_;tab_at_=now;reset=true;}
+      ImGui::SetCursorScreenPos(ImVec2(layout_.body_left,layout_.body_top));
+      ImGui::BeginChild("##nobk_body",ImVec2(layout_.body_width,layout_.body_height),ImGuiChildFlags_None);
+      if(reset)ImGui::SetScrollY(0);
       if(tab_==3)Achievements();
-      else if(!s.available)ImGui::TextWrapped("%s",Tr(tr_,"The NOBK panel works in Online mode on the NOBK Online server.","NOBK paneli NOBK Online sunucusunda Online modda çalışır."));
-      else if(!s.loaded)ImGui::TextDisabled("%s",s.failed?Tr(tr_,"Cannot reach nobkonline.com right now.","nobkonline.com'a şu an ulaşılamıyor."):Tr(tr_,"Loading…","Yükleniyor…"));
-      else if(tab_==0)Friends(s);
-      else if(tab_==1)Server(s);
-      else if(tab_==2)Records(s);
+      else if(!snapshot.available)ImGui::TextWrapped("%s",Tr(tr_,"The NOBK panel works in Online mode on the NOBK Online server.","NOBK paneli NOBK Online sunucusunda Online modda çalışır."));
+      else if(!snapshot.loaded)ImGui::TextDisabled("%s",snapshot.failed?Tr(tr_,"Cannot reach nobkonline.com right now.","nobkonline.com'a şu an ulaşılamıyor."):Tr(tr_,"Loading…","Yükleniyor…"));
+      else if(tab_==0)Friends(snapshot);
+      else if(tab_==1)Server(snapshot);
+      else if(tab_==2)Records(snapshot,reset);
       ImGui::EndChild();
-      auto bind=rex::cvar::Query<std::string>("bind_nobk_panel");if(bind.empty())bind="F1";
-      ImGui::TextDisabled("%s",(std::string(Tr(tr_,"LB/RB · Q/E tabs   A · Enter select   Y · W website   B · Esc · ","LB/RB · Q/E sekme   A · Enter seç   Y · W site   B · Esc · "))+bind+Tr(tr_," close"," kapat")).c_str());
       if(web_)OpenUrl(tab_==0?"https://nobkonline.com/hesabim/":tab_==2?"https://nobkonline.com/motogp/records/":"https://nobkonline.com/motogp/");
     }
-    ImGui::End();
+    ImGui::End();ImGui::PopStyleColor(2);ImGui::PopStyleVar(8);ImGui::PopFont();
   }
-  bool Row(int index,float height) {
-    const bool focus=index==selected_;
-    const auto pos=ImGui::GetCursorScreenPos();
+  bool Row(int index,float height,float action_width=0,bool friend_row=false,bool content_row=false) {
+    const auto pos=ImGui::GetCursorScreenPos();const float s=layout_.scale;
     const float width=ImGui::GetContentRegionAvail().x;
-    ImGui::PushID(index);
-    const bool clicked=ImGui::InvisibleButton("##row",ImVec2(width,height));
-    const bool hovered=ImGui::IsItemHovered();
-    ImGui::PopID();
-    if(hovered&&ImGui::GetIO().MouseDelta.x+ImGui::GetIO().MouseDelta.y!=0)selected_=index;
+    const int visible=std::max(0,int((pos.y-ImGui::GetWindowPos().y)/std::max(1.f,height+2*s)));
+    const float slide=visual::RowOffset(ImGui::GetTime(),opened_at_,tab_at_,visible,s);
+    row_position_=ImVec2(pos.x+slide,pos.y);row_height_=height;
+    ImGui::SetCursorScreenPos(row_position_);ImGui::PushID(index);
+    const bool clicked=ImGui::InvisibleButton("##row",ImVec2(std::max(1.f,width-action_width),height));
+    const bool hovered=ImGui::IsItemHovered();ImGui::PopID();
+    const auto delta=ImGui::GetIO().MouseDelta;
+    if(clicked||(hovered&&!reveal_selected_&&(delta.x!=0||delta.y!=0)))selected_=index;
+    row_selected_=index==selected_;
     auto* draw=ImGui::GetWindowDrawList();
-    draw->AddRectFilled(pos,ImVec2(pos.x+width,pos.y+height),ImGui::GetColorU32(focus?AccentTint(.18f):card),8.f);
-    if(focus){draw->AddRectFilled(pos,ImVec2(pos.x+4,pos.y+height),ImGui::GetColorU32(orange),2.f);ImGui::SetScrollHereY(.5f);}
+    if(content_row) {
+      if(row_selected_) {
+        visual::Marker(draw,ImVec2(row_position_.x+10*s,pos.y+height*.5f),s,alpha_);
+        visual::Underline(draw,ImVec2(row_position_.x+36*s,pos.y+height-2*s),pos.x+width,s,alpha_);
+      } else draw->AddLine(ImVec2(row_position_.x+36*s,pos.y+height-2*s),ImVec2(pos.x+width,pos.y+height-2*s),visual::Color(217,221,226,.18f*alpha_),s);
+    } else visual::Strip(draw,row_position_,ImVec2(pos.x+width+slide,pos.y+height),0,row_selected_,alpha_,friend_row?20.f:1.f);
+    if(row_selected_&&reveal_selected_)ImGui::SetScrollHereY(.5f);
     ImGui::SetCursorScreenPos(pos);
-    return clicked||(focus&&activate_);
+    return clicked||(row_selected_&&activate_);
   }
-  void Initial(ImVec2 pos,float size,const std::string& name,ImU32 ring) {
-    auto* draw=ImGui::GetWindowDrawList();
-    const ImVec2 c(pos.x+size*.5f,pos.y+size*.5f);
-    draw->AddCircleFilled(c,size*.5f,Rgb(255,106,19));
-    draw->AddCircle(c,size*.5f+2,ring,0,2.f);
-    char letter[2]={name.empty()?'?':char(std::toupper(static_cast<unsigned char>(name[0]))),0};
-    ImFont* f=heading_?heading_:ImGui::GetFont();
-    const auto ts=f->CalcTextSizeA(size*.55f,FLT_MAX,0,letter);
-    draw->AddText(f,size*.55f,ImVec2(c.x-ts.x*.5f,c.y-ts.y*.5f),Rgb(255,255,255),letter);
+  ImVec4 RowText(bool secondary=false)const {
+    return secondary?ImVec4(.65f,.67f,.7f,1):white;
   }
-  void Friends(const Snapshot& s) {
-    if(s.friends.empty()) {
+  void Initial(ImVec2 pos,float size,const std::string& name,ImU32 status,bool profile=false) {
+    auto* draw=ImGui::GetWindowDrawList();const float s=layout_.scale;
+    const ImVec2 center(pos.x+size*.5f,pos.y+size*.5f);
+    draw->AddCircleFilled(center,size*.5f,profile?ImGui::GetColorU32(orange):visual::Color(33,35,37,.92f*alpha_));
+    draw->AddCircle(center,size*.5f,profile?visual::Color(255,106,19,.55f*alpha_):visual::Color(210,212,217,.25f*alpha_),0,1.5f*s);
+    const auto letter=visual::Initial(name);ImFont* f=Face(1);
+    const auto ts=f->CalcTextSizeA(size*.46f,FLT_MAX,0,letter.c_str());
+    draw->AddText(f,size*.46f,ImVec2(center.x-ts.x*.5f,center.y-ts.y*.5f),ImGui::GetColorU32(white),letter.c_str());
+    if(!profile&&status!=0) {
+      const ImVec2 dot(center.x+size*.39f,center.y+size*.34f);
+      draw->AddCircleFilled(dot,9*s,visual::Color(8,9,10,.9f*alpha_));
+      auto color=ImGui::ColorConvertU32ToFloat4(status);color.w*=alpha_;
+      draw->AddCircleFilled(dot,6.5f*s,ImGui::ColorConvertFloat4ToU32(color));
+    }
+  }
+  bool Flag(ImVec2 pos,const std::string& country,float factor=1.f,bool label=true) {
+    if(!flag_texture_||country.size()!=2)return false;
+    std::string code=country;for(char& c:code)if(c>='a'&&c<='z')c-=32;
+    if(code=="UK")code="GB";
+    for(size_t i=0;i<(sizeof(gamer_card::flags::codes)-1)/2;++i) {
+      if(code!=std::string_view(gamer_card::flags::codes+i*2,2))continue;
+      const float x=float(i%16)*48+4,y=float(i/16)*32+1,s=layout_.scale;
+      ImGui::GetWindowDrawList()->AddImage(reinterpret_cast<ImTextureID>(flag_texture_.get()),pos,
+          ImVec2(pos.x+46*s*factor,pos.y+34.5f*s*factor),ImVec2(x/768.f,y/544.f),ImVec2((x+40)/768.f,(y+30)/544.f),
+          ImGui::GetColorU32(ImVec4(1,1,1,1)));
+      if(label)RowLabel(code,pos.x+56*s,pos.y+7.25f*s,20*s,RowText(true),pos.x+124*s);
+      return true;
+    }
+    return false;
+  }
+  void RowLabel(const std::string& text,float x,float y,float size,ImVec4 color,float right,ImFont* font=nullptr) {
+    visual::Label(ImGui::GetWindowDrawList(),font?font:Face(),size,ImVec2(x,y),color,text,right,layout_.scale,alpha_);
+  }
+  void Friends(const Snapshot& snapshot) {
+    const float s=layout_.scale;const auto social=online::social::Read();
+    const auto hints=visual::Hints(prompts::CurrentStyle());
+    if(invite_picker_) {
+      ImGui::TextWrapped("%s",(std::string(Tr(tr_,"Select a friend to invite to your lobby. ","Lobine davet etmek için bir arkadaş seç. "))+hints.select+Tr(tr_,": invite.",": davet et.")).c_str());
+      if(!social.loaded)ImGui::TextColored(muted,"%s",Tr(tr_,"Loading friends/invites…","Arkadaşlar/davetler yükleniyor…"));
+      else if(!social.supported)ImGui::TextColored(orange,"%s",Tr(tr_,"This server does not support community invitations yet.","Bu sunucu topluluk davetlerini henüz desteklemiyor."));
+      else if(!social.can_invite)ImGui::TextWrapped("%s",Tr(tr_,"Host a lobby before sending invitations.","Davet göndermeden önce bir lobi kur."));
+    }
+    if(!social.error.empty())ImGui::TextColored(orange,"%s",Tr(tr_,"Invitation service unavailable. Try again shortly.","Davet servisine ulaşılamıyor. Birazdan yeniden dene."));
+    else if(social.action=="sending")ImGui::TextColored(muted,"%s",Tr(tr_,"Sending…","Gönderiliyor…"));
+    else if(social.action=="send")ImGui::TextColored(orange,"%s",Tr(tr_,"Invitation sent.","Davet gönderildi."));
+    const int incoming=int(social.invites.size());
+    selected_=std::clamp(selected_,0,std::max(0,incoming+int(snapshot.friends.size())-1));
+    for(int i=0;i<incoming;++i) {
+      const auto& invite=social.invites[i];const auto pos=ImGui::GetCursorScreenPos();
+      const float right=pos.x+ImGui::GetContentRegionAvail().x;
+      const bool accept=Row(i,62*s,104*s);const auto a=row_position_;
+      RowLabel(invite.from+Tr(tr_," invited you"," seni davet etti"),a.x+46*s,a.y+10*s,22*s,RowText(),right-110*s);
+      RowLabel(std::string(hints.select)+Tr(tr_,": accept  ·  ",": kabul et  ·  ")+hints.decline+Tr(tr_,": decline",": reddet"),a.x+46*s,a.y+36*s,14*s,RowText(true),right-110*s);
+      ImGui::SetCursorScreenPos(ImVec2(right-96*s,a.y+17*s));ImGui::PushID(invite.id.c_str());
+      const bool decline=ImGui::Button(Tr(tr_,"Decline","Reddet"),ImVec2(88*s,28*s))||(selected_==i&&decline_);ImGui::PopID();
+      if(decline)online::social::Answer(invite.id,false);
+      else if(accept&&online::social::Answer(invite.id,true))state_->Close();
+      ImGui::SetCursorScreenPos(pos);ImGui::Dummy(ImVec2(0,row_height_));
+    }
+    if(snapshot.friends.empty()) {
       ImGui::TextWrapped("%s",Tr(tr_,"No friends yet. Add friends on nobkonline.com (your profile or My account); they show up here with what they are doing in MotoGP.",
-          "Henüz arkadaşın yok. nobkonline.com'da (profil ya da Hesabım) arkadaş ekle; burada MotoGP'de ne yaptıklarıyla görünürler."));
-      return;
+          "Henüz arkadaşın yok. nobkonline.com'da (profil ya da Hesabım) arkadaş ekle; burada MotoGP'de ne yaptıklarıyla görünürler."));return;
     }
-    const int in_game=int(std::count_if(s.friends.begin(),s.friends.end(),[](const Friend& f){return f.where>=Where::Menus;}));
-    ImGui::TextColored(muted,tr_?"%d arkadaş · %d tanesi MotoGP'de":"%d friends · %d in MotoGP",int(s.friends.size()),in_game);
-    selected_=std::clamp(selected_,0,int(s.friends.size())-1);
-    for(int i=0;i<int(s.friends.size());++i) {
-      const auto& f=s.friends[i];
-      const float h=54;
-      const auto pos=ImGui::GetCursorScreenPos();
-      if(Row(i,h))OpenUrl("https://nobkonline.com/profile/?u="+Encode(f.name));
-      Initial(ImVec2(pos.x+14,pos.y+9),36,f.name,WhereColor(f.where));
-      auto* draw=ImGui::GetWindowDrawList();
-      draw->AddText(ImVec2(pos.x+62,pos.y+8),ImGui::GetColorU32(white),f.name.c_str());
-      std::string line=WhereText(f,tr_);
-      if(!f.room.empty())line+=" · "+f.room;
-      draw->AddText(ImVec2(pos.x+62,pos.y+29),WhereColor(f.where),line.c_str());
-      if(!f.country.empty()) {
-        const auto w=ImGui::CalcTextSize(f.country.c_str()).x;
-        draw->AddText(ImVec2(pos.x+ImGui::GetContentRegionAvail().x-w-16,pos.y+18),ImGui::GetColorU32(muted),f.country.c_str());
+    for(int i=0;i<int(snapshot.friends.size());++i) {
+      const auto& f=snapshot.friends[i];const auto pos=ImGui::GetCursorScreenPos();
+      const float right=pos.x+ImGui::GetContentRegionAvail().x;
+      const auto mapped=std::find_if(social.friends.begin(),social.friends.end(),[&](const auto& entry){return SameName(entry.name,f.name);});
+      const bool can_invite=social.supported&&social.can_invite&&mapped!=social.friends.end()&&mapped->online;
+      if(Row(incoming+i,100*s,can_invite?104*s:0,true)) {
+        if(invite_picker_){if(can_invite)online::social::Send(mapped->peer);}
+        else OpenUrl("https://nobkonline.com/profile/?u="+Encode(f.name));
       }
-      ImGui::Dummy(ImVec2(0,h));
+      const auto a=row_position_;const float avatar=62*s;
+      Initial(ImVec2(a.x+36*s,a.y+(row_height_-avatar)*.5f),avatar,f.name,WhereColor(f.where));
+      const float nx=a.x+142*s,name_size=(row_selected_?34.f:32.f)*s;
+      const float country_x=a.x+282*s,status_left=a.x+455*s,status_right=right-4*s;
+      RowLabel(f.name,nx,a.y+(row_height_-name_size)*.5f,name_size,RowText(),country_x-12*s,Face(row_selected_?2:0));
+      Flag(ImVec2(country_x,a.y+(row_height_-34.5f*s)*.5f),f.country);
+      const auto status=WhereText(f,tr_);
+      RowLabel(status,status_left,a.y+(row_height_-24*s)*.5f,24*s,RowText(),status_right);
+      if(can_invite) {
+        ImGui::SetCursorScreenPos(ImVec2(right-96*s,a.y+66*s));ImGui::PushID(i);
+        if(ImGui::Button(Tr(tr_,"Invite","Davet et"),ImVec2(88*s,28*s)))online::social::Send(mapped->peer);
+        ImGui::PopID();
+      }
+      ImGui::SetCursorScreenPos(pos);ImGui::Dummy(ImVec2(0,row_height_));
     }
   }
-  void Stat(const char* label,int value,float width) {
-    ImGui::BeginGroup();
-    const auto pos=ImGui::GetCursorScreenPos();
-    auto* draw=ImGui::GetWindowDrawList();
-    draw->AddRectFilled(pos,ImVec2(pos.x+width,pos.y+74),ImGui::GetColorU32(card),10.f);
-    draw->AddRectFilled(pos,ImVec2(pos.x+3,pos.y+74),ImGui::GetColorU32(orange),2.f);
-    ImFont* f=heading_?heading_:ImGui::GetFont();
-    draw->AddText(f,30.f,ImVec2(pos.x+14,pos.y+8),ImGui::GetColorU32(white),std::to_string(value).c_str());
-    draw->AddText(ImVec2(pos.x+14,pos.y+46),ImGui::GetColorU32(muted),label);
-    ImGui::Dummy(ImVec2(width,74));
-    ImGui::EndGroup();
+  void RightLabel(const std::string& text,float right,float y,float size,ImVec4 color,ImFont* font=nullptr) {
+    ImFont* face=font?font:Face();
+    RowLabel(text,right-visual::TextWidth(face,size,text),y,size,color,right,face);
   }
-  void Server(const Snapshot& s) {
-    const float gap=ImGui::GetStyle().ItemSpacing.x;
-    const float w=(ImGui::GetContentRegionAvail().x-gap*4)/5;
-    Stat(Tr(tr_,"Online","Çevrimiçi"),s.online,w);ImGui::SameLine();
-    Stat(Tr(tr_,"Open rooms","Açık oda"),s.open_rooms,w);ImGui::SameLine();
-    Stat(Tr(tr_,"Racing","Yarışta"),s.racing,w);ImGui::SameLine();
-    Stat(Tr(tr_,"Riders","Pilot"),s.riders,w);ImGui::SameLine();
-    Stat(Tr(tr_,"Records","Rekor"),s.records,w);
-    ImGui::Spacing();
-    ImGui::TextColored(s.server_up?ImVec4(.13f,.77f,.37f,1):ImVec4(1,.45f,.4f,1),"%s",
-        s.server_up?Tr(tr_,"● Server online","● Sunucu açık"):Tr(tr_,"● Server not answering","● Sunucu cevap vermiyor"));
-    ImGui::Spacing();
-    if(s.rooms.empty()) {
+  void SectionTitle(const char* title) {
+    const float s=layout_.scale;const auto p=ImGui::GetCursorScreenPos();
+    RowLabel(title,p.x,p.y,58*s,white,p.x+ImGui::GetContentRegionAvail().x,Face(2));
+    ImGui::Dummy(ImVec2(0,76*s));
+  }
+  void Subheading(const char* title) {
+    const float s=layout_.scale;const auto p=ImGui::GetCursorScreenPos();const float w=ImGui::GetContentRegionAvail().x;
+    RowLabel(title,p.x,p.y,27*s,ImVec4(.69f,.71f,.75f,1),p.x+w,Face(2));
+    const float text=visual::TextWidth(Face(2),27*s,title);
+    if(text+22*s<w)ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x+text+20*s,p.y+19*s),ImVec2(p.x+w,p.y+19*s),visual::Color(217,221,226,.25f*alpha_),s);
+    ImGui::Dummy(ImVec2(0,44*s));
+  }
+  void Server(const Snapshot& snapshot) {
+    const float s=layout_.scale;ImGui::Indent(layout_.gutter);
+    const auto top=ImGui::GetCursorScreenPos();const float width=ImGui::GetContentRegionAvail().x,right=top.x+width;
+    SectionTitle(Tr(tr_,"SERVER","SUNUCU"));
+    auto* draw=ImGui::GetWindowDrawList();const auto status=snapshot.server_up?ImVec4(.42f,.88f,.08f,1):ImVec4(1,.36f,.28f,1);
+    const float status_x=top.x+visual::TextWidth(Face(2),58*s,Tr(tr_,"SERVER","SUNUCU"))+48*s;
+    draw->AddCircleFilled(ImVec2(status_x,top.y+30*s),7*s,ImGui::GetColorU32(status));
+    RowLabel(snapshot.server_up?Tr(tr_,"Server online","Sunucu açık"):Tr(tr_,"Server not answering","Sunucu cevap vermiyor"),status_x+20*s,top.y+14*s,27*s,white,right);
+    draw->AddLine(ImVec2(top.x,top.y+76*s),ImVec2(right,top.y+76*s),visual::Color(217,221,226,.25f*alpha_),s);
+    const auto counters=ImGui::GetCursorScreenPos();const float column=width/3;
+    const int values[]{snapshot.online,snapshot.open_rooms,snapshot.racing};
+    const char* labels[]{Tr(tr_,"ONLINE","ÇEVRİMİÇİ"),Tr(tr_,"OPEN ROOMS","AÇIK ODA"),Tr(tr_,"RACING","YARIŞTA")};
+    for(int i=0;i<3;++i) {
+      const float x=counters.x+i*column+46*s;
+      RowLabel(std::to_string(values[i]),x,counters.y+14*s,88*s,i==0?orange:white,counters.x+(i+1)*column-10*s,Face(2));
+      RowLabel(labels[i],x,counters.y+118*s,30*s,ImVec4(.71f,.73f,.77f,1),counters.x+(i+1)*column-8*s);
+      if(i)draw->AddLine(ImVec2(counters.x+i*column,counters.y+26*s),ImVec2(counters.x+i*column,counters.y+150*s),visual::Color(217,221,226,.2f*alpha_),s);
+    }
+    ImGui::Dummy(ImVec2(0,174*s));ImGui::Dummy(ImVec2(0,22*s));
+    const auto totals=ImGui::GetCursorScreenPos();
+    draw->AddLine(totals,ImVec2(right,totals.y),visual::Color(217,221,226,.25f*alpha_),s);
+    const auto riders=std::to_string(snapshot.riders),records=std::to_string(snapshot.records);
+    RowLabel(riders,totals.x,totals.y+17*s,43*s,white,right,Face(2));
+    RowLabel(Tr(tr_,"Riders","Pilot"),totals.x+visual::TextWidth(Face(2),43*s,riders)+18*s,totals.y+25*s,29*s,ImVec4(.71f,.73f,.77f,1),totals.x+238*s);
+    draw->AddLine(ImVec2(totals.x+242*s,totals.y+22*s),ImVec2(totals.x+242*s,totals.y+57*s),visual::Color(217,221,226,.25f*alpha_),s);
+    RowLabel(records,totals.x+296*s,totals.y+17*s,43*s,white,right,Face(2));
+    RowLabel(Tr(tr_,"Records","Rekor"),totals.x+296*s+visual::TextWidth(Face(2),43*s,records)+18*s,totals.y+25*s,29*s,ImVec4(.71f,.73f,.77f,1),right);
+    ImGui::Dummy(ImVec2(0,82*s));ImGui::Dummy(ImVec2(0,28*s));
+    Subheading(Tr(tr_,"OPEN LOBBIES","AÇIK LOBİLER"));ImGui::Unindent(layout_.gutter);
+    if(snapshot.rooms.empty()) {
+      ImGui::Indent(layout_.gutter);
       ImGui::TextWrapped("%s",Tr(tr_,"No room is open right now. Host one from Player Match; it shows up here and on nobkonline.com/motogp.",
           "Şu an açık oda yok. Player Match'ten bir oda kur; burada ve nobkonline.com/motogp'de görünür."));
-      return;
+      ImGui::Unindent(layout_.gutter);return;
     }
-    selected_=std::clamp(selected_,0,int(s.rooms.size())-1);
-    for(int i=0;i<int(s.rooms.size());++i) {
-      const auto& r=s.rooms[i];
-      const auto pos=ImGui::GetCursorScreenPos();
-      Row(i,50);
-      auto* draw=ImGui::GetWindowDrawList();
-      draw->AddText(ImVec2(pos.x+16,pos.y+6),ImGui::GetColorU32(r.mine||r.friends?orange:white),r.name.c_str());
-      std::string line=std::string(Tr(tr_,"Host: ","Kurucu: "))+r.host+(r.friends?Tr(tr_,"  · friends inside","  · arkadaşların var"):"");
-      draw->AddText(ImVec2(pos.x+16,pos.y+27),ImGui::GetColorU32(muted),line.c_str());
-      const std::string count=std::to_string(r.members)+"/"+std::to_string(r.capacity)+"   "+(r.racing?Tr(tr_,"RACING","YARIŞTA"):Tr(tr_,"lobby","lobide"));
-      const auto cw=ImGui::CalcTextSize(count.c_str()).x;
-      draw->AddText(ImVec2(pos.x+ImGui::GetContentRegionAvail().x-cw-16,pos.y+16),ImGui::GetColorU32(r.racing?orange:muted),count.c_str());
-      ImGui::Dummy(ImVec2(0,50));
+    selected_=std::clamp(selected_,0,int(snapshot.rooms.size())-1);
+    for(int i=0;i<int(snapshot.rooms.size());++i) {
+      const auto& room=snapshot.rooms[i];const auto pos=ImGui::GetCursorScreenPos();
+      Row(i,116*s,0,false,true);const auto a=row_position_;
+      const auto count=std::to_string(room.members)+" / "+std::to_string(room.capacity);
+      const auto host=std::string(Tr(tr_,"Host: ","Kurucu: "))+room.host+(room.friends?Tr(tr_," · friends inside"," · arkadaşların var"):"");
+      RowLabel(room.name,a.x+44*s,a.y+10*s,38*s,!row_selected_&&(room.mine||room.friends)?orange:white,right-210*s,Face(2));
+      RowLabel(host,a.x+44*s,a.y+66*s,25*s,RowText(true),right-210*s);
+      RightLabel(count,right-10*s,a.y+10*s,37*s,white,Face(2));
+      const auto state=room.racing?Tr(tr_,"Racing","Yarışta"):Tr(tr_,"In lobby","Lobide");
+      const auto color=room.racing?orange:ImVec4(.6f,.84f,.12f,1);
+      const float state_width=visual::TextWidth(Face(),27*s,state);
+      draw->AddCircleFilled(ImVec2(right-state_width-28*s,a.y+81*s),6*s,ImGui::GetColorU32(color));
+      RightLabel(state,right-10*s,a.y+63*s,27*s,color);
+      ImGui::SetCursorScreenPos(pos);ImGui::Dummy(ImVec2(0,row_height_));
     }
   }
-  void Records(const Snapshot& s) {
-    if(s.my_records>=0)ImGui::TextColored(orange,tr_?"Elindeki rekor: %d   ·   Podyum: %d   ·   Tablo: %d":"Records held: %d   ·   Podiums: %d   ·   Boards: %d",
-        s.my_records,s.my_podiums,s.my_boards);
-    if(!s.events.empty()) {
-      ImGui::Spacing();ImGui::TextColored(muted,"%s",Tr(tr_,"THIS SESSION","BU OTURUM"));
-      for(const auto& e:s.events)
-        ImGui::TextColored(e.kind==2?ImVec4(1,.45f,.4f,1):e.kind==1?orange:white,"%s  ·  %s",e.text.c_str(),Ago(e.at,tr_).c_str());
+  void Records(const Snapshot& snapshot,bool reset) {
+    const float s=layout_.scale;ImGui::Indent(layout_.gutter);
+    SectionTitle(Tr(tr_,"RECORDS","REKORLAR"));
+    const auto summary=ImGui::GetCursorScreenPos();const float width=ImGui::GetContentRegionAvail().x;
+    const int values[]{snapshot.my_records,snapshot.my_podiums,snapshot.my_boards};
+    const char* labels[]{Tr(tr_,"Records held","Elindeki rekor"),Tr(tr_,"Podiums","Podyum"),Tr(tr_,"Boards","Tablo")};
+    auto* draw=ImGui::GetWindowDrawList();
+    for(int i=0;i<3;++i) {
+      const float x=summary.x+i*width/3;
+      const auto value=snapshot.my_records>=0&&values[i]>=0?std::to_string(values[i]):std::string("-");
+      RowLabel(value,x,summary.y+4*s,50*s,orange,x+width/3,Face(2));
+      RowLabel(labels[i],x+visual::TextWidth(Face(2),50*s,value)+16*s,summary.y+20*s,25*s,RowText(true),x+width/3-6*s);
+      if(i)draw->AddLine(ImVec2(x-20*s,summary.y+7*s),ImVec2(x-20*s,summary.y+57*s),visual::Color(217,221,226,.2f*alpha_),s);
     }
-    ImGui::Spacing();ImGui::TextColored(muted,"%s",Tr(tr_,"LATEST RECORDS","SON REKORLAR"));
-    if(s.recent.empty()){ImGui::TextDisabled("%s",Tr(tr_,"Loading…","Yükleniyor…"));return;}
-    selected_=std::clamp(selected_,0,int(s.recent.size())-1);
-    for(int i=0;i<int(s.recent.size());++i) {
-      const auto& r=s.recent[i];
-      const auto pos=ImGui::GetCursorScreenPos();
-      Row(i,50);
-      auto* draw=ImGui::GetWindowDrawList();
-      const std::string who=r.name+(r.rank==1?Tr(tr_,"  took the record","  rekoru aldı"):(std::string("  P")+std::to_string(r.rank)));
-      draw->AddText(ImVec2(pos.x+16,pos.y+6),ImGui::GetColorU32(r.mine||r.friend_?orange:white),who.c_str());
-      draw->AddText(ImVec2(pos.x+16,pos.y+27),ImGui::GetColorU32(muted),(r.board+"  ·  "+Ago(r.at,tr_)).c_str());
-      ImFont* f=heading_?heading_:ImGui::GetFont();
-      const auto tw=f->CalcTextSizeA(24.f,FLT_MAX,0,r.time.c_str()).x;
-      draw->AddText(f,24.f,ImVec2(pos.x+ImGui::GetContentRegionAvail().x-tw-16,pos.y+12),ImGui::GetColorU32(r.rank==1?orange:white),r.time.c_str());
-      ImGui::Dummy(ImVec2(0,50));
+    ImGui::Dummy(ImVec2(0,82*s));
+    Subheading(Tr(tr_,"LATEST RECORDS","SON REKORLAR"));ImGui::Unindent(layout_.gutter);
+    const float footer=snapshot.events.empty()?0:46*s+std::min(3,int(snapshot.events.size()))*42*s;
+    ImGui::BeginChild("##record_list",ImVec2(0,std::max(100*s,ImGui::GetContentRegionAvail().y-footer-12*s)),ImGuiChildFlags_None);
+    if(reset)ImGui::SetScrollY(0);
+    selected_=std::clamp(selected_,0,std::max(0,int(snapshot.recent.size())-1));
+    if(snapshot.recent.empty())ImGui::TextDisabled("%s",Tr(tr_,"Loading…","Yükleniyor…"));
+    for(int i=0;i<int(snapshot.recent.size());++i) {
+      const auto& record=snapshot.recent[i];const auto pos=ImGui::GetCursorScreenPos();const float right=pos.x+ImGui::GetContentRegionAvail().x;
+      Row(i,96*s,0,false,true);const auto a=row_position_;
+      // Record entries have no presence field: use an initial, without a status dot.
+      Initial(ImVec2(a.x+72*s,a.y+9*s),62*s,record.name,0,false);
+      const float name_x=a.x+162*s,rank_x=a.x+342*s;
+      RowLabel(record.name,name_x,a.y+7*s,35*s,!row_selected_&&(record.mine||record.friend_)?orange:white,rank_x-12*s,Face(2));
+      const auto rank=record.rank>0?"P"+std::to_string(record.rank):std::string("-");
+      RowLabel(rank,rank_x,a.y+15*s,25*s,record.rank==1?orange:RowText(true),right-182*s,Face(1));
+      if(record.rank==1)RowLabel(Tr(tr_,"took the record","rekoru aldı"),rank_x+46*s,a.y+19*s,19*s,orange,right-180*s);
+      auto board=record.board;if(record.at>0)board+=" · "+Ago(record.at,tr_);
+      RowLabel(board,name_x,a.y+54*s,23*s,RowText(true),right-10*s);
+      RightLabel(record.time,right-10*s,a.y+13*s,38*s,record.rank==1?orange:white,Face(2));
+      ImGui::SetCursorScreenPos(pos);ImGui::Dummy(ImVec2(0,row_height_));
+    }
+    ImGui::EndChild();
+    if(!snapshot.events.empty()) {
+      ImGui::Indent(layout_.gutter);Subheading(Tr(tr_,"THIS SESSION","BU OTURUM"));
+      ImGui::BeginChild("##session_feed",ImVec2(0,std::max(40*s,footer-46*s)),ImGuiChildFlags_None);
+      for(const auto& event:snapshot.events) {
+        const auto pos=ImGui::GetCursorScreenPos();const float right=pos.x+ImGui::GetContentRegionAvail().x;
+        const auto color=event.kind==2?ImVec4(1,.4f,.32f,1):orange;
+        draw=ImGui::GetWindowDrawList();draw->AddCircleFilled(ImVec2(pos.x+8*s,pos.y+18*s),6*s,ImGui::GetColorU32(color));
+        RowLabel(event.text,pos.x+34*s,pos.y+2*s,24*s,event.kind==1?orange:white,right-100*s);
+        RightLabel(Ago(event.at,tr_),right-8*s,pos.y+7*s,19*s,RowText(true));
+        ImGui::Dummy(ImVec2(0,40*s));
+      }
+      ImGui::EndChild();ImGui::Unindent(layout_.gutter);
     }
   }
   void Achievements() {
     if(!achievements_){ImGui::TextDisabled("%s",Tr(tr_,"Achievements are not available.","Başarımlar kullanılamıyor."));return;}
-    achievements::DrawContents(*achievements_,achievement_state_,*achievement_preferences_,&achievement_icons_);
+    const visual::AchievementAppearance appearance{layout_.scale,alpha_,ImGui::GetTime(),opened_at_,tab_at_,Face(),Face(1),Face(2)};
+    ImGui::Indent(layout_.gutter);
+    achievements::DrawContents(*achievements_,achievement_state_,*achievement_preferences_,&achievement_icons_,0,&appearance);
+    ImGui::Unindent(layout_.gutter);
   }
 
   rex::ui::Window* window_;
@@ -709,19 +972,66 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
   std::shared_ptr<achievements::Preferences> achievement_preferences_;
   achievements::MenuState achievement_state_;
   rex::ui::AchievementIconCache achievement_icons_;
+  std::unique_ptr<rex::ui::ImmediateTexture> flag_texture_;
   bool nav_owned_=false;
   ImGuiConfigFlags old_flags_=0;
   ImGuiBackendFlags old_backend_=0;
   uint16_t nav_previous_=0;
-  bool armed_=false,activate_=false,web_=false;
+  bool armed_=false,activate_=false,web_=false,reveal_selected_=false,decline_=false,invite_picker_=false;
+  std::set<std::string> invite_notified_;
   uint16_t previous_=0;
   uint64_t epoch_=0;
+  visual::Layout layout_{};
+  double opened_at_=0,tab_at_=0;
+  int animated_tab_=-1;
+  float alpha_=1,row_height_=0;
+  float nav_marker_y_=-1;
+  ImVec2 row_position_{};
+  bool row_selected_=false;
   int tab_=0,selected_=0;
   std::optional<Event> toast_;
   double toast_at_=0;
 };
 }  // namespace
 
+#ifdef MOTOGP_NOBK_VISUAL_PROBE
+void SetVisualFixture(bool enabled,bool reference) {
+  if(!enabled){visual_fixture.reset();return;}
+  Snapshot s;s.available=s.loaded=s.server_up=true;s.me="Rider One";
+  s.online=18;s.open_rooms=3;s.racing=1;s.riders=42;s.records=286;
+  s.my_records=9;s.my_podiums=14;s.my_boards=20;
+  for(int i=0;i<24;++i) {
+    const std::string name=i==0?"Deniz":i==1?"Çağrı":i==2?"Alex":i==3?"A very long rider name to verify text clipping":("Rider "+std::to_string(i+1));
+    s.friends.push_back({name,i%2?"TR":"GB",i%4==1?"Evening race":"",i%4==0?Where::Menus:i%4==1?Where::Room:i%4==2?Where::Racing:Where::Offline});
+  }
+  if(reference) {
+    s.me="inflames";s.friends={
+        {"Grea","CN","",Where::Offline},{"Lightbay","AU","",Where::Menus},
+        {"Sadooo","TR","",Where::Room},{"To96","TR","",Where::Racing},
+        {"erutoru","VN","",Where::Offline},{"oneslov","TR","",Where::Offline},
+        {"wasmir","FR","",Where::Offline}};
+  }
+  s.rooms={{"Evening race","Deniz",3,20,false,true,false},{"Moto2 Championship","Alex",8,20,true,false,false},{"My room","Rider One",1,20,false,false,true}};
+  const auto now=int64_t(std::time(nullptr));
+  s.events={{"A friend entered MotoGP",now-60,1},{"A new room opened",now-120,0}};
+  for(int i=0;i<16;++i)s.recent.push_back({i%2?"Deniz":"Alex",std::string(kTracks[i%17])+" · Moto2","1:43.08",i%3+1,now-i*120,false,i%2==0});
+  s.recent[0]={"MgOnur","Donington Park · 125cc","1:38.30",4,now-6*3600,false,false};
+  s.recent[1]={"Sadooo","Le Mans · 250cc","1:22.03",1,now-18*3600,false,true};
+  s.recent[2]={"Sadooo","Le Mans · 125cc","1:28.07",1,now-18*3600,false,true};
+  visual_fixture=std::move(s);
+}
+#endif
+
+void ConfigureFonts(ImFontAtlas* atlas,const char* regular,const char* semibold,const char* bold) {
+  visual_fonts={};visual_fonts.atlas=atlas;
+  static const ImWchar ranges[]={0x20,0x1ff,0};
+  const char* paths[]{regular,semibold,bold};
+  for(size_t i=0;i<3;++i)if(paths[i]&&std::filesystem::is_regular_file(paths[i])) {
+    ImFontConfig config;config.OversampleH=2;config.OversampleV=2;
+    visual_fonts.faces[i]=atlas->AddFontFromFileTTF(paths[i],40,&config,ranges);
+    if(visual_fonts.faces[i])visual_fonts.faces[i]->Flags|=ImFontFlags_LockBakedSizes;
+  }
+}
 void Initialize(rex::Runtime* runtime,std::shared_ptr<settings::InputGate> gate) {
   input_system.store(runtime?static_cast<rex::input::InputSystem*>(runtime->input_system()):nullptr,std::memory_order_release);
   current.store(std::make_shared<State>(std::move(gate)),std::memory_order_release);

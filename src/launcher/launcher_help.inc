@@ -47,7 +47,8 @@
     Tip(adaptive_triggers,L"Experimental fixed trigger resistance for DualSense / Edge using SDL. Other controllers keep their normal triggers.",L"SDL kullanan DualSense / Edge için deneysel sabit tetik direnci. Diğer kontrolcülerin tetikleri normal çalışır.");
     Tip(reset_bindings,L"Restore only the keyboard bindings. Other launcher settings are preserved.",L"Yalnızca klavye tuş atamalarını varsayılanlara döndürür. Launcher'ın diğer ayarları korunur.");
     for(size_t i=0;i<binding_buttons.size();++i){
-      Tip(binding_buttons[i],L"Click, then press a key or key combination. Esc cancels. Right-click to clear this binding.",L"Tıkla, ardından bir tuşa veya tuş birleşimine bas. Esc iptal eder. Atamayı silmek için sağ tıkla.");
+      Tip(binding_buttons[i],L"Click to replace the assigned keys. Use + to add another key. Right-click to remove individual keys or restore defaults. Esc cancels capture.",L"Atanan tuşları değiştirmek için tıkla. Başka bir tuş eklemek için + kullan. Tuşları tek tek kaldırmak veya varsayılana dönmek için sağ tıkla. Esc tuş yakalamayı iptal eder.");
+      Tip(binding_add_buttons[i],L"Add another key or key combination to this action. Existing keys are kept; duplicates are ignored.",L"Bu eyleme başka bir tuş veya tuş birleşimi ekler. Mevcut tuşlar korunur; aynı tuş tekrar eklenmez.");
     }
     Tip(save,L"Save launcher settings for the next game launch. During play, F2 opens settings that can change immediately; F1 opens the NOBK Online panel.",L"Launcher ayarlarını sonraki oyun açılışı için kaydeder. Oyun sırasında F1 NOBK Online panelini açar; F2 ile bazı ayarları oyunu kapatmadan değiştirebilirsin.");
     Tip(defaults,L"Restore launcher settings to their defaults. Game saves and achievements are kept.",L"Launcher ayarlarını varsayılanlara döndürür. Oyun kayıtları ve başarımlar korunur.");

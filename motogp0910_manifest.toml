@@ -101,3 +101,30 @@ includes = []
 # 10244 and 12420 via lis/addi. Loads three float parameters, selects r6=8
 # and tail-calls 82270FC8. Terminal branch 82271688; exclude zero padding.
 0x82271650 = { end = 0x8227168C }
+
+# The base game plus supported DLC define 102 unique bikes. Keep the native
+# allocation, initialization, append guard and used-bike bitmap in agreement.
+# 112 entries fit the loader's existing stack padding (bytes 80..191).
+[[entrypoint.midasm_hook]]
+address = 0x822E9284 # li r3,4400: allocation bytes.
+after_instruction = true
+name = "MotogpBikeAllocation"
+registers = ["r3"]
+
+[[entrypoint.midasm_hook]]
+address = 0x822E9298 # li r10,100: initialize each 44-byte row.
+after_instruction = true
+name = "MotogpBikeCount"
+registers = ["r10"]
+
+[[entrypoint.midasm_hook]]
+address = 0x822E9130 # cmplwi cr6,r28,100: bounded append.
+after_instruction = true
+name = "MotogpBikeCompare"
+registers = ["r28", "cr6", "xer"]
+
+[[entrypoint.midasm_hook]]
+address = 0x8229FFA8 # li r10,100: zero every used-bike marker.
+after_instruction = true
+name = "MotogpBikeCount"
+registers = ["r10"]

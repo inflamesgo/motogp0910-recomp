@@ -34,7 +34,20 @@ inline const Glyph* FindGlyph(char code) {
   for(const auto& glyph:kGlyphs)if(glyph.code==code)return &glyph;
   return nullptr;
 }
-inline std::string PrimaryLabel(std::string value) {
+inline std::string PrimaryLabel(std::string value,std::string_view preferred={}) {
+  // Navigation captions prefer their conventional alias only when that exact
+  // unmodified key is actually assigned. Gameplay still uses the first key.
+  if(!preferred.empty()){
+    for(size_t start=0;start<value.size();){
+      const auto end=value.find(',',start);
+      std::string_view token(value.data()+start,(end==std::string::npos?value.size():end)-start);
+      while(!token.empty()&&token.front()==' ')token.remove_prefix(1);
+      while(!token.empty()&&token.back()==' ')token.remove_suffix(1);
+      if(token==preferred)return PrimaryLabel(std::string(preferred));
+      if(end==std::string::npos)break;
+      start=end+1;
+    }
+  }
   if(value=="Semicolon,Space")value="Space";
   else if(value=="Quote,Backspace")value="Backspace";
   else if(value=="X,Return")value="Return";
@@ -67,12 +80,12 @@ inline std::string PrimaryLabel(std::string value) {
   return "Unbound";
 }
 template<class ReadBinding>
-std::string LabelFor(const Glyph& glyph,Style style,ReadBinding&& read) {
+std::string LabelFor(const Glyph& glyph,Style style,ReadBinding&& read,bool navigation=false) {
   if(style==Style::PlayStation)return glyph.playstation;
   std::array<std::string,4> labels;unsigned count=0;
   bool compact=true;
   for(auto* name:glyph.bindings)if(name) {
-    labels[count]=PrimaryLabel(read(name));
+    labels[count]=PrimaryLabel(read(name),navigation?(glyph.code=='A'?"Return":glyph.code=='B'?"Backspace":""):"");
     compact &= labels[count].size()==1;++count;
   }
   if(count==4) {

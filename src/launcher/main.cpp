@@ -67,6 +67,7 @@ struct App {
   HWND adaptive_triggers{},crash_diagnostics{},shadow_distance{},debug_overlay{},discord_presence{};
   std::vector<int> shadow_distances{kShadowDistances.begin(),kShadowDistances.end()};
   std::array<HWND,kBindings.size()> binding_buttons{};
+  std::array<HWND,kBindings.size()> binding_add_buttons{};
   HWND reset_bindings{};
   struct Label {HWND control;const wchar_t* en;const wchar_t* tr;};
   struct Placement {HWND control;int x,y,w,h;};
@@ -86,6 +87,7 @@ struct App {
   HWND pointer_focus{};
   unsigned localization_generation=0;
   bool capturing=false;
+  bool capture_append=false;
   HFONT font{},heading{},small_font{},bold{},logo{},play_font{},account_name_font{};
   std::array<HANDLE,3> private_fonts{};
   HBRUSH background=CreateSolidBrush(kBackground),card=CreateSolidBrush(kCard),field=CreateSolidBrush(kField);
@@ -133,16 +135,18 @@ struct App {
     if(std::wstring_view(cls)==L"COMBOBOX"){PopupAnimation::Attach(c,id==kSize);SetWindowSubclass(c,ComboFrameProc,8,reinterpret_cast<DWORD_PTR>(this));SendMessageW(c,CB_SETITEMHEIGHT,WPARAM(-1),S(24));}
     return c;
   }
+  RECT CheckboxBounds()const{return {S(1),S(5),S(19),S(23)};}
   static LRESULT CALLBACK CheckProc(HWND control,UINT message,WPARAM wparam,LPARAM lparam,UINT_PTR id,DWORD_PTR data){
     auto& app=*reinterpret_cast<App*>(data);
-    if(message==WM_LBUTTONDBLCLK)return DefSubclassProc(control,WM_LBUTTONDOWN,wparam,lparam);
+    LRESULT pointer_result{};
+    if(CheckboxPointerInput(control,message,wparam,lparam,app.CheckboxBounds(),pointer_result))return pointer_result;
     if(message==BM_GETCHECK)return app.Checked(control)?BST_CHECKED:BST_UNCHECKED;
     if(message==BM_SETCHECK){app.SetCheck(control,wparam==BST_CHECKED);return 0;}
     if(message==WM_NCDESTROY)RemoveWindowSubclass(control,CheckProc,id);
     return DefSubclassProc(control,message,wparam,lparam);
   }
   static LRESULT CALLBACK BindingProc(HWND control,UINT message,WPARAM wparam,LPARAM lparam,UINT_PTR id,DWORD_PTR data){
-    if(message==WM_RBUTTONUP)return SendMessageW(reinterpret_cast<App*>(data)->window,WM_CONTEXTMENU,reinterpret_cast<WPARAM>(control),lparam);
+    if(message==WM_RBUTTONUP){POINT point{};GetCursorPos(&point);return SendMessageW(reinterpret_cast<App*>(data)->window,WM_CONTEXTMENU,reinterpret_cast<WPARAM>(control),MAKELPARAM(point.x,point.y));}
     if(message==WM_CONTEXTMENU)return SendMessageW(reinterpret_cast<App*>(data)->window,message,reinterpret_cast<WPARAM>(control),lparam);
     if(message==WM_NCDESTROY)RemoveWindowSubclass(control,BindingProc,id);
     return DefSubclassProc(control,message,wparam,lparam);
@@ -197,6 +201,10 @@ struct App {
     const auto label=capturing&&static_cast<int>(index)==binding_index?std::wstring(T(L"Press a key…",L"Bir tuşa bas…")):
         edited_bindings[index].empty()?std::wstring(T(L"Unbound",L"Atanmamış")):Wide(edited_bindings[index]);
     if(binding_buttons[index])SetWindowTextW(binding_buttons[index],label.c_str());
+  }
+  void BeginBindingCapture(size_t index,bool append){
+    CancelCapture();binding_index=static_cast<int>(index);capture_append=append;capturing=true;
+    SetFocus(binding_buttons[index]);RefreshBinding(index);
   }
   void SetBinding(size_t index,std::string value){
     edited_bindings[index]=std::move(value);RefreshBinding(index);
@@ -400,7 +408,8 @@ struct App {
     auto key=KeyName(vk);if(key.empty())return true;
     std::string value;if(GetKeyState(VK_CONTROL)&0x8000)value+="Ctrl+";
     if(GetKeyState(VK_MENU)&0x8000)value+="Alt+";if(GetKeyState(VK_SHIFT)&0x8000)value+="Shift+";
-    value+=key;CancelCapture();SetBinding(binding_index,std::move(value));return true;
+    value+=key;if(capture_append)value=AddBindingAlternative(edited_bindings[binding_index],value);
+    CancelCapture();SetBinding(binding_index,std::move(value));return true;
   }
   void SetControls(const Settings& s){
     SetCheck(debug_overlay,s.debug_overlay_enabled);
@@ -514,7 +523,7 @@ struct App {
     if(is_check){
       if(c==account_remember)SelectObject(hdc,font);
       DrawSurface(hdc,c);
-      RECT box{r.left+S(1),r.top+S(5),r.left+S(19),r.top+S(23)};
+      RECT box=CheckboxBounds();OffsetRect(&box,r.left,r.top);
       PaintCheckbox(hdc,box,Checked(c),!disabled,pressed);
       r.left+=S(29);SetTextColor(hdc,disabled?kMuted:kText);auto text=Text(c);DrawTextW(hdc,text.c_str(),-1,&r,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);return;
     }
@@ -573,10 +582,29 @@ struct App {
     ApplyAccountFonts();
     RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN);
   }
-  void BindingMenu(HWND control,POINT){
+  void BindingMenu(HWND control,POINT point){
     auto it=std::find(binding_buttons.begin(),binding_buttons.end(),control);if(it==binding_buttons.end())return;
     CancelCapture();binding_index=static_cast<int>(std::distance(binding_buttons.begin(),it));
-    SetBinding(binding_index,{});
+    const auto alternatives=BindingAlternatives(edited_bindings[binding_index]);
+    HMENU menu=CreatePopupMenu();if(!menu)throw std::runtime_error("Could not create keyboard binding menu");
+    const auto brush=CreateSolidBrush(kPopupBackground);
+    struct Release{HMENU menu;HBRUSH brush;~Release(){DestroyMenu(menu);DeleteObject(brush);}} release{menu,brush};
+    MENUINFO info{sizeof(info)};info.fMask=MIM_BACKGROUND;info.hbrBack=brush;SetMenuInfo(menu,&info);
+    AppendMenuW(menu,MF_OWNERDRAW,1,T(L"Add key…",L"Tuş ekle…"));
+    AppendMenuW(menu,MF_OWNERDRAW,2,T(L"Clear all keys",L"Tüm tuşları kaldır"));
+    AppendMenuW(menu,MF_OWNERDRAW,3,T(L"Restore action default",L"Eylemi varsayılana döndür"));
+    // Escape cancels capture; provide an explicit assignment path as well.
+    AppendMenuW(menu,MF_OWNERDRAW,4,T(L"Add Escape",L"Esc ekle"));
+    std::vector<std::wstring> labels;labels.reserve(alternatives.size());
+    if(!alternatives.empty())AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+    for(size_t i=0;i<alternatives.size();++i){labels.push_back(std::wstring(T(L"Remove: ",L"Kaldır: "))+Wide(alternatives[i]));AppendMenuW(menu,MF_OWNERDRAW,100+i,labels.back().c_str());}
+    if(point.x==-1&&point.y==-1){RECT r{};GetWindowRect(control,&r);point={r.left,r.bottom};}
+    const auto choice=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_NONOTIFY|TPM_LEFTALIGN,point.x,point.y,0,window,nullptr);
+    if(choice==1)BeginBindingCapture(binding_index,true);
+    else if(choice==2)SetBinding(binding_index,{});
+    else if(choice==3)SetBinding(binding_index,kBindings[binding_index].defaults);
+    else if(choice==4)SetBinding(binding_index,AddBindingAlternative(edited_bindings[binding_index],"Escape"));
+    else if(choice>=100&&choice-100<alternatives.size())SetBinding(binding_index,RemoveBindingAlternative(edited_bindings[binding_index],choice-100));
   }
   void SaveSettings() {
     settings=GetControls(); settings.Store(config.table);
@@ -683,13 +711,14 @@ struct App {
         auto c=FindControl(id);if(checks.contains(c)){if(id==kAchievementPopup||id==kAchievementSound){SaveAchievementOption(id);return;}SetCheck(c,!Checked(c));return;}
         if(id>=kNavGraphics && id<=kNavMultiplayer){ShowPage(id-kNavGraphics);return;}
         if(id>=kCaptureBase && id<kCaptureBase+static_cast<int>(kBindings.size())){CancelCapture();binding_index=id-kCaptureBase;id=kCapture;}
+        if(id>=kAddBindingBase && id<kAddBindingBase+static_cast<int>(kBindings.size())){BeginBindingCapture(id-kAddBindingBase,true);return;}
         switch(id){
           case kUpdateNotice:ToggleUpdatePanel();break;
           case kUpdateClose:if(update_open)ToggleUpdatePanel();break;
           case kUpdateNow:StartUpdateDownload();break;
           case kUpdateCancel:if(!update_preparing)update_cancelled=true;break;
           case kAdaptiveTriggers:AdaptiveDialog(window,font,turkish,scale,settings.adaptive).Show();break;
-          case kCapture:CancelCapture();capturing=true;SetFocus(binding_buttons[binding_index]);RefreshBinding(binding_index);
+          case kCapture:BeginBindingCapture(binding_index,false);
             break;
           case kClearBinding:CancelCapture();SetBinding(binding_index,{});break;
           case kResetBinding:CancelCapture();SetBinding(binding_index,kBindings[binding_index].defaults);break;

@@ -1,0 +1,125 @@
+#include "social.h"
+#include "social_codec.h"
+#include "relay.h"
+#include <rex/system/kernel_state.h>
+#include "../../third_party/nlohmann/json.hpp"
+#include <rex/system/xam/user_profile.h>
+#include <atomic>
+#include <charconv>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
+
+namespace motogp::online::social {
+namespace {
+using Json=nlohmann::json;
+uint64_t Peer(const std::string& text) {
+  uint64_t value=0;
+  const auto result=std::from_chars(text.data(),text.data()+text.size(),value,16);
+  if(text.size()!=16||result.ec!=std::errc{}||result.ptr!=text.data()+text.size()||
+      (value&0xFFFFFFFFFF000000ull)!=0x0009000000000000ull||!(value&0xFFFFFF))throw std::runtime_error("Invalid social player identity");
+  return value;
+}
+std::string Hex(uint64_t value) {
+  std::string text(16,'0');constexpr char hex[]="0123456789abcdef";
+  for(int i=15;i>=0;--i){text[i]=hex[value&15];value>>=4;}return text;
+}
+std::vector<uint8_t> Unhex(const std::string& text) {
+  if(text.empty()||text.size()>2800||text.size()%2)throw std::runtime_error("Invalid invited room");
+  std::vector<uint8_t> out;
+  for(size_t i=0;i<text.size();i+=2){unsigned value=0;const auto result=std::from_chars(text.data()+i,text.data()+i+2,value,16);
+    if(result.ec!=std::errc{}||result.ptr!=text.data()+i+2)throw std::runtime_error("Invalid invited room");out.push_back(uint8_t(value));}
+  return out;
+}
+class State {
+ public:
+  State(rex::system::KernelState* kernel,std::shared_ptr<Client> client):kernel_(kernel),client_(std::move(client)),worker_([this]{Run();}){}
+  ~State(){Stop();}
+  void Stop(){
+    {std::lock_guard lock(mutex_);stopping_=true;}changed_.notify_all();
+    if(worker_.joinable())worker_.join();
+  }
+  Snapshot Read(){std::lock_guard lock(mutex_);return snapshot_;}
+  bool Queue(Json action){
+    std::lock_guard lock(mutex_);
+    if(stopping_||!snapshot_.supported||queue_.size()>=8)return false;
+    snapshot_.action="sending";snapshot_.error.clear();
+    queue_.push_back(std::move(action));changed_.notify_one();return true;
+  }
+  std::optional<lan::Room> Room(){std::lock_guard lock(mutex_);return accepted_;}
+  std::optional<std::array<uint8_t,84>> Info(){
+    std::lock_guard lock(mutex_);if(!accepted_)return {};
+    return InviteInfo(kernel_->user_profile()->xuid(),accepted_inviter_,*accepted_);
+  }
+ private:
+  void Run(){
+    bool first=true;
+    for(;;){
+      Json request={{"action","poll"}};
+      {
+        std::unique_lock lock(mutex_);
+        if(!first)changed_.wait_for(lock,std::chrono::seconds(snapshot_.supported?3:15),[&]{return stopping_||!queue_.empty();});
+        if(stopping_)return;
+        if(!queue_.empty()){request=std::move(queue_.front());queue_.pop_front();}
+      }
+      first=false;
+      try {
+        const auto body=request.dump();
+        const auto raw=client_->Social({reinterpret_cast<const uint8_t*>(body.data()),body.size()});
+        const auto reply=Json::parse(raw);
+        Snapshot next;next.loaded=true;next.supported=reply.value("supported",false);next.can_invite=reply.value("can_invite",false);next.action=request.value("action","");
+        if(next.supported){
+          const auto& friends=reply.at("friends");const auto& invites=reply.at("invites");
+          if(!friends.is_array()||friends.size()>100||!invites.is_array()||invites.size()>16)throw std::runtime_error("Invalid social snapshot");
+          for(const auto& row:friends){auto name=row.at("name").get<std::string>();const auto peer=Peer(row.at("peer").get<std::string>());
+            (void)FriendRecord(peer,name);
+            next.friends.push_back({peer,std::move(name),row.at("online").get<bool>()});}
+          for(const auto& row:invites){auto id=row.at("id").get<std::string>();auto from=row.at("from").get<std::string>();
+            if(id.size()!=16||from.empty()||from.size()>15)throw std::runtime_error("Invalid invitation");next.invites.push_back({std::move(id),std::move(from)});}
+        }
+        std::optional<lan::Room> accepted;
+        uint64_t inviter=0;
+        if(reply.contains("accepted")){
+          if(request.value("action","")!="accept")throw std::runtime_error("Unexpected accepted invitation");
+          const auto& row=reply.at("accepted");accepted=lan::DecodeRoom(Unhex(row.at("room").get<std::string>()));
+          inviter=Peer(row.at("from").get<std::string>());
+          if(!accepted||!accepted->id||accepted->state||accepted->members>=accepted->capacity)throw std::runtime_error("Invalid invited room");
+          (void)Peer(Hex(accepted->host)); // Validate the host's MotoGP namespace independently of the inviter.
+          accepted->endpoint=VirtualEndpoint(accepted->host);
+        }
+        {
+          std::lock_guard lock(mutex_);if(stopping_)return;
+          snapshot_=std::move(next);if(accepted){accepted_=std::move(accepted);accepted_inviter_=inviter;}
+        }
+        if(accepted)kernel_->BroadcastNotification(0x02000002,0); // XN_LIVE_INVITE_ACCEPTED, primary user.
+      }catch(const std::exception&){
+        std::lock_guard lock(mutex_);if(stopping_)return;
+        snapshot_.loaded=true;snapshot_.action=request.value("action","");snapshot_.error="Friends/invites service unavailable";
+      }
+    }
+  }
+  rex::system::KernelState* kernel_;
+  std::shared_ptr<Client> client_;
+  std::mutex mutex_;
+  std::condition_variable changed_;
+  bool stopping_=false;
+  Snapshot snapshot_;
+  std::optional<lan::Room> accepted_;
+  uint64_t accepted_inviter_=0;
+  std::deque<Json> queue_;
+  std::thread worker_;
+};
+std::atomic<std::shared_ptr<State>> current;
+std::atomic<bool> open_requested{false};
+}
+void Start(rex::system::KernelState* kernel,std::shared_ptr<Client> client){Stop();if(kernel&&client)current.store(std::make_shared<State>(kernel,std::move(client)));}
+void Stop(){open_requested=false;if(auto state=current.exchange({}))state->Stop();}
+Snapshot Read(){if(auto state=current.load())return state->Read();return {};}
+bool Send(uint64_t peer){if(auto state=current.load())return state->Queue({{"action","send"},{"to",Hex(peer)}});return false;}
+bool Answer(const std::string& id,bool accept){if(auto state=current.load())return state->Queue({{"action",accept?"accept":"decline"},{"id",id}});return false;}
+std::optional<lan::Room> AcceptedRoom(){if(auto state=current.load())return state->Room();return {};}
+std::optional<std::array<uint8_t,84>> AcceptedInfo(){if(auto state=current.load())return state->Info();return {};}
+void RequestOpen(){open_requested=true;}
+bool ConsumeOpenRequest(){return open_requested.exchange(false);}
+}

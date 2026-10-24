@@ -46,7 +46,7 @@ class Model {
 };
 struct View {
   Page page=Page::General;
-  std::string capture;bool capture_wait=true;
+  std::string capture;bool capture_wait=true,capture_append=false;
   std::map<std::string,std::string> edits;
   bool saved=false;
 };

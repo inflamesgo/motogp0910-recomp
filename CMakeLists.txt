@@ -39,12 +39,18 @@ add_executable(online_service_probe EXCLUDE_FROM_ALL tools/online_service_probe.
 target_link_libraries(online_service_probe PRIVATE motogp_lan)
 add_executable(relay_crypto_probe EXCLUDE_FROM_ALL tools/relay_crypto_probe.cpp)
 target_link_libraries(relay_crypto_probe PRIVATE motogp_lan)
+add_executable(online_social_probe EXCLUDE_FROM_ALL tools/online_social_probe.cpp)
+target_link_libraries(online_social_probe PRIVATE motogp_lan)
 if(WIN32)
     add_executable(online_https_probe EXCLUDE_FROM_ALL tools/online_https_probe.cpp)
     target_link_libraries(online_https_probe PRIVATE motogp_lan)
 endif()
-add_library(motogp_lan_guest STATIC src/lan/guest_bridge.cpp src/lan/socket_bridge.cpp src/lan/metadata.cpp src/online/stats.cpp)
-target_link_libraries(motogp_lan_guest PUBLIC motogp_lan rex::runtime)
+add_library(motogp_social STATIC src/online/social.cpp)
+target_include_directories(motogp_social PUBLIC src)
+target_link_libraries(motogp_social PUBLIC motogp_lan rex::runtime)
+rexglue_apply_target_settings(motogp_social)
+add_library(motogp_lan_guest STATIC src/lan/guest_bridge.cpp src/lan/socket_bridge.cpp src/lan/metadata.cpp src/online/stats.cpp src/online/social_guest.cpp)
+target_link_libraries(motogp_lan_guest PUBLIC motogp_lan motogp_social rex::runtime)
 rexglue_apply_target_settings(motogp_lan_guest)
 add_executable(leaderboard_filter_probe EXCLUDE_FROM_ALL tools/leaderboard_filter_probe.cpp)
 target_include_directories(leaderboard_filter_probe PRIVATE src)
@@ -59,7 +65,9 @@ if(WIN32)
     target_link_libraries(motogp_achievements PUBLIC winmm)
 endif()
 add_executable(achievement_ui_probe EXCLUDE_FROM_ALL tools/achievement_ui_probe.cpp src/nobk_panel.cpp)
+target_compile_definitions(achievement_ui_probe PRIVATE MOTOGP_NOBK_VISUAL_PROBE=1)
 target_link_libraries(achievement_ui_probe PRIVATE motogp_achievements)
+target_link_libraries(achievement_ui_probe PRIVATE motogp_social)
 rexglue_apply_target_settings(achievement_ui_probe)
 if(WIN32)
     target_link_libraries(achievement_ui_probe PRIVATE winhttp)
@@ -252,11 +260,18 @@ else()
 endif()
 
 rexglue_setup_target(motogp0910 GPU_PLUGINS xenos)
+if(TARGET motogp0910_recomp)
+    target_sources(motogp0910_recomp PRIVATE src/bike_capacity.cpp)
+endif()
 add_custom_command(TARGET motogp0910 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:motogp0910>/resources/ui"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/open-sans/OpenSans-Semibold.ttf"
-        "$<TARGET_FILE_DIR:motogp0910>/resources/ui/OpenSans-Semibold.ttf")
+        "$<TARGET_FILE_DIR:motogp0910>/resources/ui/OpenSans-Semibold.ttf"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/launcher-fonts/OpenSans-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/launcher-fonts/OpenSans-Bold.ttf"
+        "$<TARGET_FILE_DIR:motogp0910>/resources/ui")
 target_link_libraries(motogp0910 PRIVATE motogp_discord motogp_lan_guest motogp_achievements motogp_settings motogp_local_splitscreen)
 
 add_executable(button_prompt_input_probe EXCLUDE_FROM_ALL tools/button_prompt_input_probe.cpp)
@@ -311,6 +326,10 @@ endif()
 # Optional integration check: real generated game code + patched XEX data,
 # without initializing presentation or claiming that gameplay works.
 if(TARGET motogp0910_recomp)
+    add_executable(bike_capacity_probe EXCLUDE_FROM_ALL tools/bike_capacity_probe.cpp)
+    target_include_directories(bike_capacity_probe PRIVATE ${REXGLUE_ENTRYPOINT_INCLUDE_DIR})
+    target_link_libraries(bike_capacity_probe PRIVATE motogp0910_recomp rex::runtime)
+    rexglue_apply_target_settings(bike_capacity_probe)
     if(WIN32)
         add_executable(in_game_settings_probe EXCLUDE_FROM_ALL tools/in_game_settings_probe.cpp src/in_game_settings_input.cpp src/frame_pacing.cpp)
         target_include_directories(in_game_settings_probe PRIVATE ${REXGLUE_ENTRYPOINT_INCLUDE_DIR})

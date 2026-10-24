@@ -38,6 +38,7 @@ NATIVE_COLUMNS = {1:1, 2:1, 3:2, 4:1, 5:1, 6:1, 7:1, 13:1, 0x8011:1}
 # Also support the isolated python.org Windows embeddable runtime.
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from security import Invalid, Limited, Bucket, Limits, parse_headers, credential_header, client_ip, read_proxy_secret, network_key
+from social import Social
 
 class Reader:
     def __init__(self, data): self.data, self.pos = data, 0
@@ -322,8 +323,8 @@ class Service(asyncio.DatagramProtocol):
         self.clients, self.tickets, self.rooms = {}, {}, {}
         self.limits = Limits()
         # Only existing authenticated profiles can allocate this separate pool.
-        # Four endpoint budgets per persistent player fit even at capacity.
-        self.profile_limits = Limits(4*max(store.max_players,store.player_count))
+        # Six budgets include the optional social route and invite-send quota.
+        self.profile_limits = Limits(6*max(store.max_players,store.player_count))
         self.registrations = Bucket(1,200)
         self.http_connections = 0
         self.http_ips = {}
@@ -347,6 +348,7 @@ class Service(asyncio.DatagramProtocol):
         self.account_api = None
         self.require_account = False
         self.account_checks = Bucket(5,20)
+        self.social = Social(self)
     def connection_made(self, transport):
         self.transport=transport
         self.udp_port=transport.get_extra_info('sockname')[1]
@@ -728,16 +730,19 @@ class Service(asyncio.DatagramProtocol):
                     # The site account answer arrives first, off the event loop, so
                     # a slow account service never delays the UDP relay.
                     account,username=await asyncio.to_thread(self.verify_account,self.link_token(body))
-                if not self.db_cpu.take(0.001):raise Limited('storage work limit')
-                began=time.monotonic();self.store.deadline=began+0.05
-                try:
-                    if path=='/v2/link':
-                        self.store.link(credential,account,username);response=username.encode('utf-8')
-                        LOG.info('Linked NOBK Online account %d',account)
-                    else:response=self.handle(path,credential,body)
-                finally:
-                    self.store.deadline=0
-                    self.db_cpu.tokens=max(0,self.db_cpu.tokens-(time.monotonic()-began))
+                if path=='/v2/social':
+                    response=await self.social.dispatch(credential,body)
+                else:
+                    if not self.db_cpu.take(0.001):raise Limited('storage work limit')
+                    began=time.monotonic();self.store.deadline=began+0.05
+                    try:
+                        if path=='/v2/link':
+                            self.store.link(credential,account,username);response=username.encode('utf-8')
+                            LOG.info('Linked NOBK Online account %d',account)
+                        else:response=self.handle(path,credential,body)
+                    finally:
+                        self.store.deadline=0
+                        self.db_cpu.tokens=max(0,self.db_cpu.tokens-(time.monotonic()-began))
                 status=200
         except Limited as error:status,response=429,str(error).encode()[:128]
         except (ValueError,UnicodeError,asyncio.IncompleteReadError,asyncio.LimitOverrunError,TimeoutError) as error:
@@ -834,6 +839,7 @@ async def run(args):
         except OSError:LOG.debug('OS kept the default UDP socket buffer')
     service.live_snapshot=args.live_snapshot
     service.account_api=args.account_api;service.require_account=args.require_account
+    service.social.friends_api=args.friends_api
     if args.require_account and not args.account_api:raise Invalid('--require-account needs --account-api')
     server=ControlServer(service,args.http_bind,args.http_port,ssl_context)
     task=asyncio.create_task(service.housekeeping())
@@ -850,6 +856,7 @@ def main():
     p.add_argument('--database',default='data/community.sqlite3')
     p.add_argument('--leaderboards',default=str(Path(__file__).with_name('leaderboards.json')))
     p.add_argument('--account-api',help='NOBK Online launcher sign-in API on this machine, e.g. http://127.0.0.1:8090/api/account/launcher')
+    p.add_argument('--friends-api',help='Public NOBK friends endpoint prefix, e.g. http://127.0.0.1:8090/api/account/friends_of?name=; enables lobby invitations')
     p.add_argument('--require-account',action='store_true',help='Online play only for profiles linked to a NOBK Online account')
     p.add_argument('--live-snapshot',help='Write a public JSON summary of online players/rooms here every 5 s (for the website)')
     p.add_argument('--proxy-secret-file',help='Shared private key file; requires authenticated local Caddy proxy headers')

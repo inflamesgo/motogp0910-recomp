@@ -63,7 +63,7 @@ std::vector<uint8_t> Credential(const std::filesystem::path& requested,const std
  if(!ok){DeleteFileW(path.c_str());throw std::runtime_error("Cannot save online profile");}return secret;
 }
 #endif
-std::vector<uint8_t> Post(const std::string& origin,const std::string& credential,const std::string& path,std::span<const uint8_t> body){
+std::vector<uint8_t> Post(const std::string& origin,const std::string& credential,const std::string& path,std::span<const uint8_t> body,bool social=false){
 #ifdef _WIN32
  const Url url(origin);
  // Local development traffic stays on this machine; external HTTPS continues
@@ -71,7 +71,7 @@ std::vector<uint8_t> Post(const std::string& origin,const std::string& credentia
  const bool loopback=url.host==L"127.0.0.1" || url.host==L"localhost";
  Handle session{WinHttpOpen(L"MotoGP0910-Community/2",loopback?WINHTTP_ACCESS_TYPE_NO_PROXY:WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,WINHTTP_NO_PROXY_NAME,WINHTTP_NO_PROXY_BYPASS,0)};
  // A loading game keeps the CPU busy: allow a slow TLS handshake and DNS (12002 otherwise).
- if(!session.value || !WinHttpSetTimeouts(session,0,15000,20000,20000))throw std::runtime_error("Cannot initialize online HTTPS connection");
+ if(!session.value || !WinHttpSetTimeouts(session,social?1000:0,social?2000:15000,social?2000:20000,social?2000:20000))throw std::runtime_error("Cannot initialize online HTTPS connection");
  Handle connection{WinHttpConnect(session,url.host.c_str(),url.port,0)};
  Handle request{connection.value?WinHttpOpenRequest(connection,L"POST",Wide(path).c_str(),nullptr,WINHTTP_NO_REFERER,WINHTTP_DEFAULT_ACCEPT_TYPES,url.secure?WINHTTP_FLAG_SECURE:0):nullptr};
  if(!request.value)throw std::runtime_error("Cannot open community server request");
@@ -79,7 +79,13 @@ std::vector<uint8_t> Post(const std::string& origin,const std::string& credentia
  const auto headers=L"Authorization: Bearer "+Wide(credential)+L"\r\nContent-Type: application/octet-stream\r\n";
  if(body.size()>65536 || !WinHttpSendRequest(request,headers.c_str(),static_cast<DWORD>(headers.size()),body.empty()?WINHTTP_NO_REQUEST_DATA:const_cast<uint8_t*>(body.data()),static_cast<DWORD>(body.size()),static_cast<DWORD>(body.size()),0) || !WinHttpReceiveResponse(request,nullptr))throw std::runtime_error("Community server is unreachable or HTTPS verification failed (Windows error "+std::to_string(GetLastError())+")");
  DWORD status=0,length=sizeof(status);if(!WinHttpQueryHeaders(request,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,nullptr,&status,&length,nullptr))throw std::runtime_error("Invalid community server HTTP response");
- const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(25);
+ // Older deployments may not expose the optional invitation route yet.
+ // Authentication failures and errors on other routes must remain failures.
+ if(social&&(status==404||status==405)) {
+  const std::string unsupported="{\"supported\":false}";
+  return {unsupported.begin(),unsupported.end()};
+ }
+ const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(social?5:25);
  std::vector<uint8_t> result;std::array<uint8_t,4096> chunk{};DWORD count=0;
  while(WinHttpReadData(request,chunk.data(),static_cast<DWORD>(chunk.size()),&count)){
   if(std::chrono::steady_clock::now()>deadline)throw std::runtime_error("Community server response timed out");
@@ -93,6 +99,7 @@ std::vector<uint8_t> Post(const std::string& origin,const std::string& credentia
 }
 }
 std::vector<uint8_t> Client::Request(const std::string& path,std::span<const uint8_t> body)const{return Post(url_,credential_,path,body);}
+std::vector<uint8_t> Client::Social(std::span<const uint8_t> body)const{return Post(url_,credential_,"/v2/social",body,true);}
 std::string LinkAccount(std::string url,const std::string& token,const std::filesystem::path& profile){
 #ifdef _WIN32
  // Same origin spelling and profile file as Client, so the game later connects

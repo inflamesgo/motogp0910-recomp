@@ -80,6 +80,8 @@ def main():
     shutil.copy2(ROOT / "resources/localization/tr/manifest.json", STAGE / "resources/localization/tr/manifest.json")
     (STAGE / "resources/ui").mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "third_party/open-sans/OpenSans-Semibold.ttf", STAGE / "resources/ui/OpenSans-Semibold.ttf")
+    for name in ("OpenSans-Regular.ttf", "OpenSans-Bold.ttf"):
+        shutil.copy2(ROOT / "third_party/launcher-fonts" / name, STAGE / "resources/ui" / name)
     steam_target = STAGE / "resources/steam"
     steam_target.mkdir(parents=True, exist_ok=True)
     for name in ("icon.png", "logo.png", "banner.png", "cover.png", "wide.png"):

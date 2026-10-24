@@ -2,6 +2,7 @@
 #include "../src/achievement_ui.h"
 #include "../src/audio_settings.h"
 #include "../src/nobk_panel.h"
+#include "../src/nobk_panel_visuals.h"
 #include "../src/in_game_settings.h"
 #include <rex/cvar.h>
 #include <rex/input/input_system.h>
@@ -11,6 +12,7 @@
 #include <rex/ui/window.h>
 #include <rex/ui/windowed_app_context.h>
 #include <rex/ui/keybinds.h>
+#include <rex/ui/immediate_drawer.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -18,11 +20,17 @@
 #include <iostream>
 #include <stdexcept>
 #include <thread>
+#include <set>
 // Isolated panel fixture: no guest game, public HTTP requests or quit dialog.
 REXCVAR_DEFINE_STRING(network_mode,"offline","Network","Panel mode fixture");
 REXCVAR_DEFINE_STRING(online_server,"https://motogp.nobkonline.com","Network","Panel service fixture");
 REXCVAR_DEFINE_STRING(lan_player_name,"","Network","Empty name prevents HTTP worker startup");
 namespace motogp::quit { bool Pending(){return false;} }
+// Isolate the real F1 renderer from guest draw hooks and physical devices.
+namespace motogp::prompts {
+Style probe_style=Style::Keyboard;
+Style CurrentStyle(){return probe_style;}
+}
 using namespace motogp::achievements;
 using rex::system::AchievementInfo;
 using rex::system::AchievementEvent;
@@ -32,19 +40,44 @@ class TestContext final:public rex::ui::WindowedAppContext {
 };
 int checks=0;
 void Check(bool ok,const char* message) {if(!ok) throw std::runtime_error(message);++checks;}
+class CapturedTexture final:public rex::ui::ImmediateTexture {
+ public:
+  CapturedTexture(uint32_t w,uint32_t h,const uint8_t* data):ImmediateTexture(w,h),rgba(data,data+size_t(w)*h*4){}
+  std::vector<uint8_t> rgba;
+};
+class CaptureDrawer final:public rex::ui::ImmediateDrawer {
+ public:
+  std::unique_ptr<rex::ui::ImmediateTexture> CreateTexture(uint32_t w,uint32_t h,rex::ui::ImmediateTextureFilter,bool,const uint8_t* data) override {
+    return std::make_unique<CapturedTexture>(w,h,data);
+  }
+  void BeginDrawBatch(const rex::ui::ImmediateDrawBatch&) override {}
+  void Draw(const rex::ui::ImmediateDraw&) override {}
+  void EndDrawBatch() override {}
+};
 void Dump(const std::filesystem::path& stem) {
   unsigned char* pixels;int w,h;ImGui::GetIO().Fonts->GetTexDataAsRGBA32(&pixels,&w,&h);
   std::ofstream texture(stem.string()+".rgba",std::ios::binary);texture.write(reinterpret_cast<char*>(pixels),w*h*4);
   auto* data=ImGui::GetDrawData();std::ofstream out(stem.string()+".json");
   out<<"{\"size\":["<<data->DisplaySize.x<<','<<data->DisplaySize.y<<"],\"texture\":["<<w<<','<<h<<"],\"lists\":[";
+  std::set<ImTextureID> images;
   for(int l=0;l<data->CmdListsCount;++l) {
     if(l)out<<',';const auto* list=data->CmdLists[l];out<<"{\"v\":[";
     for(int i=0;i<list->VtxBuffer.Size;++i) {if(i)out<<',';auto& v=list->VtxBuffer[i];out<<'['<<v.pos.x<<','<<v.pos.y<<','<<v.uv.x<<','<<v.uv.y<<','<<v.col<<']';}
     out<<"],\"i\":[";for(int i=0;i<list->IdxBuffer.Size;++i) {if(i)out<<',';out<<list->IdxBuffer[i];}
     out<<"],\"cmd\":[";
-    for(int i=0;i<list->CmdBuffer.Size;++i) {if(i)out<<',';auto& c=list->CmdBuffer[i];out<<'['<<c.ClipRect.x<<','<<c.ClipRect.y<<','<<c.ClipRect.z<<','<<c.ClipRect.w<<','<<c.IdxOffset<<','<<c.ElemCount<<','<<c.VtxOffset<<']';}
+    for(int i=0;i<list->CmdBuffer.Size;++i) {if(i)out<<',';auto& c=list->CmdBuffer[i];const auto tex=c.GetTexID();if(tex>1)images.insert(tex);
+      out<<'['<<c.ClipRect.x<<','<<c.ClipRect.y<<','<<c.ClipRect.z<<','<<c.ClipRect.w<<','<<c.IdxOffset<<','<<c.ElemCount<<','<<c.VtxOffset<<','<<tex<<']';}
     out<<"]}";
-  }out<<"]}";
+  }out<<"],\"images\":[";
+  bool first=true;
+  for(const auto id:images) {
+    const auto* image=reinterpret_cast<const CapturedTexture*>(id);
+    const auto file=stem.filename().string()+"-"+std::to_string(id)+".rgba";
+    std::ofstream bytes(stem.parent_path()/file,std::ios::binary);bytes.write(reinterpret_cast<const char*>(image->rgba.data()),image->rgba.size());
+    if(!first)out<<',';first=false;
+    out<<'['<<id<<','<<image->width<<','<<image->height<<",\""<<file<<"\"]";
+  }
+  out<<"]}";
 }
 }
 int main(int argc,char** argv) {try {
@@ -149,17 +182,79 @@ int main(int argc,char** argv) {try {
     rex::ui::ImGuiDrawer drawer(window.get(),100);auto& panel_io=drawer.GetIO();
     panel_io.IniFilename=nullptr;panel_io.LogFilename=nullptr;panel_io.DeltaTime=1.f/60;panel_io.DisplaySize=ImVec2(1280,720);
     auto* panel_font=panel_io.Fonts->AddFontFromFileTTF(argv[1],17,nullptr,ranges);
+    auto* panel_heading=panel_io.Fonts->AddFontFromFileTTF(argv[1],30,nullptr,ranges);
+    const auto input_font=std::filesystem::path(argv[1]);
+    auto regular=input_font.parent_path()/"OpenSans-Regular.ttf",bold=input_font.parent_path()/"OpenSans-Bold.ttf";
+    if(!std::filesystem::is_regular_file(regular))regular=input_font.parent_path().parent_path()/"launcher-fonts/OpenSans-Regular.ttf";
+    if(!std::filesystem::is_regular_file(bold))bold=input_font.parent_path().parent_path()/"launcher-fonts/OpenSans-Bold.ttf";
+    motogp::nobk::ConfigureFonts(panel_io.Fonts,regular.string().c_str(),argv[1],bold.string().c_str());
     panel_io.Fonts->GetTexDataAsRGBA32(&pixels,&tw,&th);panel_io.Fonts->SetTexID(1);
     auto prefs=std::make_shared<Preferences>();prefs->sound=false;
     motogp::nobk::Initialize(nullptr,gate);
-    auto menu=motogp::nobk::CreateMenu(&drawer,window.get(),&manager,panel_font,nullptr,false,nullptr,nullptr,prefs);
+    CaptureDrawer texture_drawer;
+    auto menu=motogp::nobk::CreateMenu(&drawer,window.get(),&manager,panel_font,panel_heading,false,&texture_drawer,nullptr,prefs);
     auto* listener=dynamic_cast<rex::ui::WindowInputListener*>(menu.get());Check(listener!=nullptr,"Panel installs input listener");
-    auto frame=[&]{gate->PollGuest();drawer.GetIO();ImGui::NewFrame();menu->Draw();ImGui::Render();};
+    auto frame=[&]{gate->PollGuest();drawer.GetIO();ImGui::NewFrame();menu->Draw();ImGui::Render();
+      Check(ImGui::GetCurrentContext()->ErrorCountCurrentFrame==0,"F1 layout submits no ImGui errors");};
     auto toggle=[&]{rex::ui::KeyEvent key(window.get(),rex::ui::VirtualKey::kF1,1,false,false,false,false,false);listener->OnKeyDown(key);};
     toggle();frame();frame();
     const bool online=std::string_view(mode)=="online";
     Check(gate->IsOpen()==online,"F1 opens only in Online mode");
     if(online) {
+#ifdef MOTOGP_NOBK_VISUAL_PROBE
+      motogp::nobk::SetVisualFixture(true);
+      for(const auto style:{motogp::prompts::Style::Keyboard,motogp::prompts::Style::Xbox,motogp::prompts::Style::PlayStation}) {
+        motogp::prompts::probe_style=style;
+        for(int i=0;i<40;++i)frame();
+        const auto hints=motogp::nobk::visual::Hints(style);
+        Check(std::string_view(hints.previous)==(style==motogp::prompts::Style::Keyboard?"Q":style==motogp::prompts::Style::Xbox?"LB":"L1"),"F1 previous-tab prompt matches active device");
+        Check(std::string_view(hints.next)==(style==motogp::prompts::Style::Keyboard?"E":style==motogp::prompts::Style::Xbox?"RB":"R1"),"F1 next-tab prompt matches active device");
+        Dump(out/(style==motogp::prompts::Style::Keyboard?"nobk-prompts-keyboard":style==motogp::prompts::Style::Xbox?"nobk-prompts-xbox":"nobk-prompts-playstation"));
+      }
+      motogp::prompts::probe_style=motogp::prompts::Style::Keyboard;
+      for(const char* page:{"friends","server","records","achievements"}) {
+        for(int i=0;i<40;++i)frame();
+        Dump(out/(std::string("nobk-redesign-")+page));
+        if(std::string_view(page)=="records") {
+          ImGuiWindow* body=nullptr;
+          for(auto* candidate:ImGui::GetCurrentContext()->Windows)
+            if(candidate->Active&&std::string_view(candidate->Name).find("##record_list")!=std::string_view::npos)body=candidate;
+          Check(body&&body->ScrollMax.y>0,"Redesigned records remain scrollable");
+          panel_io.AddMousePosEvent(body->InnerRect.Min.x+100,body->InnerRect.Min.y+100);
+          panel_io.AddMouseWheelEvent(0,-3);frame();frame();const float scroll=body->Scroll.y;
+          panel_io.AddMousePosEvent(body->InnerRect.Min.x+120,body->InnerRect.Min.y+120);frame();frame();
+          Check(scroll>0&&std::abs(body->Scroll.y-scroll)<1,"Mouse movement does not undo manual records scrolling");
+        }
+        panel_io.AddKeyEvent(ImGuiKey_E,true);frame();panel_io.AddKeyEvent(ImGuiKey_E,false);frame();
+      }
+      motogp::nobk::SetVisualFixture(true,true);
+      panel_io.DisplaySize=ImVec2(1672,941);motogp::prompts::probe_style=motogp::prompts::Style::PlayStation;
+      panel_io.AddMousePosEvent(1600,900);
+      for(int i=0;i<30;++i)frame();
+      for(int i=0;i<2;++i){panel_io.AddKeyEvent(ImGuiKey_DownArrow,true);frame();panel_io.AddKeyEvent(ImGuiKey_DownArrow,false);frame();}
+      for(int i=0;i<30;++i)frame();
+      Dump(out/"apex-reference");
+      const auto colors=[] {
+        uint64_t hash=1469598103934665603ull;
+        for(const auto* batch:ImGui::GetDrawData()->CmdLists)for(const auto& vertex:batch->VtxBuffer)hash=(hash^vertex.col)*1099511628211ull;
+        return hash;
+      };
+      const auto flag_positions=[] {
+        std::vector<ImVec2> positions;
+        for(const auto* batch:ImGui::GetDrawData()->CmdLists)for(const auto& command:batch->CmdBuffer)if(command.GetTexID()>1)
+          for(unsigned i=0;i<command.ElemCount;++i)positions.push_back(batch->VtxBuffer[batch->IdxBuffer[command.IdxOffset+i]+command.VtxOffset].pos);
+        return positions;
+      };
+      const auto original_colors=colors();const auto original_flags=flag_positions();
+      for(int i=0;i<180;++i)frame();
+      Check(colors()!=original_colors,"Apex highlights animate with elapsed time");
+      const auto moved_flags=flag_positions();
+      Check(original_flags.size()==moved_flags.size()&&std::equal(original_flags.begin(),original_flags.end(),moved_flags.begin(),
+          [](ImVec2 a,ImVec2 b){return a.x==b.x&&a.y==b.y;}),"Animated decorative lines do not shift friend columns or flags");
+      Dump(out/"apex-lines-motion");
+      panel_io.DisplaySize=ImVec2(1280,720);motogp::prompts::probe_style=motogp::prompts::Style::Keyboard;
+      motogp::nobk::SetVisualFixture(false);
+#endif
       const auto old_flags=panel_io.ConfigFlags;const auto old_backend=panel_io.BackendFlags;
       panel_io.AddKeyEvent(ImGuiKey_Q,true);frame();panel_io.AddKeyEvent(ImGuiKey_Q,false);frame();frame();
       auto* context=ImGui::GetCurrentContext();ImGuiWindow* list=nullptr;
@@ -171,7 +266,8 @@ int main(int argc,char** argv) {try {
       Check(list->Scroll.y>before_scroll,"Mouse wheel scrolls the embedded achievement list");
       // Focus the actual search field by mouse, then type shortcut letters.
       ImGuiWindow* body=list->ParentWindow;
-      panel_io.AddMousePosEvent(body->InnerRect.Min.x+100,list->Pos.y-25);panel_io.AddMouseButtonEvent(0,true);frame();
+      // The approved search field shares the filter row and aligns right.
+      panel_io.AddMousePosEvent(list->InnerRect.Max.x-80,list->Pos.y-12);panel_io.AddMouseButtonEvent(0,true);frame();
       panel_io.AddMouseButtonEvent(0,false);frame();
       Check(panel_io.WantTextInput,"Panel achievement search accepts text input");
       for(auto key:{ImGuiKey_Q,ImGuiKey_E,ImGuiKey_W}){panel_io.AddKeyEvent(key,true);panel_io.AddInputCharacter(key==ImGuiKey_Q?'q':key==ImGuiKey_E?'e':'w');frame();panel_io.AddKeyEvent(key,false);frame();}
@@ -180,6 +276,37 @@ int main(int argc,char** argv) {try {
       panel_io.AddKeyEvent(ImGuiKey_A,false);panel_io.AddKeyEvent(ImGuiMod_Ctrl,false);frame();
       panel_io.AddKeyEvent(ImGuiKey_Backspace,true);frame();panel_io.AddKeyEvent(ImGuiKey_Backspace,false);frame();frame();
       Check(list->ScrollMax.y>0,"Clearing the search restores the complete achievement list");
+      ImGui::ClearActiveID();
+      const float scale=motogp::nobk::visual::Measure(panel_io.DisplaySize).scale;
+      const auto click=[&](float x,float y) {
+        panel_io.AddMousePosEvent(x,y);panel_io.AddMouseButtonEvent(0,true);frame();
+        panel_io.AddMouseButtonEvent(0,false);frame();
+        // Button actions happen on release; ImGui updates ScrollMax from the
+        // new content extent at the next BeginChild, one frame later.
+        frame();
+      };
+      const float all_scroll=list->ScrollMax.y;
+      const float filters_y=body->InnerRect.Min.y+181*scale;
+      click(body->InnerRect.Min.x+239*scale,filters_y);
+      Check(list->ScrollMax.y<all_scroll,"F1 Unlocked filter displays the smaller earned catalog");
+      click(body->InnerRect.Min.x+79*scale,filters_y);
+      Check(list->ScrollMax.y>0,"F1 All filter restores the complete scrollable catalog");
+      const float controls_y=list->Pos.y+list->Size.y+35*scale;
+      const float popup_x=body->InnerRect.Min.x+48*scale;
+      const bool original_popup=prefs->popup.load();
+      click(popup_x,controls_y);
+      Check(prefs->popup.load()!=original_popup,"Restyled pop-up checkbox updates shared preferences");
+      click(popup_x,controls_y);
+      Check(prefs->popup.load()==original_popup,"Pop-up preference can be restored through the same control");
+      const int original_volume=prefs->volume.load();const float volume_x=body->InnerRect.Max.x-90*scale;
+      click(volume_x,controls_y);
+      Check(prefs->volume.load()>original_volume+10,"Thin volume slider retains mouse value changes");
+      panel_io.AddKeyEvent(ImGuiMod_Ctrl,true);frame();click(volume_x,controls_y);
+      Check(panel_io.WantTextInput,"Volume slider retains native Ctrl-click numeric input");
+      panel_io.AddKeyEvent(ImGuiKey_A,true);frame();panel_io.AddKeyEvent(ImGuiKey_A,false);panel_io.AddKeyEvent(ImGuiMod_Ctrl,false);frame();
+      const auto volume_text=std::to_string(original_volume);panel_io.AddInputCharactersUTF8(volume_text.c_str());frame();
+      panel_io.AddKeyEvent(ImGuiKey_Enter,true);frame();panel_io.AddKeyEvent(ImGuiKey_Enter,false);frame();
+      Check(prefs->volume.load()==original_volume,"Numeric volume edit restores the original preference");
       ImGui::ClearActiveID();
       for(bool tr:{false,true})for(ImVec2 size:{ImVec2(1280,720),ImVec2(1920,1080),ImVec2(640,480)}) {
         prefs->turkish=tr;panel_io.DisplaySize=size;frame();frame();

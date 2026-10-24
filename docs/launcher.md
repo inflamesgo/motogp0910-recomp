@@ -206,10 +206,36 @@ on the next game launch.
 ## Keyboard and controllers
 
 All 25 SDK controller actions appear as rounded key buttons in a scrollable list.
-Click a button, then press a key or chord. Escape cancels capture; right-click
-clears the binding. Reset keys restores only keyboard mappings, while Defaults
-resets all launcher-managed settings. Existing alternative key lists remain
-supported and are preserved until that action is rebound.
+Click the main button to replace an action's assigned keys, or its **+** button
+to append another key or chord without losing existing alternatives. Duplicate
+alternatives are ignored, including equivalent modifier order and Ctrl/Control
+aliases. Right-click the main button to remove individual alternatives, clear
+the action, restore its default, or add Escape. Escape itself cancels capture.
+Reset keys restores only keyboard mappings, while Defaults resets all
+launcher-managed settings. F2 live settings provide the same append and
+individual-removal actions, plus a comma-separated editable text field.
+
+| Action (native Default control preset) | Keyboard default |
+| --- | --- |
+| Accelerate / front brake | W / S |
+| Turn left / right | A / D |
+| Rider weight forward / backward | Up / Down |
+| Rear brake | Space |
+| Gear up / down | E / Q, Backspace |
+| Tuck in / confirm | R, Return |
+| Change camera / look behind | V / C |
+| Second Chance / pause | Tab / Escape |
+| Celebration / alternate camera / apology / angry gesture | 1 / 2 / 3 / 4 |
+
+These remain virtual controller bindings: R and Return both produce A/Cross;
+Q and Backspace both produce B/Circle. Menu and racing actions are not split.
+Native alternative control presets still determine the actual gameplay actions.
+The application applies the same defaults on direct starts and launcher starts.
+Exact former shipped defaults migrate when loaded from configuration; a
+custom value identical to an old default cannot be distinguished from that
+default. Other custom values, explicit unbinds, environment, command-line and
+live overrides are preserved. User configuration files are not rewritten until
+the user saves settings.
 
 Actions labeled **Unassigned** start without keyboard bindings. The former
 shipped L3/R3 and right-stick defaults are upgraded to empty bindings when
