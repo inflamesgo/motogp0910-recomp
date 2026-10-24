@@ -1,5 +1,6 @@
 #include "client.h"
 #include "rpc.h"
+#include "update_policy.h"
 #include <chrono>
 #include <utility>
 #ifdef _WIN32
@@ -73,10 +74,14 @@ class Pipe {
 #endif
 }
 void Client::Publish(Activity activity) {
-  const std::lock_guard lock(mutex_);
-  if (activity_ == activity) return;
-  if (activity_.details != activity.details) started_ = Now();
-  activity_ = std::move(activity);
+  {
+    const std::lock_guard lock(mutex_);
+    if (activity_ == activity) return;
+    if (StartsNewRaceTimer(activity_,activity)) started_ = Now();
+    activity_ = std::move(activity);
+    changed_=Clock::now();
+  }
+  wake_.notify_all();
 }
 void Client::Start() {
 #ifdef _WIN32
@@ -94,6 +99,7 @@ void Client::Stop() {
 void Client::Run() {
 #ifdef _WIN32
   uint64_t nonce = 0;
+  UpdatePolicy updates;
   while (running_) {
     try {
       Pipe pipe;
@@ -103,7 +109,6 @@ void Client::Run() {
         Activity sent;
         int64_t sent_started = -1;
         auto deadline = Clock::now() + 5s;
-        auto next_update = Clock::now();
         bool healthy = true;
         while (running_ && healthy) {
           healthy = pipe.Receive(pending);
@@ -123,18 +128,18 @@ void Client::Run() {
             }
           }
           if (!healthy || (!ready && Clock::now() >= deadline)) break;
-          if (ready && Clock::now() >= next_update) {
-            Activity activity;
-            int64_t started;
-            { const std::lock_guard lock(mutex_); activity = activity_; started = started_; }
-            if (activity != sent || started != sent_started) {
+          Activity activity;
+          int64_t started;
+          Clock::time_point changed;
+          { const std::lock_guard lock(mutex_); activity = activity_; started = started_; changed=changed_; }
+          if (ready && (activity != sent || started != sent_started) && updates.Ready(Clock::now(),changed)) {
               healthy = pipe.Send(1, Command(activity, started, GetCurrentProcessId(), ++nonce).dump());
-              sent = std::move(activity); sent_started = started;
-              next_update = Clock::now() + 5s;
-            }
+              if(healthy){updates.Sent(Clock::now());sent=activity;sent_started=started;}
           }
           std::unique_lock lock(mutex_);
-          wake_.wait_for(lock, 100ms, [this] { return !running_; });
+          wake_.wait_for(lock, 50ms, [this,&activity,started] {
+            return !running_||activity_!=activity||started_!=started;
+          });
         }
         if (ready && !running_) pipe.Send(1, Clear(GetCurrentProcessId(), ++nonce).dump());
       }

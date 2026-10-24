@@ -1,6 +1,7 @@
 #include "discord_presence.h"
 #include "discord/activity.h"
 #include "discord/client.h"
+#include "discord/update_policy.h"
 #include <rex/cvar.h>
 #include <rex/memory.h>
 #include <rex/runtime.h>
@@ -48,7 +49,7 @@ void ObserveGuestFrame(uint8_t* base) {
   if (!lock || !guest_runtime) return;
   const auto now = std::chrono::steady_clock::now();
   if (now < next_capture) return;
-  next_capture = now + std::chrono::milliseconds(500);
+  next_capture = now + kCaptureInterval;
   auto snapshot = Capture([&](uint32_t address) { return Read(base, address); },menu_context);
   menu_context=snapshot.context;
   snapshot.network_lan=rex::cvar::Query<std::string>("network_mode")=="lan";

@@ -1,6 +1,7 @@
 #pragma once
 #include "activity.h"
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -20,5 +21,6 @@ class Client {
   std::thread worker_;
   Activity activity_ = Present({});
   int64_t started_ = 0;
+  std::chrono::steady_clock::time_point changed_{};
 };
 }

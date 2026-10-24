@@ -4,12 +4,13 @@
 namespace motogp::discord {
 enum class Menu : uint8_t {
   Unknown, Main, Arcade, Career, Championship, TimeTrial, Multiplayer,
-  Network, LAN, SplitScreen, Settings, Leaderboards, Selection, Lobby, Race
+  Network, LAN, SplitScreen, Settings, Leaderboards, Selection, Lobby, Race, DLC
 };
 // Verified against the patched title's RTTI and native screen manager.
 // Explicit types only: nearby addresses are not assumed to be UI screens.
-inline Menu IdentifyMenu(uint32_t vtable) {
+inline Menu IdentifyMenu(uint32_t vtable,uint32_t frontend=0,Menu previous=Menu::Unknown) {
   static constexpr struct {uint32_t vtable;Menu menu;} screens[]{
+    {0x8200C574,Menu::DLC}, // DLCScreen (three-package browser)
     {0x8200CF7C,Menu::Main}, // MainMenu
     {0x82017284,Menu::Arcade}, // ArcadeBikeMenu
     {0x82017374,Menu::Arcade}, // ArcadeClassMenu
@@ -121,10 +122,24 @@ inline Menu IdentifyMenu(uint32_t vtable) {
     {0x820803DC,Menu::Race}, // TimeTrialContinueRaceScreen
     {0x82080A84,Menu::Race}, // VanillaContinueRaceScreen
   };
-  for(const auto& screen:screens)if(screen.vtable==vtable)return screen.menu;
+  for(const auto& screen:screens)if(screen.vtable==vtable) {
+    // Championship reuses Arcade's class, rider, transmission and track
+    // screens. Their C++ type names do not identify the owning game mode.
+    // The actual Arcade entry remains explicit even with stale frontend data.
+    if(screen.menu==Menu::Arcade&&vtable!=0x8201789C) {
+      if(previous==Menu::Network||previous==Menu::LAN||previous==Menu::SplitScreen||
+          previous==Menu::TimeTrial)return previous;
+      switch(frontend) {
+        case 1:case 4:return Menu::Championship;
+        case 3:return Menu::Career;
+        case 9:case 10:return Menu::SplitScreen;
+      }
+    }
+    return screen.menu;
+  }
   return Menu::Unknown;
 }
-template<class Reader> Menu CurrentMenu(Reader& read) {
+template<class Reader> Menu CurrentMenu(Reader& read,uint32_t frontend=0,Menu previous=Menu::Unknown) {
   // Native GetScreen(8), 8235A150: highest occupied active slot, except slot 3.
   // Read active records, never the adjacent records fading out after a change.
   for(int slot=7;slot>=0;--slot) {
@@ -132,16 +147,28 @@ template<class Reader> Menu CurrentMenu(Reader& read) {
     const auto record=read(0x8336F4B0+uint32_t(slot)*4).value_or(0);
     const auto object=record?read(record).value_or(0):0;
     const auto vtable=object?read(object).value_or(0):0;
-    const auto menu=IdentifyMenu(vtable);
+    const auto menu=IdentifyMenu(vtable,frontend,previous);
     // Unrecognized native popups inherit the underlying recognized menu.
     if(menu!=Menu::Unknown)return menu;
   }
   return Menu::Unknown;
 }
-inline Menu MenuContext(Menu menu,Menu previous) {
+inline Menu MenuContext(Menu menu,Menu previous,uint32_t frontend=0) {
   switch(menu) {
-    case Menu::Race:case Menu::Unknown:case Menu::Settings:case Menu::Leaderboards:return previous;
-    case Menu::Selection:return previous==Menu::Main||previous==Menu::Multiplayer?Menu::Unknown:previous;
+    case Menu::Multiplayer:return Menu::Network;
+    case Menu::Race:case Menu::Unknown:case Menu::Settings:case Menu::Leaderboards:case Menu::DLC:return previous;
+    case Menu::Selection:
+      if((frontend==1||frontend==4)&&previous!=Menu::Network&&previous!=Menu::LAN&&
+          previous!=Menu::SplitScreen&&previous!=Menu::TimeTrial)return Menu::Championship;
+      if(previous==Menu::Unknown||previous==Menu::Main||previous==Menu::Multiplayer) {
+        switch(frontend) {
+          case 2:return Menu::Arcade;
+          case 3:return Menu::Career;
+          case 5:return Menu::TimeTrial;
+          case 9:case 10:return Menu::SplitScreen;
+        }
+      }
+      return previous==Menu::Main||previous==Menu::Multiplayer?Menu::Unknown:previous;
     case Menu::Network:case Menu::Lobby:return previous==Menu::LAN?Menu::LAN:Menu::Network;
     default:return menu;
   }

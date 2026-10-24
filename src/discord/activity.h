@@ -1,5 +1,4 @@
 #pragma once
-#include "roster.h"
 #include "navigation.h"
 #include <cstdint>
 #include <optional>
@@ -19,6 +18,7 @@ struct Snapshot {
   std::string rider, bike;
   Menu menu=Menu::Unknown,context=Menu::Unknown;
   bool network_lan=false;
+  uint32_t phase=0;
   bool operator==(const Snapshot&) const = default;
 };
 namespace detail {
@@ -31,10 +31,15 @@ template<class Reader> std::optional<uint32_t> At(Reader& read,uint32_t base,uin
 template<class Reader> std::string Text(Reader& read,uint32_t pointer,size_t limit=80) {
   if(!pointer||uint64_t(pointer)+limit>0x100000000ull)return {};
   std::string out;
+  uint32_t cached_address=UINT32_MAX,cached_word=0;
   for(size_t i=0;i<limit;++i) {
     const auto address=pointer+uint32_t(i);
-    const auto word=read(address&~3u);if(!word)return {};
-    const auto byte=uint8_t(*word>>(24-8*(address&3)));
+    const auto aligned=address&~3u;
+    if(aligned!=cached_address) {
+      const auto word=read(aligned);if(!word)return {};
+      cached_address=aligned;cached_word=*word;
+    }
+    const auto byte=uint8_t(cached_word>>(24-8*(address&3)));
     if(!byte) {
       for(size_t k=0;k<out.size();) {
         const auto first=uint8_t(out[k++]);if(first<0x80)continue;
@@ -59,33 +64,37 @@ template<class Reader> std::string Bike(Reader& read,uint32_t record) {
   return manufacturer.empty()?model:model.empty()?manufacturer:manufacturer+" "+model;
 }
 template<class Reader> void Driver(Reader& read,uint32_t profile,Snapshot& s) {
-  const bool career=s.mode==6||((s.context==Menu::Career||
-      (s.context==Menu::Unknown&&(s.frontend==3||s.frontend==10))||
-      (s.context==Menu::SplitScreen&&s.frontend==10))&&s.mode>=3&&s.mode<=5);
+  const bool career=s.mode==6||((s.frontend==3||s.frontend==10)&&s.mode>=3&&s.mode<=5);
   const auto selection=At(read,profile,0xF75C4).value_or(0);
+  const auto bikeName=[&](uint32_t id) {
+    const auto table=read(0x829F311C).value_or(0),count=read(0x829F3118).value_or(0);
+    return table&&id<count&&count<=512&&uint64_t(table)+id*44+44<=0x100000000ull
+        ?Bike(read,table+id*44):std::string{};
+  };
   // Career may use a separate selection adapter; never reuse an Arcade bike
   // when its actual event entry cannot be identified.
   if(!career)s.bike=Bike(read,At(read,profile,0xF75CC).value_or(0));
-  if(!career) {
-    const auto id=At(read,profile,0xF75D0).value_or(UINT32_MAX);
-    const auto count=read(0x82946810).value_or(0),table=read(0x82946814).value_or(0);
-    if(count&&count<=256&&table&&id<count&&uint64_t(table)+id*124+8<=0x100000000ull) {
-      const auto key=Text(read,At(read,table+id*124,4).value_or(0));
-      s.rider=RiderName(key);
-    }
+  // Read the same name returned by the selected rider's native virtual +64
+  // getter. The profile's +F75D0 is not a reliable rider index (notably Moto2);
+  // the 124-byte table previously consulted here contains livery metadata.
+  const auto type=At(read,selection).value_or(0);
+  if(type==0x8206BBCC&&!career) { // BuiltInRiderData: 821C2140 / 822F4830.
+    s.rider=Text(read,At(read,selection,12).value_or(0));
+    s.bike=bikeName(At(read,selection,108).value_or(UINT32_MAX));
+  } else if(type==0x82069B9C) { // CustomRiderData: 822EA958.
+    const auto saved=At(read,selection,60).value_or(0);
+    if(saved&&uint64_t(saved)+56+80<=0x100000000ull)s.rider=Text(read,saved+56);
   }
   // The native grid builder stores this exact selection-interface identity.
   // Match it, rather than assuming the first grid entry belongs to the user.
   const auto count=read(0x8291749C).value_or(0);
-  if(!selection||count>64)return;
+  if(!selection||count>20)return;
   for(uint32_t i=0;i<count;++i) {
     const uint32_t entry=0x8291E130+i*1824;
     if(At(read,entry,1768).value_or(0)!=selection)continue;
-    if(career)s.rider=Text(read,entry+1596);
+    if(const auto name=Text(read,entry+1596);!name.empty())s.rider=name;
     const auto bike=At(read,entry,1764).value_or(UINT32_MAX);
-    const auto table=read(0x829F311C).value_or(0),bikes=read(0x829F3118).value_or(0);
-    if(table&&bike<bikes&&bike<512&&uint64_t(table)+bike*44+44<=0x100000000ull)
-      if(const auto name=Bike(read,table+bike*44);!name.empty())s.bike=name;
+    if(const auto name=bikeName(bike);!name.empty())s.bike=name;
     break;
   }
 }
@@ -94,11 +103,20 @@ template<class Reader> void Driver(Reader& read,uint32_t profile,Snapshot& s) {
 template<class Reader> Snapshot Capture(Reader read,Menu previous=Menu::Unknown) {
   Snapshot s;
   s.frontend = read(0x828DA060).value_or(0);
-  s.menu=CurrentMenu(read);
-  s.context=MenuContext(s.menu,previous);
+  s.menu=CurrentMenu(read,s.frontend,previous);
+  s.context=MenuContext(s.menu,previous,s.frontend);
   // Frontend mode and even the race object can survive a return to menus.
   // A currently displayed menu is authoritative and must clear race metadata.
   if(s.menu!=Menu::Unknown&&s.menu!=Menu::Race)return s;
+  // The title renderer at 822AE928 reads this global RaceMode property to
+  // show PRESS START over attract playback. The event's config can instead
+  // contain ordinary practice/qualifying/race modes, and FEMODE/context can
+  // retain an earlier player selection. Read the same property as the game.
+  const auto global_mode=detail::At(read,read(0x8292710C).value_or(0));
+  if(global_mode==15) {
+    s.menu=Menu::Main;s.context=Menu::Main;
+    return s;
+  }
   const auto race = read(0x82942D60).value_or(0);
   if (!race || !read(0x82942DB0).value_or(0)) return s;
   const auto property = [&](uint32_t object, uint32_t offset) -> std::optional<uint32_t> {
@@ -108,10 +126,20 @@ template<class Reader> Snapshot Capture(Reader read,Menu previous=Menu::Unknown)
   };
   if (uint64_t(race) + 0x44 > 0x100000000ull) return s;
   const auto config = read(race + 0x40).value_or(0);
-  const auto mode = property(config, 0x0C);
+  // The per-event config can retain Quick Race (1) even in Time Trial.
+  // Native Time Trial setup 821F6944 writes 10 to the global RaceMode
+  // property instead. Prefer that live value for mode and driver selection.
+  const auto mode = global_mode&&*global_mode>=1&&*global_mode<=16
+      ? global_mode : property(config, 0x0C);
   if (!mode || !*mode || *mode > 16) return s;
+  if(*mode==15) {
+    s.menu=Menu::Main;s.context=Menu::Main;
+    return s;
+  }
   s.event = true;
   s.mode = *mode;
+  const auto config_mode=property(config,0x0C).value_or(0);
+  if(s.mode<=6)s.phase=s.mode>=3&&s.mode<=5?s.mode:config_mode>=3&&config_mode<=5?config_mode:0;
   s.track = read(0x82926FBC).value_or(UINT32_MAX);
   s.season = property(config, 0x244).value_or(UINT32_MAX);
   // Primary local user's frontend profile selection, not the Xbox bike enum.
@@ -161,7 +189,8 @@ inline std::string_view Mode(const Snapshot& s) {
       case Menu::Main:return "Main menu";
       case Menu::Settings:return "Settings";
       case Menu::Leaderboards:return "Leaderboards";
-      case Menu::Multiplayer:return "Multiplayer";
+      case Menu::DLC:return "DLC";
+      case Menu::Multiplayer:return "Online";
       case Menu::Selection: {
         const auto selected=context();return selected.empty()?"Race setup":selected;
       }
@@ -172,7 +201,15 @@ inline std::string_view Mode(const Snapshot& s) {
     }
   }
   if (s.event) {
+    if(s.context==Menu::SplitScreen&&s.mode>=1&&s.mode<=6)return "Split Screen";
+    // FEMODE_VANILLACHAMP identifies the Championship owner, independently of
+    // shared session IDs and a lingering Arcade RaceMode/menu context.
+    if((s.frontend==1||s.frontend==4)&&s.mode>=1&&s.mode<=5)return "Championship";
     switch (s.mode) {
+      // Native Quick Race is the single-race Championship path in the UI.
+      case 1: return "Championship";
+      case 2: return "Arcade";
+      case 6: return "Career";
       case 8: return "Training";
       case 9: return "Tutorial";
       case 10: return "Time Trial";
@@ -181,10 +218,15 @@ inline std::string_view Mode(const Snapshot& s) {
       case 13: return "LAN";
       case 16: return "Replay";
     }
+    if(s.mode>=3&&s.mode<=5) {
+      if(s.context==Menu::Network||s.context==Menu::LAN)return context();
+      if(s.frontend==3||s.frontend==10)return "Career";
+      if(s.frontend==2)return "Arcade";
+    }
   }
   if(const auto selected=context();!selected.empty())return selected;
   switch (s.frontend) {
-    case 1: return "Quick Race";
+    case 1: return "Championship";
     case 2: return "Arcade";
     case 3: case 10: return "Career";
     case 4: return "Championship";
@@ -196,13 +238,12 @@ inline std::string_view Mode(const Snapshot& s) {
   }
   if (s.event) {
     switch (s.mode) {
-      case 1: return "Quick Race";
+      case 1: return "Championship";
       case 2: return "Arcade";
       case 3: case 4: case 5: return "Grand Prix";
       case 6: return "Career";
       case 7: return "Preview";
       case 11: return "Split Screen";
-      case 15: return "Demo";
     }
   }
   return "Main menu";
@@ -211,26 +252,46 @@ struct Activity {
   std::string details, state;
   std::string large_image="motogp_logo",large_text="MotoGP 09/10",small_image,small_text;
   uint32_t party_size=0,party_capacity=0;
+  std::string session_key;
   bool operator==(const Activity&) const = default;
 };
+inline std::string_view SessionKey(const Activity& activity) {
+  return activity.session_key.empty()?std::string_view(activity.details):std::string_view(activity.session_key);
+}
+inline bool StartsNewRaceTimer(const Activity& previous,const Activity& next) {
+  // Menu/lobby text and badges can change without starting another clock.
+  // A track photo marks race activity; a new race/session gets a fresh start.
+  return next.large_image.starts_with("track_")&&
+      (previous.large_image!=next.large_image||SessionKey(previous)!=SessionKey(next));
+}
 inline std::string_view ModeAsset(std::string_view mode) {
   if(mode=="Time Trial")return "mode_time_trial";
   if(mode=="Championship")return "mode_championship";
   if(mode=="Career")return "mode_career";
   if(mode=="Arcade")return "mode_arcade";
   if(mode=="Online")return "mode_online";
-  if(mode=="Quick Race")return "mode_quick_race";
   if(mode=="LAN")return "mode_lan";
   return {};
+}
+inline std::string_view Phase(const Snapshot& s) {
+  const auto phase=s.phase>=3&&s.phase<=5?s.phase:s.mode;
+  switch(phase) {
+    case 1: case 5:return "Race";
+    case 3:return "Practice";
+    case 4:return "Qualifying";
+    default:return {};
+  }
 }
 inline Activity Present(const Snapshot& s) {
   const auto mode=Mode(s);
   Activity a{std::string(mode), {}};
+  a.session_key="menu:"+std::string(mode);
   a.small_image=ModeAsset(mode);
   if(!a.small_image.empty())a.small_text=mode;
   if (!s.event) {
     if (s.lobby) {
       a.details = s.online ? "Online lobby" : "LAN lobby";
+      a.session_key=s.online?"lobby:Online":"lobby:LAN";
       a.small_text=s.online?"Online":"LAN";
       a.small_image=ModeAsset(a.small_text);
       a.state="In lobby";
@@ -243,38 +304,47 @@ inline Activity Present(const Snapshot& s) {
     a.state = a.details == "Main menu" ? "MotoGP 09/10" : "In menus";
     return a;
   }
-  const bool rider_heading=mode=="Arcade"||mode=="Career"||mode=="Championship"||mode=="Time Trial";
-  if(rider_heading) {
-    if(!s.rider.empty())a.details+=" - "+s.rider;
-  } else if (const auto track = Track(s.track); !track.empty()) a.details += " - " + std::string(track);
+  a.session_key="race:"+std::string(mode)+":"+
+      std::to_string(s.track)+":"+std::to_string(s.season)+":"+std::to_string(s.bike_class)+":"+std::string(Phase(s));
+  constexpr std::string_view driver_separator=" | ";
+  const auto append=[](std::string& line,std::string_view value,std::string_view separator=" · ") {
+    if(value.empty())return;
+    if(!line.empty())line+=separator;
+    line+=value;
+  };
+  const auto shorten=[](std::string& text,size_t limit) {
+    if(text.size()<=limit)return;
+    if(limit<3){text.clear();return;}
+    size_t end=limit-3;
+    while(end&&(uint8_t(text[end])&0xC0)==0x80)--end;
+    text.resize(end);text+="...";
+  };
+  append(a.details,Phase(s));
+  std::string category;
   switch (s.bike_class) {
-    case 0: a.state = "MotoGP"; break;
-    case 1: a.state = "125cc"; break;
-    case 2: a.state = s.season == 1 ? "Moto2" : "250cc"; break;
-    case 3: a.state = "Moto2"; break;
+    case 0: category = "MotoGP"; break;
+    case 1: category = "125cc"; break;
+    case 2: category = s.season == 1 ? "Moto2" : "250cc"; break;
+    case 3: category = "Moto2"; break;
   }
   if (s.season <= 1) {
-    if (!a.state.empty()) a.state += " - ";
-    a.state += s.season == 0 ? "2009" : "2010";
+    if (!category.empty()) category += " | ";
+    category += s.season == 0 ? "2009" : "2010";
   }
-  if (s.mode >= 3 && s.mode <= 5) {
-    if (!a.state.empty()) a.state += " - ";
-    a.state += s.mode == 3 ? "Practice" : s.mode == 4 ? "Qualifying" : "Race";
-  }
+  auto rider=s.rider;
+  // Preserve the complete native manufacturer/model. If unusually long custom
+  // rider text exceeds the RPC budget, shorten that name before the bike.
+  if(!rider.empty()&&!s.bike.empty())
+    shorten(rider,s.bike.size()+driver_separator.size()<127?127-s.bike.size()-driver_separator.size():0);
+  append(a.state,rider,driver_separator);
+  append(a.state,s.bike,driver_separator);
   if(const auto asset=TrackAsset(s.track);!asset.empty()) {
     a.large_image=asset;a.large_text=Track(s.track);
-    if(!a.state.empty())a.large_text+=" - "+a.state;
+    append(a.large_text,category);
   }
-  if(rider_heading) {
-    if(!s.bike.empty())a.state=s.bike;
-  } else if(!s.rider.empty()||!s.bike.empty()) {
-    if(s.mode>=3&&s.mode<=5)a.details=std::string(Mode(s))+" - "+(s.mode==3?"Practice":s.mode==4?"Qualifying":"Race")+
-        (Track(s.track).empty()?std::string{}:" - "+std::string(Track(s.track)));
-    a.state=s.rider;
-    if(!s.bike.empty()){if(!a.state.empty())a.state+=" - ";a.state+=s.bike;}
-    // Discord's text fields are bounded; keep UTF-8 characters whole.
-    if(a.state.size()>127){size_t end=124;while((uint8_t(a.state[end])&0xC0)==0x80)--end;a.state.resize(end);a.state+="...";}
-  }
+  // Defensive limit for independently constructed snapshots; native bike
+  // strings are bounded to less than 80 bytes by Bike().
+  shorten(a.state,127);
   return a;
 }
 } // namespace motogp::discord
