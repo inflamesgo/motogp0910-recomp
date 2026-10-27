@@ -21,6 +21,9 @@ void Stop();
 Snapshot Read();
 bool Send(uint64_t peer);
 bool Answer(const std::string& id,bool accept);
+// Authenticated external invitation resolvers reuse the exact native accepted
+// invitation path; this never accepts a room directly from a Discord payload.
+bool AdoptInvitation(const lan::Room& room,uint64_t inviter);
 std::optional<lan::Room> AcceptedRoom();
 std::optional<std::array<uint8_t,84>> AcceptedInfo();
 void RequestOpen();

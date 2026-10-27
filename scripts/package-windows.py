@@ -78,6 +78,11 @@ def main():
                     ignore=None if args.include_readmes else shutil.ignore_patterns("readme*", "README*"))
     shutil.copytree(ROOT / "resources/localization/tr/overlay", STAGE / "resources/localization/tr/overlay")
     shutil.copy2(ROOT / "resources/localization/tr/manifest.json", STAGE / "resources/localization/tr/manifest.json")
+    # User-approved converted donor resources; each JSON embeds its textures.
+    for style in ("motogp17", "motogp06", "motogpurt2", "motogpurt3"):
+        gauge_target = STAGE / "resources/hud" / style
+        gauge_target.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "resources/hud" / style / "gauge.json", gauge_target / "gauge.json")
     (STAGE / "resources/ui").mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "third_party/open-sans/OpenSans-Semibold.ttf", STAGE / "resources/ui/OpenSans-Semibold.ttf")
     for name in ("OpenSans-Regular.ttf", "OpenSans-Bold.ttf"):
@@ -333,6 +338,9 @@ def main():
         assert "bin/motogp0910-launcher.exe" not in package.namelist()
         assert "bin/motogp0910-ui.dll" in package.namelist()
         assert "bin/motogp0910-update-helper.exe" in package.namelist()
+        for style in ("motogp17", "motogp06", "motogpurt2", "motogpurt3"):
+            resource = f"resources/hud/{style}/gauge.json"
+            assert package.read(resource) == (ROOT / resource).read_bytes()
         assert not any(p.startswith("logs/") for p in package.namelist())
         assert not any(p.endswith((".xex", ".xexp")) or p.startswith("assets/")
                        for p in package.namelist())

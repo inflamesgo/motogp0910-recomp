@@ -203,9 +203,25 @@ surround. Mute remains available independently. The game's own audio menu
 continues to provide its separate music/effects options. Launcher edits apply
 on the next game launch.
 
+Mouse-wheel input over launcher sliders scrolls the settings page instead of
+changing their values, including master volume and upscaler sharpness. Dragging,
+clicking the track and keyboard adjustment remain available.
+
+## Discord invitation startup
+
+Discord's registered-game protocol can open the public launcher with
+`--discord-invite`. It selects Online and waits for normal file/DLC readiness,
+sign-in and an enabled Discord setting before running the usual PLAY transaction.
+An already-open launcher receives that activation. No invitation secret is
+passed in arguments or saved to configuration; the game receives Discord's
+deferred IPC join event. See [Discord invitations](discord-invites.md).
+
 ## Keyboard and controllers
 
 All 25 SDK controller actions appear as rounded key buttons in a scrollable list.
+Reset keybinds sits in the top row beside the compact controller selector and
+Enable keyboard checkbox, so restoring the preset does not require scrolling
+to the final binding. Its scope remains keyboard mappings only.
 Click the main button to replace an action's assigned keys, or its **+** button
 to append another key or chord without losing existing alternatives. Duplicate
 alternatives are ignored, including equivalent modifier order and Ctrl/Control
@@ -410,6 +426,13 @@ and crash diagnostics sit side by side below the last row, within the page
 viewport. The F2 live-settings menu exposes the same choices
 and persists them through the shared JSON configuration. Every new setting
 defaults to `game`; existing configurations retain their original behavior.
+
+Checkbox hover help is restricted to the painted square and label footprint,
+including the spacing between them. Blank space to the right and vertical
+margins cannot trigger the popup. These controls use native rectangle tooltip
+tools rather than whole-window ID tools. Text, font and size updates recompute
+the rectangle so localization and scaling keep the hover region aligned.
+Mouse activation remains restricted to the square.
 
 The vignette override scales only the alpha float at `0x8337BE64` during the
 FSFX consumer `0x8237FA00`, restoring its exact original bits on return. Bloom

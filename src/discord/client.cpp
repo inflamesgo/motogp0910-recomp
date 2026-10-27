@@ -83,18 +83,21 @@ void Client::Publish(Activity activity) {
   }
   wake_.notify_all();
 }
-void Client::Start() {
+void Client::Start(JoinHandler join) {
 #ifdef _WIN32
   if (running_.exchange(true)) return;
-  { const std::lock_guard lock(mutex_); started_ = Now(); }
+  { const std::lock_guard lock(mutex_); started_ = Now(); join_=std::move(join); }
   try { worker_ = std::thread([this] { Run(); }); }
   catch (...) { running_ = false; }
+#else
+  (void)join;
 #endif
 }
 void Client::Stop() {
   running_ = false;
   wake_.notify_all();
   if (worker_.joinable()) worker_.join();
+  const std::lock_guard lock(mutex_);join_={};
 }
 void Client::Run() {
 #ifdef _WIN32
@@ -105,6 +108,9 @@ void Client::Run() {
       Pipe pipe;
       if (pipe.Open() && pipe.Send(0, Json{{"v", 1}, {"client_id", kApplicationId}}.dump())) {
         bool ready = false;
+        bool joining=false;
+        JoinHandler join;
+        {const std::lock_guard lock(mutex_);join=join_;}
         std::string pending;
         Activity sent;
         int64_t sent_started = -1;
@@ -123,8 +129,21 @@ void Client::Run() {
             else if (opcode == 1) {
               const auto event = Json::parse(payload, nullptr, false);
               if (!event.is_object()) { healthy = false; break; }
-              if (event.value("evt", Json{}) == "ERROR") healthy = false;
-              if (event.value("cmd", Json{}) == "DISPATCH" && event.value("evt", Json{}) == "READY") ready = true;
+              if (event.value("evt", Json{}) == "ERROR") {
+                // Join subscriptions are optional; an unavailable invitation
+                // capability must not reconnect or break ordinary presence.
+                if(event.value("cmd",Json{})=="SUBSCRIBE")joining=false;
+                else healthy=false;
+              }
+              if (!ready&&event.value("cmd", Json{}) == "DISPATCH" && event.value("evt", Json{}) == "READY") {
+                ready=true;
+                if(join){healthy=pipe.Send(1,SubscribeJoin(++nonce).dump());joining=healthy;}
+              }
+              if(ready&&joining)if(const auto secret=JoinEvent(event)){
+                // The callback only enqueues bounded work; network and native
+                // session changes happen outside the Discord pipe worker.
+                try{join(*secret);}catch(...){}
+              }
             }
           }
           if (!healthy || (!ready && Clock::now() >= deadline)) break;
@@ -132,13 +151,15 @@ void Client::Run() {
           int64_t started;
           Clock::time_point changed;
           { const std::lock_guard lock(mutex_); activity = activity_; started = started_; changed=changed_; }
+          const auto observed=activity;
+          if(!joining){activity.party_id.clear();activity.join_secret.clear();}
           if (ready && (activity != sent || started != sent_started) && updates.Ready(Clock::now(),changed)) {
               healthy = pipe.Send(1, Command(activity, started, GetCurrentProcessId(), ++nonce).dump());
               if(healthy){updates.Sent(Clock::now());sent=activity;sent_started=started;}
           }
           std::unique_lock lock(mutex_);
-          wake_.wait_for(lock, 50ms, [this,&activity,started] {
-            return !running_||activity_!=activity||started_!=started;
+          wake_.wait_for(lock, 50ms, [this,&observed,started] {
+            return !running_||activity_!=observed||started_!=started;
           });
         }
         if (ready && !running_) pipe.Send(1, Clear(GetCurrentProcessId(), ++nonce).dump());

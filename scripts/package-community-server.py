@@ -14,7 +14,7 @@ args=parser.parse_args()
 # The distributable stays stdlib-only; optional fuzzing tools are never needed
 # for this release gate and are never copied into the public server ZIP.
 subprocess.run([sys.executable,'-m','unittest','discover','-s','server','-p','test_*.py'],cwd=root,check=True)
-files=('community_server.py','social.py','security.py','proxy_config.py','leaderboards.json','start-server.sh','start-server.ps1','Caddyfile.example','motogp-online.service.example','motogp-caddy.service.example')
+files=('community_server.py','social.py','discord_invites.py','security.py','proxy_config.py','leaderboards.json','start-server.sh','start-server.ps1','Caddyfile.example','motogp-online.service.example','motogp-caddy.service.example')
 archive=args.archive.resolve()
 archive.parent.mkdir(parents=True,exist_ok=True)
 with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:

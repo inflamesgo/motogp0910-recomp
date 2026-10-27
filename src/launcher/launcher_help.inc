@@ -1,7 +1,9 @@
   // Concise, localized help appears only on hover. The field label also carries
   // the tip so options disabled by another setting can still explain themselves.
   void Tip(HWND control,const wchar_t* en,const wchar_t* tr){
-    const auto text=T(en,tr);help.Set(control,text);
+    const auto text=T(en,tr);
+    if(checks.contains(control))help.Set(control,text,[this](HWND c){return CheckboxTooltipBounds(c,CheckboxBounds(),c==account_remember?font:bold,S(29));});
+    else help.Set(control,text);
     if(auto label=help_labels.find(control);label!=help_labels.end())help.Set(label->second,text);
   }
   void LocalizeUpscalerHelp(){

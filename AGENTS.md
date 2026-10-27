@@ -14,6 +14,10 @@
   it when needed; keep existing historical ZIPs unchanged.
 - Keep original game data, user configuration, saves and personal logs out of
   commits/packages. Preserve historical release ZIPs; use unique archive names.
+  The user explicitly approved the converted, self-contained gauge resources
+  `resources/hud/{motogp17,motogp06,motogpurt2,motogpurt3}/gauge.json` as tracked runtime
+  resources included automatically in future builds/packages. Raw donor
+  archives and other original game data remain excluded.
 - Windows 10/11 x64 is the product target. Distinguish Wine/CPU/UI checks from
   native Windows GPU playthroughs and physical controller testing.
 - Preserve Offline, LAN and community Online modes. Do not make speculative

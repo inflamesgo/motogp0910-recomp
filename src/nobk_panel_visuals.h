@@ -37,6 +37,35 @@ inline float RowOffset(double now,double opened,double changed,int visible,float
 inline ImU32 Color(int r,int g,int b,float alpha=1.f) {
   return IM_COL32(r,g,b,int(std::clamp(alpha,0.f,1.f)*255.f));
 }
+struct Backdrop {
+  float fade_begin,fade_end,radius;
+};
+inline Backdrop BackdropFor(const Layout& layout,ImVec2 viewport) {
+  const float width=std::max(1.f,viewport.x);
+  const float content_right=layout.body_left+layout.body_width;
+  // Keep the last time/score column legible, then feather out over a wide
+  // region. Normalized coordinates also cover DPI scaling and ultrawide.
+  return {std::clamp((content_right-80*layout.scale)/width,0.f,.90f),
+      std::min(1.f,(content_right+520*layout.scale)/width),
+      3.2f*layout.scale/std::max(1.f,viewport.y)};
+}
+inline void SoftScrim(ImDrawList* draw,const Layout& layout,ImVec2 viewport,float alpha) {
+  const auto backdrop=BackdropFor(layout,viewport);
+  constexpr int steps=64;
+  auto opacity=[&](float x){
+    const float normalized=x/std::max(1.f,viewport.x);
+    const float feather=1.f-Smooth((normalized-backdrop.fade_begin)/
+        std::max(.001f,backdrop.fade_end-backdrop.fade_begin));
+    const float left=1.f-Smooth(x/std::max(1.f,layout.body_left));
+    return (.30f+.12f*left)*feather*alpha;
+  };
+  const float end=backdrop.fade_end*viewport.x;
+  for(int i=0;i<steps;++i){
+    const float x0=end*i/steps,x1=end*(i+1)/steps;
+    const auto a=Color(9,12,16,opacity(x0)),b=Color(9,12,16,opacity(x1));
+    draw->AddRectFilledMultiColor(ImVec2(x0,0),ImVec2(x1,viewport.y),a,b,b,a);
+  }
+}
 inline void ApexLines(ImDrawList* draw,float scale,float alpha,double elapsed) {
   // Cover-inspired strands, sampled once. Only light/color moves; neither
   // the path nor the menu shifts. Silver-violet and champagne echo the cover.

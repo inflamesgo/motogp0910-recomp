@@ -3,7 +3,10 @@
 The Windows game publishes local activity to the Discord desktop app using
 Application ID `1562961932061904906`. The application's name in Discord Developer
 Portal determines the displayed game title; set it to **MotoGP 09/10**.
-No bot token, client secret, online account or game server is required.
+Activity display needs no bot token, client secret, online account or game server.
+Optional [Discord lobby invitations](discord-invites.md) use the existing Online
+account/server and native accepted-invitation path. Closed-game acceptance opens
+the public launcher first, preserving sign-in and game-file checks.
 
 **General → Discord → Show Discord activity** enables this feature by default.
 The English/Turkish launcher persists `discord_presence_enabled` in the shared
@@ -59,7 +62,8 @@ Discord must allow activity sharing in its own Activity Privacy settings.
   counter when the existing network bridge reports a current room. The custom
   status is `In lobby`, for example `In lobby (1 of 20)`; Discord controls the
   final counter formatting. The old `1 / 20 riders` text row is removed.
-  Room names and player identities are not published.
+  Room names and player names are not included in party metadata. Joinable
+  sessions can carry the non-secret host/session party ID described below.
 - Elapsed time uses a continuous clock through Main menu, In menus and In lobby.
   Choosing another setup menu, entering/leaving a lobby or updating its player
   count does not restart it. When a circuit photograph appears, the race clock
@@ -70,7 +74,8 @@ Discord must allow activity sharing in its own Activity Privacy settings.
 Unknown metadata is omitted. The reserved Balaton track slot is not presented
 as a playable circuit. DLC circuit slots use the existing title-update mapping.
 The primary local user's selected class, rider and bike are used; other
-split-screen players are not listed. Discord join invites and spectating are outside this feature.
+split-screen players are not listed. Discord join invitations are documented
+separately in [the invitation integration](discord-invites.md).
 
 ## Implementation and verification
 
@@ -83,8 +88,10 @@ previous selection or be reused by network setup. Leaving the event clears
 circuit/class information. Lobby snapshots come from the existing LAN/Online bridge.
 Lobby activity sends `state: "In lobby"` and `party.size: [members, capacity]`.
 Only positive, consistent counts within signed 32-bit limits are sent; unknown
-or invalid counts omit the counter. No room ID or join/spectate secret is needed
-for this display. Count changes participate in activity comparison, so joins and
+or invalid counts omit the counter. A display-only lobby needs no join secret.
+An updated Online service can also publish an opaque, short-lived join capability
+and shared party ID; native keys and account credentials stay out of Discord.
+Count changes participate in activity comparison, so joins and
 leaves use the same responsive capture and publish policy as menu changes
 without resetting the activity timer. Entering a race or leaving a lobby removes
 the party metadata; race rider/bike text is independent of lobby membership.

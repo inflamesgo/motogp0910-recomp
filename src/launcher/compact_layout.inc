@@ -281,7 +281,10 @@
     LabelControl(1,L"Master volume",L"Ana ses düzeyi",0,0,kFormWidth-104);volume_value=PageControl(1,L"STATIC",L"100%",SS_RIGHT,kFormWidth-80,0,80,22);
     volume=PageControl(1,TRACKBAR_CLASSW,L"",WS_TABSTOP|TBS_HORZ|TBS_NOTICKS,0,36,kFormWidth,40,kVolume);SendMessageW(volume,TBM_SETRANGE,TRUE,MAKELPARAM(0,100));
     mute=check(1,0,100,kFormWidth,kMute);
-    backend=field(2,L"Controller",L"Kontrolcü",0,0,kBackend);keyboard=check(2,kColumnX,26,kColumnWidth,kKeyboard);
+    const auto backend_label=LabelControl(2,L"Controller",L"Kontrolcü",0,0,256,24);
+    backend=combo(2,0,26,256,kBackend);help_labels[backend]=backend_label;
+    keyboard=check(2,268,26,172,kKeyboard);
+    reset_bindings=PageControl(2,L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,452,26,kFormWidth-452,32,kResetBindings);
     adaptive_triggers=PageControl(2,L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,0,76,kFormWidth,32,kAdaptiveTriggers);
     for(size_t i=0;i<kBindings.size();++i){const int y=124+static_cast<int>(i)*38;
       LabelControl(2,kBindings[i].english,kBindings[i].turkish,0,y+3,kFormWidth-196,26);
@@ -289,7 +292,6 @@
       SetWindowSubclass(binding_buttons[i],BindingProc,1,reinterpret_cast<DWORD_PTR>(this));
       binding_add_buttons[i]=PageControl(2,L"BUTTON",L"+",WS_TABSTOP|BS_PUSHBUTTON,kFormWidth-32,y,32,32,kAddBindingBase+i);
     }
-    reset_bindings=PageControl(2,L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,0,136+static_cast<int>(kBindings.size())*38,270,32,kResetBindings);
     BuildNetworkPage();
     BuildAchievements();
     // Keep a small bottom inset: independently rounded Y/height values can

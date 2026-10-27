@@ -1,8 +1,10 @@
 #include "options_menu.h"
+#include "gauge_hud.h"
 #include <rex/hook.h>
 #include <rex/memory.h>
 #include <rex/runtime.h>
 #include <rex/cvar.h>
+#include <rex/logging.h>
 #include <array>
 #include <atomic>
 #include <cstring>
@@ -12,6 +14,10 @@ REX_EXTERN(__imp__sub_8223B4E0);
 REX_EXTERN(__imp__sub_8223B950);
 REX_EXTERN(__imp__sub_8223BA68);
 REX_EXTERN(__imp__sub_8223A5C8);
+REX_EXTERN(__imp__sub_822390B0);
+REX_EXTERN(__imp__sub_82239BC0);
+REX_EXTERN(__imp__sub_82238E10);
+REX_EXTERN(__imp__sub_82239178);
 REX_EXTERN(__imp__sub_8223B120);
 REX_EXTERN(__imp__sub_8223A688);
 REX_EXTERN(__imp__sub_8223AEE8);
@@ -27,6 +33,12 @@ namespace motogp::options {
 namespace {
 std::atomic<uint32_t> online_label{0};
 std::atomic<uint32_t> profile_label{0};
+std::atomic<uint32_t> gauge_storage{0};
+constexpr uint32_t kGaugeChoiceVtable=0x8201EEC8;
+constexpr uint32_t kGaugeBytes=352,kGaugeIndex=36,kGaugeTable=52;
+constexpr uint32_t kGaugeLabel=128,kGaugeOriginal=160,kGaugeMotoGP17=192,kGaugeMotoGP06=224,kGaugeURT2=256,kGaugeURT3=288,kGaugeStyleIds=320;
+static_assert(kGaugeTable+12*(gauge::kStyleCount+1)<=kGaugeLabel);
+static_assert(kGaugeStyleIds+4*gauge::kStyleCount<=kGaugeBytes);
 uint32_t Read(uint8_t* base,uint32_t at){return rex::memory::load_and_swap<uint32_t>(base+at);}
 void Write(uint8_t* base,uint32_t at,uint32_t value){rex::memory::store_and_swap<uint32_t>(base+at,value);}
 bool IsMatchSettings(uint8_t* base,uint32_t menu){
@@ -48,6 +60,90 @@ bool Filter(uint8_t* base,uint32_t menu,uint32_t screen,unsigned capacity,unsign
     Write(base,screen+24,next);}
   return true;
 }
+bool GaugeReady(){return gauge_storage.load(std::memory_order_acquire)&&gauge::Available();}
+void RefreshGaugeChoices(uint8_t* base,uint32_t storage){
+  unsigned count=0,selected=0;bool changed=false;
+  for(int style=0;style<gauge::kStyleCount;++style){
+    if(style&&!gauge::StyleAvailable(style))continue;
+    changed|=Read(base,storage+kGaugeStyleIds+4*count)!=uint32_t(style);
+    Write(base,storage+kGaugeStyleIds+4*count,uint32_t(style));
+    const auto record=storage+kGaugeTable+12*count;
+    Write(base,record,UINT32_MAX);Write(base,record+8,0);
+    Write(base,record+4,storage+(style==1?kGaugeMotoGP17:style==2?kGaugeMotoGP06:style==3?kGaugeURT2:style==4?kGaugeURT3:kGaugeOriginal));
+    if(style==gauge::SelectedStyle())selected=count;
+    ++count;
+  }
+  // Native decrement probes record[-1]; both end sentinels must be readable.
+  for(const auto record:{storage+kGaugeTable-12,storage+kGaugeTable+12*count}){
+    Write(base,record,UINT32_MAX);Write(base,record+4,0);Write(base,record+8,0);
+  }
+  changed|=Read(base,storage+24)!=count;
+  Write(base,storage+24,count);Write(base,storage+kGaugeIndex,selected);
+  if(changed)Write(base,storage+32,UINT32_MAX);
+}
+void InitializeGauge(rex::Runtime* runtime,bool tr){
+  const auto storage=runtime->memory()->SystemHeapAlloc(kGaugeBytes);
+  if(!storage){REXLOG_WARN("Gauge style menu allocation failed; retaining the original Display Settings rows");return;}
+  auto* base=runtime->virtual_membase();std::memset(base+storage,0,kGaugeBytes);
+  const char* label=tr?"Gösterge stili":"Gauge Style";
+  const char* original=tr?"Orijinal":"Original";
+  std::memcpy(base+storage+kGaugeLabel,label,std::strlen(label)+1);
+  std::memcpy(base+storage+kGaugeOriginal,original,std::strlen(original)+1);
+  std::memcpy(base+storage+kGaugeMotoGP17,"MotoGP 17",10);
+  std::memcpy(base+storage+kGaugeMotoGP06,"MotoGP 06",10);
+  std::memcpy(base+storage+kGaugeURT2,"MotoGP URT 2",13);
+  std::memcpy(base+storage+kGaugeURT3,"MotoGP URT 3",13);
+  // This is the native 36-byte choice object initialized by 82219450.
+  // Its label handle is intercepted by exact address below; original banks
+  // and profile schemas are never modified.
+  Write(base,storage,kGaugeChoiceVtable);
+  Write(base,storage+16,storage+kGaugeIndex);
+  Write(base,storage+20,storage+kGaugeTable);
+  Write(base,storage+32,UINT32_MAX);
+  RefreshGaugeChoices(base,storage);
+  gauge_storage.store(storage,std::memory_order_release);
+}
+void ClearGaugeRow(uint8_t* base,uint32_t menu){
+  const auto storage=gauge_storage.load(std::memory_order_acquire);
+  if(!storage)return;
+  for(unsigned i=0;i<8;++i){
+    const auto row=menu+68+40*i;
+    if(Read(base,row+28)==storage){Write(base,row+16,0);Write(base,row+28,0);}
+  }
+}
+bool AppendGauge(uint8_t* base,uint32_t menu){
+  const auto storage=gauge_storage.load(std::memory_order_acquire);
+  unsigned count=0;int existing=-1;
+  for(;count<9;++count){
+    const auto id=Read(base,menu+32+4*count);
+    if(id==UINT32_MAX)break;
+    if(id==kGaugeAction)existing=int(count);
+    else if(id>7)return false;
+  }
+  if(!count||count>=9||(existing>=0&&unsigned(existing)+1!=count))return false;
+  const unsigned position=existing>=0?unsigned(existing):count;
+  if(position>=8)return false; // Eight settings + terminator fit nine native rows.
+  const auto row=menu+68+40*position;
+  if(Read(base,row+16)!=4||Read(base,row+28)!=storage){
+    // Match 821FF608 and the title's selector row initialization. Retain
+    // native focus animation fields after the row has been initialized.
+    std::memset(base+row,0,40);
+    Write(base,row+4,1);Write(base,row+16,4);
+    Write(base,row+20,Read(base,0x8200084C));
+    Write(base,row+24,Read(base,0x820024F0));
+    Write(base,row+28,storage);
+  }
+  RefreshGaugeChoices(base,storage);
+  if(existing<0){
+    Write(base,menu+32+4*count,kGaugeAction);
+    Write(base,menu+32+4*(count+1),UINT32_MAX);
+    ++count;
+  }
+  // The row after the choice remains a proper native navigation terminator.
+  Write(base,menu+68+40*count+16,0);Write(base,menu+68+40*count+28,0);
+  Write(base,menu+24,count+1);
+  return true;
+}
 }
 void Initialize(rex::Runtime* runtime){
   const auto address=runtime->memory()->SystemHeapAlloc(8);if(!address)throw std::runtime_error("Could not allocate the PC Online label");
@@ -58,8 +154,34 @@ void Initialize(rex::Runtime* runtime){
   if(!profile_address)throw std::runtime_error("Could not allocate the profile action label");
   std::memcpy(runtime->virtual_membase()+profile_address,profile,std::strlen(profile)+1);
   profile_label.store(profile_address,std::memory_order_release);
+  InitializeGauge(runtime,tr);
 }
 uint32_t OnlineLabel(){return online_label.load(std::memory_order_acquire);}
+uint32_t GaugeLabel(uint32_t handle){
+  const auto storage=gauge_storage.load(std::memory_order_acquire);
+  return storage&&handle==storage+4?storage+kGaugeLabel:0;
+}
+void CommitGaugeChoice(uint8_t* base,uint32_t menu){
+  if(!menu||Read(base,menu)!=kDisplaySettingsVtable||!GaugeReady())return;
+  const auto storage=gauge_storage.load(std::memory_order_acquire);
+  bool present=false;
+  for(unsigned i=0;i<8;++i){
+    const auto id=Read(base,menu+32+4*i);if(id==UINT32_MAX)break;
+    if(id==kGaugeAction&&Read(base,menu+68+40*i+28)==storage){present=true;break;}
+  }
+  if(!present)return;
+  const auto value=Read(base,storage+kGaugeIndex);
+  if(value<Read(base,storage+24)&&value<unsigned(gauge::kStyleCount)){
+    const auto style=Read(base,storage+kGaugeStyleIds+4*value);
+    if(style<unsigned(gauge::kStyleCount)&&(!style||gauge::StyleAvailable(int(style))))gauge::SelectStyle(int(style));
+  }
+}
+bool PrepareDisplayGauge(uint8_t* base,uint32_t menu,uint32_t screen){
+  if(!menu||Read(base,menu)!=kDisplaySettingsVtable)return false;
+  if(GaugeReady())return AppendGauge(base,menu);
+  ClearGaugeRow(base,menu);
+  return Filter(base,menu,screen,9,8,kGaugeAction,true);
+}
 bool RemoveStorage(uint8_t* base,uint32_t menu,uint32_t screen){return menu&&Read(base,menu)==kGameSettingsVtable&&Filter(base,menu,screen,7,5,5,true);}
 bool RemoveParty(uint8_t* base,uint32_t menu,uint32_t screen){return menu&&Read(base,menu)==kMultiplayerVtable&&Filter(base,menu,screen,5,3,1);}
 bool RemovePremium(uint8_t* base,uint32_t menu,uint32_t screen){return IsMatchSettings(base,menu)&&Filter(base,menu,screen,12,10,7);}
@@ -84,6 +206,10 @@ bool RemoveMarketplace(uint8_t* base,uint32_t menu,uint32_t screen){
 REX_HOOK_RAW(sub_8223B4E0){motogp::options::RemoveMarketplace(base,ctx.r3.u32,ctx.r4.u32);__imp__sub_8223B4E0(ctx,base);}
 REX_HOOK_RAW(sub_8223B950){motogp::options::RemoveMarketplace(base,ctx.r3.u32,ctx.r4.u32);__imp__sub_8223B950(ctx,base);}
 REX_HOOK_RAW(sub_8223BA68){motogp::options::RemoveMarketplace(base,ctx.r3.u32,ctx.r4.u32);__imp__sub_8223BA68(ctx,base);}
+REX_HOOK_RAW(sub_822390B0){const auto menu=ctx.r3.u32;__imp__sub_822390B0(ctx,base);motogp::options::PrepareDisplayGauge(base,menu,0);}
+REX_HOOK_RAW(sub_82239BC0){motogp::options::PrepareDisplayGauge(base,ctx.r3.u32,0);__imp__sub_82239BC0(ctx,base);}
+REX_HOOK_RAW(sub_82238E10){const auto menu=ctx.r3.u32;motogp::options::PrepareDisplayGauge(base,menu,ctx.r4.u32);__imp__sub_82238E10(ctx,base);motogp::options::CommitGaugeChoice(base,menu);}
+REX_HOOK_RAW(sub_82239178){motogp::options::PrepareDisplayGauge(base,ctx.r3.u32,ctx.r4.u32);__imp__sub_82239178(ctx,base);}
 REX_HOOK_RAW(sub_8223A5C8){const auto menu=ctx.r3.u32;__imp__sub_8223A5C8(ctx,base);motogp::options::RemoveStorage(base,menu,0);}
 REX_HOOK_RAW(sub_8223B120){motogp::options::RemoveStorage(base,ctx.r3.u32,ctx.r4.u32);__imp__sub_8223B120(ctx,base);}
 REX_HOOK_RAW(sub_8223A688){motogp::options::RemoveStorage(base,ctx.r3.u32,ctx.r4.u32);__imp__sub_8223A688(ctx,base);}
@@ -102,6 +228,7 @@ REX_HOOK_RAW(sub_8224D130){const auto menu=ctx.r3.u32;__imp__sub_8224D130(ctx,ba
 }
 REX_HOOK_RAW(sub_826EDB38){const auto label=motogp::options::OnlineLabel();
   if(label&&ctx.r3.u32==motogp::options::kOnlineHandle&&motogp::options::Read(base,ctx.r3.u32)==731){ctx.r3.u64=label;return;}
+  if(const auto gauge=motogp::options::GaugeLabel(ctx.r3.u32)){ctx.r3.u64=gauge;return;}
   // The native label getter receives a handle containing a bank/index pair.
   // Replace both Gamer Card labels and the lobby help text without changing
   // action IDs, original message banks or the active language's other strings.

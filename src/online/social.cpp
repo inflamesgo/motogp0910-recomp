@@ -48,6 +48,16 @@ class State {
     queue_.push_back(std::move(action));changed_.notify_one();return true;
   }
   std::optional<lan::Room> Room(){std::lock_guard lock(mutex_);return accepted_;}
+  bool Adopt(const lan::Room& room,uint64_t inviter){
+    const auto valid_peer=[](uint64_t peer){return (peer&0xFFFFFFFFFF000000ull)==0x0009000000000000ull&&(peer&0xFFFFFF);};
+    if(!room.id||room.state||!room.members||room.members>=room.capacity||room.capacity>20||!valid_peer(room.host)||!valid_peer(inviter))return false;
+    {
+      std::lock_guard lock(mutex_);if(stopping_)return false;
+      accepted_=room;accepted_inviter_=inviter;
+    }
+    kernel_->BroadcastNotification(0x02000002,0);
+    return true;
+  }
   std::optional<std::array<uint8_t,84>> Info(){
     std::lock_guard lock(mutex_);if(!accepted_)return {};
     return InviteInfo(kernel_->user_profile()->xuid(),accepted_inviter_,*accepted_);
@@ -118,6 +128,7 @@ void Stop(){open_requested=false;if(auto state=current.exchange({}))state->Stop(
 Snapshot Read(){if(auto state=current.load())return state->Read();return {};}
 bool Send(uint64_t peer){if(auto state=current.load())return state->Queue({{"action","send"},{"to",Hex(peer)}});return false;}
 bool Answer(const std::string& id,bool accept){if(auto state=current.load())return state->Queue({{"action",accept?"accept":"decline"},{"id",id}});return false;}
+bool AdoptInvitation(const lan::Room& room,uint64_t inviter){if(auto state=current.load())return state->Adopt(room,inviter);return false;}
 std::optional<lan::Room> AcceptedRoom(){if(auto state=current.load())return state->Room();return {};}
 std::optional<std::array<uint8_t,84>> AcceptedInfo(){if(auto state=current.load())return state->Info();return {};}
 void RequestOpen(){open_requested=true;}

@@ -2,9 +2,11 @@
 #include "discord/activity.h"
 #include "discord/client.h"
 #include "discord/update_policy.h"
+#include "discord/launch.h"
 #include <rex/cvar.h>
 #include <rex/memory.h>
 #include <rex/runtime.h>
+#include <rex/logging.h>
 #include <chrono>
 #include <mutex>
 
@@ -30,12 +32,15 @@ std::optional<uint32_t> Read(uint8_t* base, uint32_t address) {
   return rex::memory::load_and_swap<uint32_t>(base + address);
 }
 }
-void Start(rex::Runtime* runtime, LobbyProvider lobby,SettingsProvider settings) {
+void Start(rex::Runtime* runtime, LobbyProvider lobby,SettingsProvider settings,JoinHandler join) {
   Stop();
   if (!runtime || !rex::cvar::Query<bool>("discord_presence_enabled")) return;
+#ifdef _WIN32
+  if(join&&!RegisterLaunchCommand())REXLOG_WARN("DISCORD_INVITES: automatic game launch registration unavailable; open the game before accepting an invitation");
+#endif
   { const std::lock_guard lock(capture_mutex); guest_runtime = runtime; lobby_provider = lobby; settings_provider=settings; menu_context=Menu::Unknown; next_capture = {}; }
   client.Publish(Present({}));
-  client.Start();
+  client.Start(join);
   enabled.store(true, std::memory_order_release);
 }
 void Stop() {
@@ -53,8 +58,10 @@ void ObserveGuestFrame(uint8_t* base) {
   auto snapshot = Capture([&](uint32_t address) { return Read(base, address); },menu_context);
   menu_context=snapshot.context;
   snapshot.network_lan=rex::cvar::Query<std::string>("network_mode")=="lan";
+  std::optional<Lobby> lobby;
   if (!snapshot.event && CanShowLobby(snapshot.menu) && lobby_provider) {
-    if (const auto lobby = lobby_provider()) {
+    lobby=lobby_provider();
+    if (lobby) {
       snapshot.lobby = true; snapshot.online = lobby->online;
       snapshot.members = lobby->members; snapshot.capacity = lobby->capacity;
     }
@@ -62,6 +69,8 @@ void ObserveGuestFrame(uint8_t* base) {
   if(settings_provider&&settings_provider()) {
     snapshot.menu=Menu::Settings;snapshot.event=false;snapshot.lobby=false;
   }
-  client.Publish(Present(snapshot));
+  auto activity=Present(snapshot);
+  if(snapshot.lobby&&snapshot.online&&lobby){activity.party_id=lobby->party_id;activity.join_secret=lobby->join_secret;}
+  client.Publish(std::move(activity));
 }
 } // namespace motogp::discord

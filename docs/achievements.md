@@ -14,6 +14,10 @@ Locked filters expose the real title catalog. Progress and gamerscore come from
 the existing SDK achievement manager, including the original icons. Icons keep
 their original colors in locked and unlocked rows; the text shows unlock state.
 A small trophy is used only when the original icon is unavailable.
+In F1, earned rows show the saved unlock day and abbreviated month (for example
+`24 Oct` or `24 Eki`), without a year. Legacy unlocked entries with no timestamp
+retain their unlocked label; locked entries show no date. This uses the SDK's
+existing FILETIME unlock value and does not change progress or F7's layout.
 The UI never unlocks achievements itself
 or rewrites the user's achievement progress.
 

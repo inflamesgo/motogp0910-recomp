@@ -45,7 +45,7 @@ if(WIN32)
     add_executable(online_https_probe EXCLUDE_FROM_ALL tools/online_https_probe.cpp)
     target_link_libraries(online_https_probe PRIVATE motogp_lan)
 endif()
-add_library(motogp_social STATIC src/online/social.cpp)
+add_library(motogp_social STATIC src/online/social.cpp src/online/discord_invites.cpp)
 target_include_directories(motogp_social PUBLIC src)
 target_link_libraries(motogp_social PUBLIC motogp_lan rex::runtime)
 rexglue_apply_target_settings(motogp_social)
@@ -65,12 +65,15 @@ if(WIN32)
     target_link_libraries(motogp_achievements PUBLIC winmm)
 endif()
 add_executable(achievement_ui_probe EXCLUDE_FROM_ALL tools/achievement_ui_probe.cpp src/nobk_panel.cpp)
+add_executable(gauge_ui_probe EXCLUDE_FROM_ALL tools/gauge_ui_probe.cpp src/gauge_hud.cpp src/gauge_classic.cpp)
+target_link_libraries(gauge_ui_probe PRIVATE rex::runtime)
+rexglue_apply_target_settings(gauge_ui_probe)
 target_compile_definitions(achievement_ui_probe PRIVATE MOTOGP_NOBK_VISUAL_PROBE=1)
 target_link_libraries(achievement_ui_probe PRIVATE motogp_achievements)
 target_link_libraries(achievement_ui_probe PRIVATE motogp_social)
 rexglue_apply_target_settings(achievement_ui_probe)
 if(WIN32)
-    target_link_libraries(achievement_ui_probe PRIVATE winhttp)
+    target_link_libraries(achievement_ui_probe PRIVATE winhttp windowscodecs ole32)
 endif()
 
 add_library(motogp_adaptive STATIC src/adaptive_triggers.cpp)
@@ -99,9 +102,13 @@ target_include_directories(motogp_local_splitscreen PUBLIC src)
 target_link_libraries(motogp_local_splitscreen PUBLIC rex::runtime)
 rexglue_apply_target_settings(motogp_local_splitscreen)
 
-# Optional local Discord IPC; no SDK, token, server or runtime DLL dependency.
-add_library(motogp_discord STATIC src/discord_presence.cpp src/discord/client.cpp)
+# Optional local Discord IPC. Presence needs no server; invitations use the
+# existing authenticated community service, without another SDK/runtime DLL.
+add_library(motogp_discord STATIC src/discord_presence.cpp src/discord/client.cpp src/discord/launch.cpp)
 target_link_libraries(motogp_discord PUBLIC rex::runtime)
+if(WIN32)
+    target_link_libraries(motogp_discord PRIVATE advapi32)
+endif()
 rexglue_apply_target_settings(motogp_discord)
 add_executable(discord_presence_probe EXCLUDE_FROM_ALL tools/discord_presence_probe.cpp src/discord/client.cpp)
 target_include_directories(discord_presence_probe SYSTEM PRIVATE $<TARGET_PROPERTY:rex::runtime,INTERFACE_INCLUDE_DIRECTORIES>)
@@ -111,6 +118,7 @@ set(MOTOGP0910_SOURCES
     src/main.cpp
     src/debug_overlay.cpp src/diagnostic_options.cpp
     src/gamer_card.cpp src/nobk_panel.cpp
+    src/gauge_hud.cpp src/gauge_capture.cpp src/gauge_classic.cpp
     src/lan/runtime.cpp
     src/button_prompts.cpp src/control_diagram.cpp
     src/ps3_prompt_textures.cpp
@@ -221,6 +229,10 @@ if(WIN32)
         endif()
     endforeach()
     add_executable(launcher_layout_probe EXCLUDE_FROM_ALL tools/launcher_layout_probe.cpp)
+    add_executable(launcher_tooltip_probe EXCLUDE_FROM_ALL tools/launcher_tooltip_probe.cpp)
+    target_compile_definitions(launcher_tooltip_probe PRIVATE UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(launcher_tooltip_probe PRIVATE user32 comctl32 gdi32)
+    rexglue_apply_target_settings(launcher_tooltip_probe)
     motogp_embed_icon(launcher_layout_probe launcher)
     target_compile_definitions(launcher_layout_probe PRIVATE UNICODE _UNICODE)
     target_include_directories(launcher_layout_probe SYSTEM PRIVATE
@@ -271,7 +283,22 @@ add_custom_command(TARGET motogp0910 POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/launcher-fonts/OpenSans-Regular.ttf"
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/launcher-fonts/OpenSans-Bold.ttf"
-        "$<TARGET_FILE_DIR:motogp0910>/resources/ui")
+        "$<TARGET_FILE_DIR:motogp0910>/resources/ui"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:motogp0910>/resources/hud/motogp17"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/hud/motogp17/gauge.json"
+        "$<TARGET_FILE_DIR:motogp0910>/resources/hud/motogp17/gauge.json")
+set_property(TARGET motogp0910 APPEND PROPERTY LINK_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/hud/motogp17/gauge.json")
+foreach(classic_style motogp06 motogpurt2 motogpurt3)
+    add_custom_command(TARGET motogp0910 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:motogp0910>/resources/hud/${classic_style}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/resources/hud/${classic_style}/gauge.json"
+            "$<TARGET_FILE_DIR:motogp0910>/resources/hud/${classic_style}/gauge.json")
+    set_property(TARGET motogp0910 APPEND PROPERTY LINK_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/hud/${classic_style}/gauge.json")
+endforeach()
 target_link_libraries(motogp0910 PRIVATE motogp_discord motogp_lan_guest motogp_achievements motogp_settings motogp_local_splitscreen)
 
 add_executable(button_prompt_input_probe EXCLUDE_FROM_ALL tools/button_prompt_input_probe.cpp)
@@ -326,6 +353,11 @@ endif()
 # Optional integration check: real generated game code + patched XEX data,
 # without initializing presentation or claiming that gameplay works.
 if(TARGET motogp0910_recomp)
+    add_executable(gauge_native_probe EXCLUDE_FROM_ALL tools/gauge_native_probe.cpp src/options_menu.cpp src/gauge_capture.cpp)
+    target_compile_definitions(gauge_native_probe PRIVATE MOTOGP_GAUGE_PROBE=1)
+    target_include_directories(gauge_native_probe PRIVATE ${REXGLUE_ENTRYPOINT_INCLUDE_DIR})
+    target_link_libraries(gauge_native_probe PRIVATE motogp0910_recomp rex::runtime)
+    rexglue_apply_target_settings(gauge_native_probe)
     add_executable(bike_capacity_probe EXCLUDE_FROM_ALL tools/bike_capacity_probe.cpp)
     target_include_directories(bike_capacity_probe PRIVATE ${REXGLUE_ENTRYPOINT_INCLUDE_DIR})
     target_link_libraries(bike_capacity_probe PRIVATE motogp0910_recomp rex::runtime)
@@ -443,7 +475,7 @@ endforeach()
 if(WIN32 AND MOTOGP_STAGE_RUNTIME)
     if(CMAKE_CROSSCOMPILING)
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
-        foreach(stage_target file_compat_probe online_guest_probe localization_probe localization_asset_tool adaptive_triggers_probe in_game_settings_probe quit_menu_probe launcher_layout_probe lan_guest_probe lan_import_probe runtime_stability_probe motogp0910 motogp_headless_probe button_prompt_probe button_prompt_input_probe button_prompt_window_probe button_prompt_gpu_probe physics_asset_probe game_language_probe engine_settings_probe engine_advanced_probe livery_readback_probe input_defaults_probe nightly_input_probe launcher_runtime_probe fsr_provider_probe launcher_probe display_settings_probe)
+        foreach(stage_target gauge_ui_probe gauge_native_probe file_compat_probe online_guest_probe localization_probe localization_asset_tool adaptive_triggers_probe in_game_settings_probe quit_menu_probe launcher_layout_probe lan_guest_probe lan_import_probe runtime_stability_probe motogp0910 motogp_headless_probe button_prompt_probe button_prompt_input_probe button_prompt_window_probe button_prompt_gpu_probe physics_asset_probe game_language_probe engine_settings_probe engine_advanced_probe livery_readback_probe input_defaults_probe nightly_input_probe launcher_runtime_probe fsr_provider_probe launcher_probe display_settings_probe)
             if(TARGET ${stage_target})
                 add_custom_command(TARGET ${stage_target} POST_BUILD
                     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/stage-spatial-runtime.py
@@ -453,7 +485,7 @@ if(WIN32 AND MOTOGP_STAGE_RUNTIME)
         endforeach()
     else()
         find_program(MOTOGP_POWERSHELL NAMES powershell pwsh REQUIRED)
-        foreach(stage_target file_compat_probe online_guest_probe localization_probe localization_asset_tool adaptive_triggers_probe in_game_settings_probe quit_menu_probe launcher_layout_probe lan_guest_probe lan_import_probe runtime_stability_probe motogp0910 motogp_headless_probe button_prompt_probe button_prompt_input_probe button_prompt_window_probe button_prompt_gpu_probe physics_asset_probe game_language_probe engine_settings_probe engine_advanced_probe livery_readback_probe input_defaults_probe nightly_input_probe launcher_runtime_probe fsr_provider_probe launcher_probe display_settings_probe)
+        foreach(stage_target gauge_ui_probe gauge_native_probe file_compat_probe online_guest_probe localization_probe localization_asset_tool adaptive_triggers_probe in_game_settings_probe quit_menu_probe launcher_layout_probe lan_guest_probe lan_import_probe runtime_stability_probe motogp0910 motogp_headless_probe button_prompt_probe button_prompt_input_probe button_prompt_window_probe button_prompt_gpu_probe physics_asset_probe game_language_probe engine_settings_probe engine_advanced_probe livery_readback_probe input_defaults_probe nightly_input_probe launcher_runtime_probe fsr_provider_probe launcher_probe display_settings_probe)
             if(TARGET ${stage_target})
                 add_custom_command(TARGET ${stage_target} POST_BUILD
                     COMMAND ${MOTOGP_POWERSHELL} -NoProfile -ExecutionPolicy Bypass -File

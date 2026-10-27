@@ -252,6 +252,7 @@ struct Activity {
   std::string details, state;
   std::string large_image="motogp_logo",large_text="MotoGP 09/10",small_image,small_text;
   uint32_t party_size=0,party_capacity=0;
+  std::string party_id,join_secret;
   std::string session_key;
   bool operator==(const Activity&) const = default;
 };

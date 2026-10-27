@@ -366,7 +366,9 @@ void CheckNoEraseFlash(App& app,HWND control,int x,int y){
 }
 std::wstring TooltipText(HWND tooltip,HWND control,UINT size=Tooltips::kInfoSize){
   wchar_t text[2048]{};TOOLINFOW tool{size};tool.hwnd=GetParent(control);tool.uId=reinterpret_cast<UINT_PTR>(control);tool.lpszText=text;
-  SendMessageW(tooltip,TTM_GETTEXTW,std::size(text),reinterpret_cast<LPARAM>(&tool));return text;
+  SendMessageW(tooltip,TTM_GETTEXTW,std::size(text),reinterpret_cast<LPARAM>(&tool));
+  if(!text[0]){tool.hwnd=control;SendMessageW(tooltip,TTM_GETTEXTW,std::size(text),reinterpret_cast<LPARAM>(&tool));}
+  return text;
 }
 struct TooltipCompatibility {
   UINT accepted_size=Tooltips::kInfoSize,last_update_size=0;int rejected=0;bool reject_adds=false;

@@ -15,6 +15,8 @@ The four tabs show:
   invitation; incoming invitations can be accepted or declined. The native
   lobby Invite entry opens this tab as a friend picker. See the
   [friends/invitations implementation and deployment](online-friends-invites.md).
+  [Discord invitations](discord-invites.md) use the same native accepted-session
+  path and report their progress through the panel's existing toast renderer.
 - Server: status, rider/record totals, open rooms, hosts, membership/capacity and
   which rooms contain friends. This is a view of existing rooms, not a join API.
 - Records: the current rider's summary, recent public records and an activity
@@ -62,7 +64,8 @@ controller combo. Preserve that observer composition when changing frame work.
 | Source | Consumer | Meaning |
 | --- | --- | --- |
 | `/api/account/friends_of?name=...` | Friends list | Existing shared NOBK friendship data; its `online` flag denotes the shared FIFA lobby presence |
-| `/api/fifa09/player?name=...` | Local profile header | Existing shared account metadata used by Rider License; country and `member_since` only, with the returned account name required to match |
+| `/api/fifa09/player?name=...` | Local profile header and friend photos | Existing shared account metadata used by Rider License; country, `member_since` and avatar path, with the returned account name required to match |
+| `/api/avatar/...` | Friend photos | Existing public avatar route; HTTPS on NOBK only, without redirects or credentials |
 | `/api/motogp/live` | Friends and room state | MotoGP connection, room members, hosts and room race state; not precise solo Career/Arcade activity |
 | `/api/motogp/status` | Server counters | `in_race` counts racing rooms, not individual racing riders |
 | `/api/motogp/player?name=...` | Own record/podium/board counters | Website summaries across published player-best entries |
@@ -136,10 +139,31 @@ the Offline/LAN F7 overlay. Its focused Windows/Wine validation is documented in
 
 The current F1 renderer follows the user-approved left-side Apex concept. The
 approved image is a visual reference, not a shipped game background. The game
-scene remains live behind a feathered left-to-right dark scrim. Darkening extends
-across the full content width, including the right-aligned times and scores,
-before fading out over the remaining game scene. There is no outer
+scene remains live behind a gentle charcoal scrim and a background-only blur.
+The scrim is 42% at the far left and 30% behind the list; a smoothstep feather
+extends from just before the last content column to 520 reference pixels past
+the content. Blur follows the same feather, including right-aligned times and
+scores, without softening any F1 text, flags, photos or Apex strands. There is no outer
 panel border, card stack, diagonal row strip or footer shortcut text.
+
+The Windows D3D12 presenter applies a two-pass separable Gaussian before any
+host UI. It copies the already-presented game image entirely on the GPU, filters
+horizontal samples into a half-resolution texture, then composites vertical
+samples through the smooth mask. Existing game menus/HUD remain present; no
+native menu layer is hidden, no screenshot is read back to the CPU, and the
+user's upscale/sharpening settings are unchanged. F1 publishes versioned,
+normalized parameters through `Motogp_SetPanelBackdrop` in the matching custom
+runtime. The pass does no GPU work while closed. Pipelines are initialized on
+first use; image allocations are reused and resized resources are retired only
+after their paint fence completes. Missing system shader compiler or unavailable
+blur resources retain the soft scrim and emit one diagnostic instead of blocking
+the menu. The synthetic UI probe and Linux/Vulkan retain the scrim only.
+
+`cmake/sdk-nobk-backdrop.patch` inserts the D3D12 pass, while
+`src/nobk_backdrop_gpu.cpp` and `src/nobk_backdrop_shader.h` own its resources and
+shader. `visual::BackdropFor` and `visual::SoftScrim` control the shared fade
+geometry and contrast. Appearance and native Windows GPU cost need in-game
+acceptance; shader compilation and source checks alone do not establish them.
 
 The Friends reference positions use a 1920 x 1080 canvas: wordmark at (94,76),
 profile avatar at (398,70), vertical sections at x=96, and list origin at
@@ -147,6 +171,8 @@ profile avatar at (398,70), vertical sections at x=96, and list origin at
 columns; seven 100-pixel rows with 2-pixel spacing reproduce the reference.
 The layout scales with viewport height and constrains its width on narrow
 screens. The right side stays available for the game scene.
+The NOBK.FRIENDS wordmark uses natural font proportions, with no horizontal
+stretch or simulated italic transform. The MotoGP subtitle is omitted.
 
 The cover-inspired racing decoration uses seven thin strands in orange,
 silver-violet, champagne, coral, cream, muted violet and amber. Four secondary
@@ -156,7 +182,8 @@ without moving the paths or content. Drawing stops while F1 is closed and uses
 ordinary batched lines, without textures, blur passes or background work.
 The selected row
 has a small orange pointer and underline, without a filled background. Friend
-avatars are charcoal initials with separate presence dots; the local profile
+avatars show circular account photos with separate presence dots; charcoal
+initials remain while loading or when no photo is available. The local profile
 avatar is orange. National flags use the existing embedded atlas also used by
 Rider License, with the uppercase two-letter country code beside each flag.
 The local profile header adds its small country flag, country code, localized
@@ -168,8 +195,23 @@ match the current account name; absent data is hidden, and request failure keeps
 the last valid metadata without changing the panel's live-service error state.
 Friend, lobby, record and session-feed rows do not repeat their contents in
 hover tooltips. Achievement descriptions appear directly in their rows.
+Earned achievements show the saved unlock day and localized abbreviated month,
+without a year, in the secondary right-hand label. Legacy unlocks without a
+timestamp retain the unlocked label; locked entries do not invent a date.
 Invalid or missing country data does not
 invent a flag. No HTTP request or new asset download is required for flags.
+
+Friend photos use a separate serial worker so downloads do not delay live data
+polling. Visible rows request photos; closing F1 pauses queued requests and
+destroying the dialog aborts HTTP and joins the worker. Successful/absent photos
+are cached for five minutes; transient failures retry after one minute. The
+name-matched account response supplies the avatar path, with the legacy public
+name route as fallback when the field is absent. Explicit empty avatars keep
+initials. Only PNG/JPEG up to 512 KiB and 1024 x 1024 are admitted before decoding;
+Windows WIC reduces them to at most 128 x 128. The memory cache holds at most
+128 entries, while UI textures are retained only for current friends and upload
+at most once per frame. No photo is written to disk, and no account credential
+or arbitrary external URL is used. Synthetic visual fixtures disable requests.
 
 The four sections retain their existing actions, shortcuts and input gates.
 Their vertical navigation shows Q/E, Xbox LB/RB or PlayStation L1/R1 according

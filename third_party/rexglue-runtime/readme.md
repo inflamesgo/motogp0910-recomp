@@ -22,6 +22,15 @@ explicit (defensive cleanup, not a confirmed career rendering fix).
 The ultrawide patch adds an atomic presentation aspect bridge; title hooks
 adjust camera projection and central HUD batching.
 
+The F1 backdrop patch adds `Motogp_SetPanelBackdrop` v1 and a D3D12 GPU blur
+before host UI drawing. It preserves the game scene and native menus, performs
+no CPU image readback, and bypasses all blur draws while F1 is closed. The
+half-resolution Gaussian intermediate and broad feather keep the foreground
+sharp without a nearly opaque panel. Resources follow paint fence lifetimes.
+The Windows system shader compiler is loaded only on first use; unavailable
+blur falls back to the application's soft charcoal scrim. See
+[panel maintenance](../../docs/nobk-panel.md#apex-presentation).
+
 `src/shared_sdl_bridge.cpp` also adds `Motogp_GetSharedSDL`, a versioned C
 function table for the runtime’s own SDL instance. This is necessary because
 Windows SDK consumers otherwise link an independent static SDL instance,

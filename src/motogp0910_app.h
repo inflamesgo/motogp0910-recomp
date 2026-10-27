@@ -34,6 +34,8 @@
 #include "quit_menu.h"
 #include "local_splitscreen.h"
 #include "options_menu.h"
+#include "gauge_hud.h"
+#include "gauge_capture.h"
 #include "online/leaderboard_display.h"
 #include "dlc_content.h"
 #include "dlc_installation.h"
@@ -42,6 +44,7 @@
 #include "frame_pacing.h"
 #include "debug_overlay.h"
 #include "gamer_card.h"
+#include "online/discord_invites.h"
 #include "discord_presence.h"
 #include "nobk_panel.h"
 #include "portable_paths.h"
@@ -185,6 +188,9 @@ class Motogp0910App : public rex::ReXApp {
     motogp::livery::Initialize();
     achievement_preferences_->Load(user_data_root(), motogp::portable::Root(rex::filesystem::GetExecutableFolder()));
     if(motogp::localization::Turkish())achievement_preferences_->turkish=true;
+    gauge_dialog_=motogp::gauge::CreateOverlay(imgui_drawer(),immediate_drawer(),
+        motogp::portable::Root(rex::filesystem::GetExecutableFolder())/"resources/hud/motogp17",user_data_root(),
+        []{return motogp::settings::GuestInputBlocked()||motogp::quit::Pending();});
     motogp::quit::Initialize(runtime());
     motogp::options::Initialize(runtime());
     motogp::online::lap_times::Initialize(runtime());
@@ -215,8 +221,9 @@ class Motogp0910App : public rex::ReXApp {
     motogp::discord::Start(runtime(), []() -> std::optional<motogp::discord::Lobby> {
       const auto room = motogp::lan::CurrentRoom();
       if (!room) return {};
-      return motogp::discord::Lobby{rex::cvar::Query<std::string>("network_mode")=="online",room->members,room->capacity};
-    },&motogp::settings::MenuOpen);
+      const auto invite=motogp::online::discord_invites::Read(*room);
+      return motogp::discord::Lobby{rex::cvar::Query<std::string>("network_mode")=="online",room->members,room->capacity,invite.party_id,invite.secret};
+    },&motogp::settings::MenuOpen,&motogp::online::discord_invites::Join);
   }
   void OnKeyDown(rex::ui::KeyEvent& event) override {
     if(!event.prev_state()&&!event.is_ctrl_pressed()&&!event.is_alt_pressed()&&!event.is_super_pressed()&&
@@ -284,6 +291,7 @@ class Motogp0910App : public rex::ReXApp {
         achievement_font_, achievement_preferences_);
   }
   void OnShutdown() override {
+    gauge_dialog_.reset();
     motogp::discord::Stop();
     motogp::gamer_card::Shutdown();
     gamer_card_dialog_.reset();
@@ -362,7 +370,7 @@ class Motogp0910App : public rex::ReXApp {
   }
  private:
   // Per game frame: guest input of open menus, then the NOBK panel's pad combo.
-  static void FrameTick(){motogp::settings::PollGuestInput();motogp::nobk::PollPad();}
+  static void FrameTick(){motogp::gauge::PublishFrame();motogp::settings::PollGuestInput();motogp::nobk::PollPad();}
   motogp::config::SdkBridge sdk_config_;
   std::unique_ptr<rex::ui::ImGuiDialog> debug_dialog_;
   std::filesystem::path settings_path_;
@@ -373,6 +381,7 @@ class Motogp0910App : public rex::ReXApp {
   std::unique_ptr<rex::ui::ImGuiDialog> gamer_card_dialog_;
   std::shared_ptr<motogp::settings::InputGate> nobk_gate_=std::make_shared<motogp::settings::InputGate>();
   std::unique_ptr<rex::ui::ImGuiDialog> nobk_dialog_;
+  std::unique_ptr<rex::ui::ImGuiDialog> gauge_dialog_;
   ImFont* achievement_font_ = nullptr;
   ImFont* achievement_heading_font_ = nullptr;
   std::shared_ptr<motogp::achievements::Preferences> achievement_preferences_ = std::make_shared<motogp::achievements::Preferences>();

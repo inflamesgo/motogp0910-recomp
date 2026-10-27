@@ -90,6 +90,16 @@ bool Matches(const rex::system::AchievementInfo& info,bool unlocked,const MenuSt
   return search.empty() || Fold(info.label).find(search)!=std::string::npos || Fold(unlocked?info.description:info.unachieved_description.empty()?info.description:info.unachieved_description).find(search)!=std::string::npos;
 }
 namespace {
+std::string UnlockDate(uint64_t filetime,bool tr) {
+  constexpr uint64_t epoch=116444736000000000ULL;
+  if(filetime<=epoch)return {};
+  const auto seconds=(filetime-epoch)/10000000ULL;
+  if(seconds>=4102444800ULL)return {};
+  const std::chrono::year_month_day date{std::chrono::floor<std::chrono::days>(std::chrono::sys_seconds{std::chrono::seconds{static_cast<int64_t>(seconds)}})};
+  constexpr const char* months[]{"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+  constexpr const char* months_tr[]{"Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"};
+  return std::to_string(unsigned(date.day()))+" "+(tr?months_tr[unsigned(date.month())-1]:months[unsigned(date.month())-1]);
+}
 void DrawApexContents(rex::system::AchievementManager& manager,MenuState& state,Preferences& preferences,
     rex::ui::AchievementIconCache* icons,float bottom_space,const motogp::nobk::visual::AchievementAppearance& appearance) {
   namespace visual=motogp::nobk::visual;
@@ -183,7 +193,9 @@ void DrawApexContents(rex::system::AchievementManager& manager,MenuState& state,
     visual::WrappedLabel(row_draw,bold,32*s,ImVec2(pos.x+126*s,pos.y+10*s),white,info.label,text_width);
     visual::WrappedLabel(row_draw,regular,24*s,ImVec2(pos.x+126*s,pos.y+10*s+title_height),muted,description,text_width);
     right_label(std::to_string(info.gamerscore)+" G",origin.x+32*s+available-10*s,pos.y+16*s,31*s,white,bold);
-    right_label(Tr(tr,earned?"UNLOCKED":"LOCKED",earned?"KAZANILDI":"KİLİTLİ"),origin.x+32*s+available-10*s,pos.y+58*s,20*s,earned?orange:muted,regular);
+    auto status=earned?UnlockDate(manager.GetUnlockTime(info.id),tr):std::string{};
+    if(status.empty())status=Tr(tr,earned?"UNLOCKED":"LOCKED",earned?"KAZANILDI":"KİLİTLİ");
+    right_label(status,origin.x+32*s+available-10*s,pos.y+58*s,20*s,earned?orange:muted,regular);
     ImGui::SetCursorScreenPos(origin);ImGui::Dummy(ImVec2(available+32*s,row_height));ImGui::PopID();
   }
   if(!shown)ImGui::TextDisabled("%s",Tr(tr,summary.total?"No achievements match this filter.":"Achievement catalog is not available yet.",summary.total?"Bu filtreye uygun başarım bulunamadı.":"Başarım listesi henüz hazır değil."));

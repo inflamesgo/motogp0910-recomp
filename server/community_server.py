@@ -323,8 +323,8 @@ class Service(asyncio.DatagramProtocol):
         self.clients, self.tickets, self.rooms = {}, {}, {}
         self.limits = Limits()
         # Only existing authenticated profiles can allocate this separate pool.
-        # Six budgets include the optional social route and invite-send quota.
-        self.profile_limits = Limits(6*max(store.max_players,store.player_count))
+        # Social send and Discord publish/join have separate per-profile quotas.
+        self.profile_limits = Limits(8*max(store.max_players,store.player_count))
         self.registrations = Bucket(1,200)
         self.http_connections = 0
         self.http_ips = {}

@@ -4,9 +4,23 @@
 #include <objidl.h>
 #include <propidl.h>
 #include <gdiplus.h>
+#include <string>
 #include "accent.h"
 
 namespace launcher {
+inline RECT CheckboxTooltipBounds(HWND control,RECT box,HFONT font,int text_left){
+  RECT client{};GetClientRect(control,&client);
+  std::wstring text(GetWindowTextLengthW(control)+1,L'\0');text.resize(GetWindowTextW(control,text.data(),int(text.size())));
+  RECT bounds=box;
+  if(!text.empty()){
+    auto dc=GetDC(control);auto old=SelectObject(dc,font);RECT measured{};
+    DrawTextW(dc,text.c_str(),int(text.size()),&measured,DT_CALCRECT|DT_SINGLELINE);
+    SelectObject(dc,old);ReleaseDC(control,dc);
+    RECT label{text_left,(client.bottom-measured.bottom)/2,text_left+measured.right,(client.bottom+measured.bottom)/2};
+    UnionRect(&bounds,&bounds,&label);
+  }
+  RECT clipped{};IntersectRect(&clipped,&client,&bounds);return clipped;
+}
 // Keep native keyboard/accessibility activation, but limit mouse activation to
 // the painted square. Report the rest of the row as outside the native button
 // so dragging out also clears its pressed state and cancels a pending click.

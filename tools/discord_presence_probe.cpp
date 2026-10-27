@@ -2,6 +2,7 @@
 #include "../src/discord/rpc.h"
 #include "../src/discord/client.h"
 #include "../src/discord/update_policy.h"
+#include "../src/discord/launch.h"
 #include <chrono>
 #include <iostream>
 #include <map>
@@ -434,6 +435,29 @@ void ChampionshipSelectionMenus() {
   Check(Present(Capture(read,Menu::Championship)).details=="Main menu",
       "Leaving Championship selection for Main menu clears the selection owner");
 }
+void InvitationModel(){
+  const std::string secret=std::string(kJoinPrefix)+std::string(32,'A');
+  Activity lobby; lobby.details="Online lobby";lobby.state="In lobby";
+  lobby.party_size=1;lobby.party_capacity=20;lobby.party_id="mg0910:0009000000000001:000000000000002a";lobby.join_secret=secret;
+  const auto command=Command(lobby,123,42,1)["args"]["activity"];
+  Check(command["instance"]==true&&command["secrets"]["join"]==secret&&command["party"]["id"]==lobby.party_id,"Joinable activity carries a bounded opaque capability and shared party id");
+  const auto event=Json{{"cmd","DISPATCH"},{"evt","ACTIVITY_JOIN"},{"data",{{"secret",secret}}}};
+  Check(JoinEvent(event)==secret,"Discord join dispatch extracts only the validated capability");
+  for(const auto& malformed:{Json{},Json{{"cmd","DISPATCH"},{"evt","ACTIVITY_SPECTATE"},{"data",{{"secret",secret}}}},Json{{"cmd","DISPATCH"},{"evt","ACTIVITY_JOIN"},{"data",{{"secret",42}}}},Json{{"cmd","DISPATCH"},{"evt","ACTIVITY_JOIN"},{"data",{{"secret","https://external.invalid/"}}}}})
+    Check(!JoinEvent(malformed),"Wrong events, types and arbitrary URLs never become join requests");
+  for(const auto& invalid:{std::string{},secret+"A",std::string(kJoinPrefix)+std::string(32,'/'),std::string(128,'A')}){
+    lobby.join_secret=invalid;Check(!Command(lobby,123,42,1)["args"]["activity"].contains("secrets"),"Malformed capabilities are not advertised");
+  }
+  lobby.join_secret=secret;lobby.party_size=lobby.party_capacity;
+  Check(!Command(lobby,123,42,1)["args"]["activity"].contains("secrets"),"A full lobby keeps its party counter but cannot advertise joining");
+  lobby.party_size=1;lobby.party_id.clear();
+  Check(!Command(lobby,123,42,1)["args"]["activity"].contains("secrets"),"Joining requires a real party id");
+  Activity menus=Present({});auto published=menus;published.party_id="mg0910:0009000000000001:000000000000002a";published.join_secret=secret;
+  Check(!StartsNewRaceTimer(menus,published),"Join publication does not restart menu or lobby elapsed time");
+  Check(SubscribeJoin(7)==Json{{"cmd","SUBSCRIBE"},{"evt","ACTIVITY_JOIN"},{"nonce","7"}},"Subscribe uses the documented Discord RPC event");
+  Check(LaunchCommand(L"D:\\MotoGP Game\\MotoGP09-10Launcher.exe")==L"\"D:\\MotoGP Game\\MotoGP09-10Launcher.exe\" --discord-invite","Cold launch invokes the quoted public launcher without an invitation secret");
+  Check(LaunchCommand(L"bad\"command").empty()&&LaunchCommand(L"").empty(),"Invalid launcher paths cannot become protocol commands");
+}
 void UpdateTiming() {
   UpdatePolicy updates;
   const auto start=UpdatePolicy::Clock::time_point{}+1s;
@@ -563,6 +587,29 @@ void Ipc() {
   const auto start = std::chrono::steady_clock::now(); client.Stop();
   Check(std::chrono::steady_clock::now() - start < 1s, "Bounded shutdown with Discord absent");
 }
+void IpcInvites(){
+  Server server;Client client;std::atomic<unsigned> joins=0;
+  const std::string secret=std::string(kJoinPrefix)+std::string(32,'B');
+  client.Start([&](const std::string& value){if(value==secret)++joins;return true;});
+  server.Connect();Check(server.Read().first==0,"Invitation client performs the normal handshake");
+  server.Send(1,Json{{"cmd","DISPATCH"},{"evt","READY"}},true);
+  const auto subscription=server.Read();Check(subscription.second["cmd"]=="SUBSCRIBE"&&subscription.second["evt"]=="ACTIVITY_JOIN","Ready subscribes once to game joins");
+  Check(server.Read().second["cmd"]=="SET_ACTIVITY","Subscription does not block ordinary presence");
+  Activity lobby;lobby.details="Online lobby";lobby.state="In lobby";lobby.party_size=1;lobby.party_capacity=20;
+  lobby.party_id="mg0910:0009000000000001:000000000000002a";lobby.join_secret=secret;client.Publish(lobby);
+  const auto advertised=server.Read().second["args"]["activity"];
+  Check(advertised["secrets"]["join"]==secret,"Real pipe worker publishes the lobby join capability");
+  server.Send(1,Json{{"cmd","DISPATCH"},{"evt","ACTIVITY_JOIN"},{"data",{{"secret","not-a-capability"}}}});
+  server.Send(1,Json{{"cmd","DISPATCH"},{"evt","ACTIVITY_JOIN"},{"data",{{"secret",secret}}}},true);
+  server.Send(3,Json{{"ping","invite"}});Check(server.Read().first==4,"Join callbacks preserve PING/PONG handling");
+  Check(joins.load()==1,"Only the valid join dispatch reaches the callback");
+  server.Send(1,Json{{"cmd","SUBSCRIBE"},{"evt","ERROR"},{"data",{{"message","unsupported"}}}});
+  const auto degraded=server.Read().second["args"]["activity"];
+  Check(degraded["details"]=="Online lobby"&&!degraded.contains("secrets")&&!degraded["instance"].get<bool>(),"Rejected optional subscription clears joining while keeping presence connected");
+  lobby.state="Still connected";client.Publish(lobby);
+  Check(server.Read().second["args"]["activity"]["state"]=="Still connected","Presence continues after invitation capability rejection");
+  client.Stop();Check(server.Read().second["args"]["activity"].is_null(),"Invitation client clears activity on shutdown");
+}
 #endif
 int main() {
   try {
@@ -572,8 +619,10 @@ int main() {
     ChampionshipSelectionMenus();
     UpdateTiming();
     ElapsedTiming();
+    InvitationModel();
 #ifdef _WIN32
     Ipc();
+    IpcInvites();
 #endif
     std::cout << "Discord presence model, protocol and available platform checks passed\n";
     return 0;

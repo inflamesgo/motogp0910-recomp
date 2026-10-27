@@ -3,6 +3,7 @@
 #include "button_prompts.h"
 #include "gamer_card_flags.h"
 #include "online/social.h"
+#include "online/discord_invites.h"
 #include "achievement_ui.h"
 #include "in_game_settings.h"
 #include "overlay_theme.h"
@@ -47,6 +48,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <winhttp.h>
+#include <wincodec.h>
 #endif
 
 REXCVAR_DEFINE_STRING(bind_nobk_panel,"F1","Keybinds","Open the NOBK panel (friends, server, records, achievements)");
@@ -176,6 +178,127 @@ class Http {
 #ifdef _WIN32
   HINTERNET session_=nullptr,connection_=nullptr;
 #endif
+};
+
+struct ProfilePhoto {uint32_t width=0,height=0;std::vector<uint8_t> rgba;};
+#ifdef _WIN32
+template<class T> struct PhotoCom {
+  T* value=nullptr;
+  ~PhotoCom(){if(value)value->Release();}
+  T** Address(){return &value;}
+  T* operator->()const{return value;}
+};
+#endif
+std::shared_ptr<const ProfilePhoto> DecodePhoto(std::string& bytes) {
+#ifdef _WIN32
+  if(bytes.empty()||bytes.size()>512*1024)return {};
+  if(FAILED(CoInitializeEx(nullptr,COINIT_MULTITHREADED)))return {};
+  struct Apartment{~Apartment(){CoUninitialize();}} apartment;
+  PhotoCom<IWICImagingFactory> factory;
+  if(FAILED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(factory.Address()))))return {};
+  PhotoCom<IWICStream> stream;
+  if(FAILED(factory->CreateStream(stream.Address()))||FAILED(stream->InitializeFromMemory(reinterpret_cast<BYTE*>(bytes.data()),static_cast<DWORD>(bytes.size()))))return {};
+  PhotoCom<IWICBitmapDecoder> decoder;
+  if(FAILED(factory->CreateDecoderFromStream(stream.value,nullptr,WICDecodeMetadataCacheOnDemand,decoder.Address())))return {};
+  GUID format{};if(FAILED(decoder->GetContainerFormat(&format))||(!IsEqualGUID(format,GUID_ContainerFormatJpeg)&&!IsEqualGUID(format,GUID_ContainerFormatPng)))return {};
+  PhotoCom<IWICBitmapFrameDecode> frame;
+  if(FAILED(decoder->GetFrame(0,frame.Address())))return {};
+  UINT width=0,height=0;
+  if(FAILED(frame->GetSize(&width,&height))||!width||!height||width>1024||height>1024)return {};
+  // Keep bounded thumbnails in RAM/GPU memory, not full-size account photos.
+  PhotoCom<IWICBitmapScaler> scaler;IWICBitmapSource* source=frame.value;
+  const UINT edge=std::max(width,height);
+  if(edge>128){
+    width=std::max(1u,width*128/edge);height=std::max(1u,height*128/edge);
+    if(FAILED(factory->CreateBitmapScaler(scaler.Address()))||FAILED(scaler->Initialize(frame.value,width,height,WICBitmapInterpolationModeFant)))return {};
+    source=scaler.value;
+  }
+  PhotoCom<IWICFormatConverter> converter;
+  if(FAILED(factory->CreateFormatConverter(converter.Address()))||FAILED(converter->Initialize(source,GUID_WICPixelFormat32bppRGBA,WICBitmapDitherTypeNone,nullptr,0.,WICBitmapPaletteTypeCustom)))return {};
+  std::vector<uint8_t> pixels(size_t(width)*height*4);
+  if(FAILED(converter->CopyPixels(nullptr,width*4,static_cast<UINT>(pixels.size()),pixels.data())))return {};
+  return std::make_shared<ProfilePhoto>(ProfilePhoto{width,height,std::move(pixels)});
+#else
+  (void)bytes;return {};
+#endif
+}
+
+// Photos have their own serial worker so profile/image requests never delay
+// live presence polling. Only visible rows request them; GPU uploads stay on UI.
+class FriendPhotos {
+ public:
+  explicit FriendPhotos(bool enabled):enabled_(enabled){
+#ifdef MOTOGP_NOBK_VISUAL_PROBE
+    enabled_=false; // Synthetic presentation fixtures never request public photos.
+#endif
+  }
+  ~FriendPhotos(){Stop();}
+  void SetOpen(bool open){
+    std::lock_guard lock(mutex_);if(open_==open)return;open_=open;changed_.notify_one();
+  }
+  std::shared_ptr<const ProfilePhoto> Get(const std::string& name){
+    if(!enabled_||name.empty())return {};
+    std::string key=name;for(char& c:key)if(c>='A'&&c<='Z')c+=32;
+    std::lock_guard lock(mutex_);if(stopping_||!open_)return {};
+    if(!entries_.contains(key)&&entries_.size()>=128){
+      auto oldest=entries_.end();
+      for(auto it=entries_.begin();it!=entries_.end();++it)if(!it->second.queued&&(oldest==entries_.end()||it->second.used<oldest->second.used))oldest=it;
+      if(oldest==entries_.end())return {};entries_.erase(oldest);
+    }
+    auto& entry=entries_[key];const auto now=Clock::now();entry.used=now;
+    if(!entry.queued&&now>=entry.refresh){
+      if(!worker_.joinable()){
+        try{worker_=std::thread([this]{Run();});}catch(...){enabled_=false;return {};}
+      }
+      entry.name=name;entry.queued=true;pending_.push_back(key);changed_.notify_one();
+    }
+    return entry.photo;
+  }
+ private:
+  struct Entry {std::string name;std::shared_ptr<const ProfilePhoto> photo;Clock::time_point refresh{},used{};bool queued=false;};
+  std::pair<std::shared_ptr<const ProfilePhoto>,bool> FetchPhoto(const std::string& name){
+    std::string body,path="/api/avatar/u/"+Encode(name);
+    const auto status=http_.Get("/api/fifa09/player?name="+Encode(name),body,256*1024);
+    if(status==200){
+      const auto account=json::parse(body,nullptr,false);
+      if(!account.is_object()||!SameName(Clean(account,"player"),name))return {{},false};
+      const auto avatar=account.find("avatar");
+      if(avatar!=account.end()&&avatar->is_string()){
+        path=avatar->get<std::string>();if(path.empty())return {{},true};
+        for(std::string_view origin:{"https://www.nobkonline.com","https://nobkonline.com"})if(path.starts_with(origin)){path.erase(0,origin.size());break;}
+        if(!path.starts_with("/api/avatar/")||path.size()>200||path.find("..")!=std::string::npos||path.find('#')!=std::string::npos||path.find('\\')!=std::string::npos||
+           std::any_of(path.begin(),path.end(),[](unsigned char c){return c<=0x20||c>=0x7F;}))return {{},false};
+      }
+    }else if(status!=404)return {{},false};
+    const auto image_status=http_.Get(path,body,512*1024);
+    if(image_status!=200)return {{},image_status==404};
+    auto photo=DecodePhoto(body);const bool complete=bool(photo);return {std::move(photo),complete};
+  }
+  void Run(){
+    for(;;){
+      std::string key,name;
+      {
+        std::unique_lock lock(mutex_);changed_.wait(lock,[&]{return stopping_||(open_&&!pending_.empty());});
+        if(stopping_)return;key=std::move(pending_.front());pending_.pop_front();name=entries_.at(key).name;
+      }
+      std::pair<std::shared_ptr<const ProfilePhoto>,bool> result;
+      try{result=FetchPhoto(name);}catch(...){result={{},false};}
+      {
+        std::lock_guard lock(mutex_);if(stopping_)return;
+        auto& entry=entries_.at(key);entry.queued=false;
+        if(result.second)entry.photo=std::move(result.first);
+        entry.refresh=Clock::now()+(result.second?std::chrono::minutes(5):std::chrono::minutes(1));
+      }
+    }
+  }
+  void Stop(){
+    {std::lock_guard lock(mutex_);stopping_=true;changed_.notify_one();}
+    http_.Close();if(worker_.joinable())worker_.join();
+  }
+  bool enabled_=false,open_=false,stopping_=false;
+  std::mutex mutex_;std::condition_variable changed_;
+  std::map<std::string,Entry> entries_;std::deque<std::string> pending_;
+  Http http_;std::thread worker_;
 };
 
 enum class Where { Offline, Site, Menus, Room, Racing };
@@ -476,7 +599,8 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
       std::shared_ptr<State> state,ImFont* font,ImFont* heading,bool tr,
       rex::ui::ImmediateDrawer* immediate,rex::Runtime* runtime,std::shared_ptr<achievements::Preferences> preferences)
       :ImGuiDialog(drawer),window_(window),achievements_(achievements),state_(std::move(state)),font_(font),heading_(heading),tr_(tr),
-       achievement_preferences_(std::move(preferences)),achievement_icons_(immediate,runtime) {
+       achievement_preferences_(std::move(preferences)),achievement_icons_(immediate,runtime),
+       immediate_(immediate),friend_photos_(state_->Read().available) {
     state_->tr_=tr;
     if(immediate) {
       int width=0,height=0;
@@ -485,7 +609,7 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
     }
     if(window_)window_->AddInputListener(this,61);
   }
-  ~Dialog() override {if(window_)window_->RemoveInputListener(this);RestoreNavigation(GetIO());state_->Close();}
+  ~Dialog() override {Backdrop(0);if(window_)window_->RemoveInputListener(this);RestoreNavigation(GetIO());state_->Close();}
   void OnKeyDown(rex::ui::KeyEvent& e) override {
     const auto bind=rex::ui::ParseVirtualKey(rex::cvar::Query<std::string>("bind_nobk_panel"));
     if(bind!=rex::ui::VirtualKey::kNone&&e.virtual_key()==bind&&!e.is_alt_pressed()&&!e.is_ctrl_pressed()) {
@@ -502,11 +626,17 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
     DrawToast(io);
     const bool invite_request=online::social::ConsumeOpenRequest();
     if(invite_request){if(!state_->gate->IsOpen())state_->Toggle();tab_=0;selected_=0;invite_picker_=true;}
-    if(!state_->gate->IsOpen()){RestoreNavigation(io);armed_=false;previous_=0;return;}
+    const bool open=state_->gate->IsOpen();friend_photos_.SetOpen(open);
+    if(!open){Backdrop(0);RestoreNavigation(io);armed_=false;previous_=0;return;}
     auto snapshot=state_->Read();
 #ifdef MOTOGP_NOBK_VISUAL_PROBE
     if(visual_fixture)snapshot=*visual_fixture;
 #endif
+    photo_uploads_=0;
+    if(photo_serial_!=snapshot.serial){
+      photo_serial_=snapshot.serial;
+      std::erase_if(photo_textures_,[&](const auto& entry){return std::none_of(snapshot.friends.begin(),snapshot.friends.end(),[&](const Friend& f){return f.name==entry.first;});});
+    }
     if(epoch_!=state_->gate->Epoch()){epoch_=state_->gate->Epoch();armed_=false;previous_=0;selected_=0;invite_picker_=invite_request;opened_at_=ImGui::GetTime();tab_at_=opened_at_;animated_tab_=-1;ImGui::SetNextWindowFocus();}
     const auto buttons=state_->gate->Buttons();
     if(!armed_&&state_->gate->NeutralReady()&&!buttons)armed_=true;
@@ -515,7 +645,7 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
     reveal_selected_=false;
     using namespace rex::input;
     if(armed_) {
-      if((fresh&X_INPUT_GAMEPAD_B)||ImGui::IsKeyPressed(ImGuiKey_Escape,false)){state_->Close();RestoreNavigation(io);return;}
+      if((fresh&X_INPUT_GAMEPAD_B)||ImGui::IsKeyPressed(ImGuiKey_Escape,false)){Backdrop(0);state_->Close();RestoreNavigation(io);return;}
       const bool typing=io.WantTextInput;
       if((fresh&X_INPUT_GAMEPAD_LEFT_SHOULDER)||(!typing&&ImGui::IsKeyPressed(ImGuiKey_Q,false))){tab_=(tab_+3)%4;selected_=0;}
       if((fresh&X_INPUT_GAMEPAD_RIGHT_SHOULDER)||(!typing&&ImGui::IsKeyPressed(ImGuiKey_E,false))){tab_=(tab_+1)%4;selected_=0;}
@@ -531,6 +661,21 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
   }
 
  private:
+  void Backdrop(float alpha) {
+#if defined(_WIN32) && !defined(MOTOGP_NOBK_VISUAL_PROBE)
+    using SetBackdrop=uint32_t(*)(uint32_t,float,float,float,float);
+    static const auto set=[] {
+      const auto module=GetModuleHandleW(L"rexruntime.dll");
+      const auto function=module?reinterpret_cast<SetBackdrop>(GetProcAddress(module,"Motogp_SetPanelBackdrop")):nullptr;
+      if(!function)REXLOG_WARN("F1 backdrop blur requires the matching updated runtime; retaining the soft contrast scrim");
+      return function;
+    }();
+    if(set){
+      const auto values=visual::BackdropFor(layout_,GetIO().DisplaySize);
+      set(1,.96f*alpha,values.fade_begin,values.fade_end,values.radius);
+    }
+#endif
+  }
   void RestoreNavigation(ImGuiIO& io) {
     if(!nav_owned_)return;
     achievement_preferences_->Save(); // Commit a slider edit when leaving the tab or closing F1.
@@ -553,6 +698,23 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
   }
   void DrawToast(ImGuiIO& io) {
     const double now=ImGui::GetTime();
+    const auto discord=online::discord_invites::ReadNotice();
+    if(discord.serial!=discord_notice_){
+      discord_notice_=discord.serial;
+      using Outcome=online::discord_invites::Outcome;
+      const char* message=nullptr;int kind=0;
+      switch(discord.outcome){
+        case Outcome::Pending:message=Tr(tr_,"Joining the Discord lobby invitation…","Discord lobi davetine katılınıyor…");break;
+        case Outcome::Accepted:message=Tr(tr_,"Discord invitation accepted. Connecting to the lobby…","Discord daveti kabul edildi. Lobiye bağlanılıyor…");kind=1;break;
+        case Outcome::AlreadyJoined:message=Tr(tr_,"You are already in this lobby.","Zaten bu lobidesin.");break;
+        case Outcome::OnlineRequired:message=Tr(tr_,"Sign in through the launcher and start Online mode to accept Discord invitations.","Discord davetlerini kabul etmek için launcher'dan giriş yapıp Online modunda başlat.");kind=2;break;
+        case Outcome::Unsupported:message=Tr(tr_,"This server needs the Discord invitation update.","Bu sunucunun Discord daveti güncellemesine ihtiyacı var.");kind=2;break;
+        case Outcome::Unavailable:message=Tr(tr_,"Discord invitation unavailable. The lobby may have closed, filled up or started racing.","Discord daveti kullanılamıyor. Lobi kapanmış, dolmuş veya yarış başlamış olabilir.");kind=2;break;
+        case Outcome::None:break;
+      }
+      if(message){toast_=Event{message,0,kind};toast_at_=now;}
+      if(discord.outcome==Outcome::Pending||discord.outcome==Outcome::Accepted)state_->Close();
+    }
     const auto social=online::social::Read();
     std::set<std::string> pending;
     for(const auto& invite:social.invites)pending.insert(invite.id);
@@ -589,11 +751,11 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
     ImGui::PopStyleVar();
   }
   void Brand(float size) {
-    // NOBK·ONLINE wordmark like the site's top bar: caps, orange dot.
+    // NOBK·FRIENDS wordmark: caps, orange dot.
     auto* draw=ImGui::GetWindowDrawList();
     const auto pos=ImGui::GetCursorScreenPos();
     ImFont* f=heading_?heading_:ImGui::GetFont();
-    const char* a="NOBK";const char* b="ONLINE";
+    const char* a="NOBK";const char* b="FRIENDS";
     const auto wa=f->CalcTextSizeA(size,FLT_MAX,0,a).x;
     draw->AddText(f,size,pos,ImGui::GetColorU32(white),a);
     draw->AddCircleFilled(ImVec2(pos.x+wa+size*.32f,pos.y+size*.55f),size*.13f,ImGui::GetColorU32(orange));
@@ -611,17 +773,11 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
     const ImVec2 logo(94*s+shift,76*s);
     float x=logo.x;
     for(int i=0;i<3;++i) {
-      const char* word=i==0?"NOBK":i==1?".":"ONLINE";
-      ImFont* f=Face(i==0?2:0);const float size=36*s;
-      const int first=draw->VtxBuffer.Size;
+      const char* word=i==0?"NOBK":i==1?".":"FRIENDS";
+      ImFont* f=Face(i==0?2:0);const float size=40*s;
       draw->AddText(f,size,ImVec2(x,logo.y),ImGui::GetColorU32(i==1?orange:white),word);
-      for(int v=first;v<draw->VtxBuffer.Size;++v) {
-        auto& point=draw->VtxBuffer[v].pos;
-        point.x=x+(point.x-x)*1.4f+(logo.y+size-point.y)*.18f;
-      }
-      x+=f->CalcTextSizeA(size,FLT_MAX,0,word).x*1.4f;
+      x+=f->CalcTextSizeA(size,FLT_MAX,0,word).x;
     }
-    RowLabel("MotoGP 09/10",94*s+shift,112*s,23*s,ImVec4(.65f,.67f,.7f,1),370*s);
     const std::string name=snapshot.me.empty()?Tr(tr_,"RIDER","PİLOT"):snapshot.me;
     Initial(ImVec2(398*s+shift,70*s),56*s,name,0,true);
     RowLabel(name,479*s+shift,76*s,26*s,white,layout_.width-24*s,Face(1));
@@ -679,18 +835,8 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
     bool reset=animated_tab_!=tab_;
     if(reset){animated_tab_=tab_;tab_at_=now;}
     auto* background=ImGui::GetBackgroundDrawList();
-    const float middle=std::min(io.DisplaySize.x,780*s);
-    const float content_end=std::min(io.DisplaySize.x,std::max(layout_.width,980*s));
-    const float end=std::min(io.DisplaySize.x,std::max(1640*s,content_end+280*s));
-    background->AddRectFilledMultiColor(ImVec2(0,0),ImVec2(middle,io.DisplaySize.y),
-        visual::Color(0,0,0,.84f*alpha_),visual::Color(0,0,0,.62f*alpha_),
-        visual::Color(0,0,0,.62f*alpha_),visual::Color(0,0,0,.84f*alpha_));
-    background->AddRectFilledMultiColor(ImVec2(middle,0),ImVec2(content_end,io.DisplaySize.y),
-        visual::Color(0,0,0,.62f*alpha_),visual::Color(0,0,0,.50f*alpha_),
-        visual::Color(0,0,0,.50f*alpha_),visual::Color(0,0,0,.62f*alpha_));
-    background->AddRectFilledMultiColor(ImVec2(content_end,0),ImVec2(end,io.DisplaySize.y),
-        visual::Color(0,0,0,.50f*alpha_),visual::Color(0,0,0,0),
-        visual::Color(0,0,0,0),visual::Color(0,0,0,.50f*alpha_));
+    Backdrop(alpha_);
+    visual::SoftScrim(background,layout_,io.DisplaySize,alpha_);
     Theme theme(font_);
     ImGui::PushFont(Face(),20*s);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(0,0));
@@ -749,14 +895,34 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
   ImVec4 RowText(bool secondary=false)const {
     return secondary?ImVec4(.65f,.67f,.7f,1):white;
   }
-  void Initial(ImVec2 pos,float size,const std::string& name,ImU32 status,bool profile=false) {
+  rex::ui::ImmediateTexture* FriendPhoto(const std::string& name) {
+    if(!immediate_)return nullptr;
+    const auto photo=friend_photos_.Get(name);
+    if(!photo){photo_textures_.erase(name);return nullptr;}
+    auto& cached=photo_textures_[name];
+    if(cached.photo!=photo&&photo_uploads_<1){
+      ++photo_uploads_;
+      auto texture=immediate_->CreateTexture(photo->width,photo->height,rex::ui::ImmediateTextureFilter::kLinear,false,photo->rgba.data());
+      cached.photo=photo;if(texture)cached.texture=std::move(texture);
+    }
+    return cached.texture.get();
+  }
+  void Initial(ImVec2 pos,float size,const std::string& name,ImU32 status,bool profile=false,rex::ui::ImmediateTexture* photo=nullptr) {
     auto* draw=ImGui::GetWindowDrawList();const float s=layout_.scale;
     const ImVec2 center(pos.x+size*.5f,pos.y+size*.5f);
     draw->AddCircleFilled(center,size*.5f,profile?ImGui::GetColorU32(orange):visual::Color(33,35,37,.92f*alpha_));
+    if(photo){
+      const float u=photo->width>photo->height?(1.f-float(photo->height)/photo->width)*.5f:0;
+      const float v=photo->height>photo->width?(1.f-float(photo->width)/photo->height)*.5f:0;
+      draw->AddImageRounded(reinterpret_cast<ImTextureID>(photo),pos,ImVec2(pos.x+size,pos.y+size),
+          ImVec2(u,v),ImVec2(1-u,1-v),ImGui::GetColorU32(ImVec4(1,1,1,1)),size*.5f);
+    }
     draw->AddCircle(center,size*.5f,profile?visual::Color(255,106,19,.55f*alpha_):visual::Color(210,212,217,.25f*alpha_),0,1.5f*s);
-    const auto letter=visual::Initial(name);ImFont* f=Face(1);
-    const auto ts=f->CalcTextSizeA(size*.46f,FLT_MAX,0,letter.c_str());
-    draw->AddText(f,size*.46f,ImVec2(center.x-ts.x*.5f,center.y-ts.y*.5f),ImGui::GetColorU32(white),letter.c_str());
+    if(!photo){
+      const auto letter=visual::Initial(name);ImFont* f=Face(1);
+      const auto ts=f->CalcTextSizeA(size*.46f,FLT_MAX,0,letter.c_str());
+      draw->AddText(f,size*.46f,ImVec2(center.x-ts.x*.5f,center.y-ts.y*.5f),ImGui::GetColorU32(white),letter.c_str());
+    }
     if(!profile&&status!=0) {
       const ImVec2 dot(center.x+size*.39f,center.y+size*.34f);
       draw->AddCircleFilled(dot,9*s,visual::Color(8,9,10,.9f*alpha_));
@@ -822,7 +988,9 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
         else OpenUrl("https://nobkonline.com/profile/?u="+Encode(f.name));
       }
       const auto a=row_position_;const float avatar=62*s;
-      Initial(ImVec2(a.x+36*s,a.y+(row_height_-avatar)*.5f),avatar,f.name,WhereColor(f.where));
+      const ImVec2 avatar_pos(a.x+36*s,a.y+(row_height_-avatar)*.5f);
+      const bool visible=ImGui::IsRectVisible(avatar_pos,ImVec2(avatar_pos.x+avatar,avatar_pos.y+avatar));
+      Initial(avatar_pos,avatar,f.name,WhereColor(f.where),false,visible?FriendPhoto(f.name):nullptr);
       const float nx=a.x+142*s,name_size=(row_selected_?34.f:32.f)*s;
       const float country_x=a.x+282*s,status_left=a.x+455*s,status_right=right-4*s;
       RowLabel(f.name,nx,a.y+(row_height_-name_size)*.5f,name_size,RowText(),country_x-12*s,Face(row_selected_?2:0));
@@ -973,6 +1141,13 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
   achievements::MenuState achievement_state_;
   rex::ui::AchievementIconCache achievement_icons_;
   std::unique_ptr<rex::ui::ImmediateTexture> flag_texture_;
+  rex::ui::ImmediateDrawer* immediate_=nullptr;
+  FriendPhotos friend_photos_;
+  struct PhotoTexture {std::shared_ptr<const ProfilePhoto> photo;std::unique_ptr<rex::ui::ImmediateTexture> texture;};
+  std::map<std::string,PhotoTexture> photo_textures_;
+  unsigned photo_uploads_=0;
+  uint64_t photo_serial_=UINT64_MAX;
+  uint64_t discord_notice_=0;
   bool nav_owned_=false;
   ImGuiConfigFlags old_flags_=0;
   ImGuiBackendFlags old_backend_=0;

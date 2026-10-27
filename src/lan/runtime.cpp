@@ -4,6 +4,7 @@
 #include "online/stats.h"
 #include "online/social.h"
 #include "online/social_guest.h"
+#include "online/discord_invites.h"
 #include "local_splitscreen.h"
 #include <rex/cvar.h>
 #include <rex/hook.h>
@@ -125,6 +126,7 @@ std::string PlayerName(){
 #endif
 }
 void Start(rex::system::KernelState* kernel){
+  online::discord_invites::Stop();
   online::social::Stop();
   std::unique_lock lock(bridge_mutex);
   sockets.reset();
@@ -149,7 +151,10 @@ void Start(rex::system::KernelState* kernel){
   auto next_bridge=std::make_unique<GuestBridge>(kernel,node,mode=="online"?"":rex::cvar::Query<std::string>("lan_host_ip"),rex::cvar::Query<std::string>("lan_room_name"),service);
   auto next_sockets=std::make_unique<SocketBridge>(*next_bridge);
   bridge=std::move(next_bridge);sockets=std::move(next_sockets);
-  if(service)online::social::Start(kernel,service);
+  if(service){
+    online::social::Start(kernel,service);
+    online::discord_invites::Start(service,[]{return CurrentRoom();},rex::cvar::Query<bool>("discord_presence_enabled"));
+  }
   REXLOG_INFO("NETWORK_READY: mode={} adapter={} endpoint={}:{} discovery={}",mode,node->AdapterName(),IPv4(node->Address().ip),node->Address().port,
       rex::cvar::Query<std::string>("lan_host_ip").empty()?"automatic":"direct-IP fallback");
 #else
@@ -157,6 +162,7 @@ void Start(rex::system::KernelState* kernel){
 #endif
 }
 void Stop(){
+  online::discord_invites::Stop();
   online::social::Stop();
   {std::shared_lock lock(bridge_mutex);if(sockets)sockets->Shutdown();}
   std::unique_lock lock(bridge_mutex);sockets.reset();bridge.reset();

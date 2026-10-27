@@ -12,6 +12,7 @@ import urllib.parse
 import urllib.request
 
 from security import Invalid, Limited
+from discord_invites import DiscordInvites
 
 PEER_BASE = 0x0009000000000000
 
@@ -27,6 +28,7 @@ class Social:
         self.cache = {}
         self.fetching = {}
         self.invites = {}
+        self.discord = DiscordInvites(service)
 
     def lookup(self, name, account):
         request = urllib.request.Request(
@@ -106,11 +108,13 @@ class Social:
         return room
 
     async def dispatch(self, credential, body):
-        if not self.friends_api:
-            return json.dumps({'supported': False}).encode()
         if len(body) > 1024:
             raise Invalid('social request too large')
         request = json.loads(body)
+        if isinstance(request, dict) and request.get('action') in ('discord_publish', 'discord_join', 'discord_revoke'):
+            return self.discord.dispatch(credential, request)
+        if not self.friends_api:
+            return json.dumps({'supported': False}).encode()
         if not isinstance(request, dict) or request.get('action') not in ('poll', 'send', 'accept', 'decline'):
             raise Invalid('invalid social action')
         owner = self.service.store.owner(credential)

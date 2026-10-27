@@ -34,6 +34,8 @@ using namespace launcher;
 namespace {
 constexpr int kWidth=1040,kHeight=704,kCaptionHeight=28;
 constexpr UINT kApplyLauncherLanguage=WM_APP+23;
+constexpr UINT kDiscordInviteLaunch=WM_APP+24;
+constexpr wchar_t kInstallationProperty[]=L"MotoGP0910.LauncherRoot";
 constexpr COLORREF kBackground=RGB(13,15,20),kSidebar=RGB(19,21,27),kCard=RGB(23,26,33),
     kField=RGB(32,36,45),kText=RGB(242,244,247),kMuted=RGB(157,165,178),
     kAccent=kLauncherAccent,kRed=RGB(239,66,47),kBorder=RGB(48,53,64),kUpdateWarning=RGB(92,210,240);
@@ -88,6 +90,7 @@ struct App {
   unsigned localization_generation=0;
   bool capturing=false;
   bool capture_append=false;
+  bool discord_pending=false;
   HFONT font{},heading{},small_font{},bold{},logo{},play_font{},account_name_font{};
   std::array<HANDLE,3> private_fonts{};
   HBRUSH background=CreateSolidBrush(kBackground),card=CreateSolidBrush(kCard),field=CreateSolidBrush(kField);
@@ -380,7 +383,7 @@ struct App {
     const auto selected=SendMessageW(size,CB_GETCURSEL,0,0);
     FillWindowSizes(selected>=0 && selected<static_cast<LRESULT>(dimensions.size())?dimensions[selected]:std::pair{0,0});
     SetWindowTextW(status,(turkish?status_tr:status_en).c_str());UpdateSharpness();RefreshRates();
-    SetWindowTextW(reset_bindings,T(L"Reset keys to defaults",L"Tuşları varsayılana döndür"));
+    SetWindowTextW(reset_bindings,T(L"Reset keybinds",L"Atamaları sıfırla"));
     for(size_t i=0;i<binding_buttons.size();++i)RefreshBinding(i);
     RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN);
   }
@@ -606,6 +609,28 @@ struct App {
     else if(choice==4)SetBinding(binding_index,AddBindingAlternative(edited_bindings[binding_index],"Escape"));
     else if(choice>=100&&choice-100<alternatives.size())SetBinding(binding_index,RemoveBindingAlternative(edited_bindings[binding_index],choice-100));
   }
+  void DiscordInviteLaunch(){
+    if(process)return;
+    discord_pending=true;
+    SendMessageW(network_mode,CB_SETCURSEL,2,0);UpdateNetworkMode();
+    ShowWindow(window,SW_RESTORE);SetForegroundWindow(window);
+    if(!game_ready)ShowPage(3);
+    else if(!account)ShowPage(6);
+    else if(!Checked(discord_presence)){
+      ShowPage(3);SetFocus(discord_presence);
+      MessageBoxW(window,T(L"Enable Show Discord activity in General to accept this invitation.",L"Bu daveti kabul etmek için Genel bölümündeki Discord etkinliğini göster seçeneğini aç."),L"Discord",MB_OK|MB_ICONINFORMATION);
+    }
+    SetTimer(window,10,400,nullptr);
+  }
+  void PollDiscordLaunch(){
+    if(!discord_pending||process||SendMessageW(network_mode,CB_GETCURSEL,0,0)!=2){discord_pending=false;KillTimer(window,10);return;}
+    if(!game_ready||!account||!Checked(discord_presence)||verifying||importing_iso||update_busy||update_finishing||steam_busy||dlc_busy)return;
+    discord_pending=false;KillTimer(window,10);
+    // Use the normal PLAY transaction: account linking, file/DLC checks,
+    // settings persistence and the existing crash-monitor launch path.
+    Command(kPlay,BN_CLICKED);
+    if(!process&&!account){discord_pending=true;ShowPage(6);SetTimer(window,10,400,nullptr);}
+  }
   void SaveSettings() {
     settings=GetControls(); settings.Store(config.table);
     Put(config.table,"game_data_root",Utf8(GameRoot().wstring()));
@@ -778,8 +803,9 @@ LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam
       if((wparam&0xFFF0)==kNoticesCommand){try{NoticesDialog(window,app->font,app->scale,app->turkish,Wide(EmbeddedBytes(104))).Show();}catch(const std::exception& e){app->ErrorBox(e);}return 0;}break;
     case WM_COMMAND:app->Command(LOWORD(wparam),HIWORD(wparam));return 0;
     case kApplyLauncherLanguage:try{app->ApplyLanguage();}catch(const std::exception& e){app->ErrorBox(e);}return 0;
+    case kDiscordInviteLaunch:app->DiscordInviteLaunch();return 0;
     case WM_CONTEXTMENU:app->BindingMenu(reinterpret_cast<HWND>(wparam),{static_cast<short>(LOWORD(lparam)),static_cast<short>(HIWORD(lparam))});return 0;
-    case WM_TIMER:if(wparam==9)app->PollDlc();else if(wparam==8)app->PollSteam();else if(wparam==4)app->PollUpdates();else if(wparam==5)app->AnimateUpdatePanel();else if(wparam==6)app->PollIsoImport();else if(wparam==7){KillTimer(window,7);if(!app->importing_iso&&!app->verifying)app->ReadyStatus();}else if(wparam==2)app->PollAchievements();else if(wparam==3)app->PollVerification();else app->Poll();return 0;
+    case WM_TIMER:if(wparam==10)app->PollDiscordLaunch();else if(wparam==9)app->PollDlc();else if(wparam==8)app->PollSteam();else if(wparam==4)app->PollUpdates();else if(wparam==5)app->AnimateUpdatePanel();else if(wparam==6)app->PollIsoImport();else if(wparam==7){KillTimer(window,7);if(!app->importing_iso&&!app->verifying)app->ReadyStatus();}else if(wparam==2)app->PollAchievements();else if(wparam==3)app->PollVerification();else app->Poll();return 0;
     case WM_DRAWITEM:{auto& draw=*reinterpret_cast<DRAWITEMSTRUCT*>(lparam);if(draw.CtlType==ODT_BUTTON)app->PaintControl(draw.hDC,draw.hwndItem,&draw);else if(draw.CtlType==ODT_COMBOBOX)app->DrawCombo(draw);
       else if(draw.CtlType==ODT_MENU)DrawPopupText(draw.hDC,draw.rcItem,reinterpret_cast<const wchar_t*>(draw.itemData),app->font,app->scale,bool(draw.itemState&ODS_SELECTED),bool(draw.itemState&(ODS_DISABLED|ODS_GRAYED)));return TRUE;}
     case WM_MEASUREITEM:{auto& measure=*reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);measure.itemHeight=app->S(32);if(measure.CtlType==ODT_MENU)measure.itemWidth=app->S(184);return TRUE;}
@@ -805,7 +831,7 @@ LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam
       SetWindowPos(window,nullptr,std::clamp<int>(proposed->left,work.left,std::max<int>(work.left,work.right-width)),
           std::clamp<int>(proposed->top,work.top,std::max<int>(work.top,work.bottom-height)),width,height,SWP_NOZORDER|SWP_NOACTIVATE);return 0;}
     case WM_CLOSE:if(app->update_preparing&&!app->update_handoff)return 0;app->update_cancelled=true;app->verify_cancel=true;app->iso_cancel=true;app->dlc_cancel=true;DestroyWindow(window);return 0;
-    case WM_DESTROY:PostQuitMessage(0);return 0;
+    case WM_DESTROY:RemovePropW(window,kInstallationProperty);PostQuitMessage(0);return 0;
   }return DefWindowProcW(window,message,wparam,lparam);
 }
 }
@@ -824,9 +850,25 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
       MessageBoxW(nullptr,L"An update is being installed. Please wait. / Güncelleme kuruluyor. Lütfen bekle.",L"MotoGP 09/10",MB_OK);
       Gdiplus::GdiplusShutdown(gdip_token);CoUninitialize();return 0;
     }
-    App app;auto mutex_name=L"Local\\MotoGP0910Launcher-"+std::to_wstring(std::hash<std::wstring>{}(app.exe.wstring()));
+    int argument_count=0;auto* arguments=CommandLineToArgvW(GetCommandLineW(),&argument_count);
+    bool discord_invite=false;
+    if(arguments){for(int i=1;i<argument_count;++i)discord_invite|=std::wstring_view(arguments[i])==L"--discord-invite";LocalFree(arguments);}
+    App app;const auto root_hash=std::hash<std::wstring>{}(app.exe.wstring());
+    auto mutex_name=L"Local\\MotoGP0910Launcher-"+std::to_wstring(root_hash);
     HANDLE mutex=CreateMutexW(nullptr,FALSE,mutex_name.c_str());if(!mutex)throw std::runtime_error("Cannot initialize launcher lock");
-    if(GetLastError()==ERROR_ALREADY_EXISTS){CloseHandle(mutex);MessageBoxW(nullptr,app.T(L"The launcher is already open.",L"Launcher zaten açık."),L"MotoGP 09/10",MB_OK);Gdiplus::GdiplusShutdown(gdip_token);CoUninitialize();return 0;}
+    if(GetLastError()==ERROR_ALREADY_EXISTS){
+      CloseHandle(mutex);bool forwarded=false;
+      if(discord_invite){
+        struct Search{HANDLE root;HWND window=nullptr;} search{reinterpret_cast<HANDLE>(root_hash|1)};
+        EnumWindows([](HWND window,LPARAM data)->BOOL{
+          auto& search=*reinterpret_cast<Search*>(data);wchar_t name[64]{};GetClassNameW(window,name,64);
+          if(std::wstring_view(name)==L"MotoGP0910Launcher"&&GetPropW(window,kInstallationProperty)==search.root){search.window=window;return FALSE;}return TRUE;
+        },reinterpret_cast<LPARAM>(&search));
+        if(search.window)forwarded=PostMessageW(search.window,kDiscordInviteLaunch,0,0)!=FALSE;
+      }
+      if(!forwarded)MessageBoxW(nullptr,app.T(L"The launcher is already open.",L"Launcher zaten açık."),L"MotoGP 09/10",MB_OK);
+      Gdiplus::GdiplusShutdown(gdip_token);CoUninitialize();return 0;
+    }
     RECT work{};SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
     app.scale=std::max(0.55,std::min({GetDpiForSystem()/96.0,(work.right-work.left-40)/double(kWidth),(work.bottom-work.top-50)/double(kHeight+kCaptionHeight)}));
     WNDCLASSW cls{};cls.lpfnWndProc=WindowProc;cls.hInstance=instance;cls.lpszClassName=L"MotoGP0910Launcher";cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);cls.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(motogp::kIconResource));RegisterClassW(&cls);
@@ -835,9 +877,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
     auto window=CreateWindowExW(0,cls.lpszClassName,L"MotoGP 09/10 Launcher",style,(work.right-size.right+size.left)/2,(work.bottom-size.bottom+size.top)/2,
         size.right-size.left,size.bottom-size.top,nullptr,nullptr,instance,&app);
     if(!window){CloseHandle(mutex);throw std::runtime_error("Cannot create launcher window");}
+    SetPropW(window,kInstallationProperty,reinterpret_cast<HANDLE>(root_hash|1));
     motogp::ApplyWindowIcon(window);
     BOOL dark=TRUE;DwmSetWindowAttribute(window,20,&dark,sizeof(dark));
-    ShowWindow(window,show);UpdateWindow(window);updates::AcknowledgeRestart();app.StartUpdateCheck();MSG message;
+    ShowWindow(window,show);UpdateWindow(window);updates::AcknowledgeRestart();app.StartUpdateCheck();
+    if(discord_invite)PostMessageW(window,kDiscordInviteLaunch,0,0);MSG message;
     while(GetMessageW(&message,nullptr,0,0)>0){if(app.CaptureKey(message)||app.UpdateShortcut(message)||app.AchievementSearchShortcut(message))continue;if(!IsDialogMessageW(window,&message)){TranslateMessage(&message);DispatchMessageW(&message);}}
     CloseHandle(mutex);
   }catch(const std::exception& e){MessageBoxW(nullptr,(L"Cannot open launcher / Launcher açılamadı:\n"+ErrorDetails(e)).c_str(),L"MotoGP 09/10",MB_OK|MB_ICONERROR);result=1;}
