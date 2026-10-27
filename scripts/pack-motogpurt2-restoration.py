@@ -85,6 +85,16 @@ def main():
         for old, new in zip(result['digits'], digit_pack['digits'], strict=True):
             old['source'] = new['source']
 
+    # Older private base packs contain absolute donor thresholds. Migrate once
+    # so repacking reviewed artwork cannot restore the early shift warning.
+    for item in result['lights']:
+        if not item.get('normalized_rpm', False):
+            item['threshold'] = item['threshold'] / 12000 * 0.775
+            item['normalized_rpm'] = True
+    result['origin']['light_thresholds'] = (
+        'Normalized to current bike maximum; fifth light at 0.775 matches '
+        'red-zone entry, retaining donor relative spacing and frame-based blink.')
+
     digest = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
     result['restoration'] = {
         'version': 1,

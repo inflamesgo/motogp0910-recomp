@@ -33,6 +33,7 @@ namespace motogp::options {
 namespace {
 std::atomic<uint32_t> online_label{0};
 std::atomic<uint32_t> profile_label{0};
+std::atomic<uint32_t> splitscreen_warning{0};
 std::atomic<uint32_t> gauge_storage{0};
 constexpr uint32_t kGaugeChoiceVtable=0x8201EEC8;
 constexpr uint32_t kGaugeBytes=352,kGaugeIndex=36,kGaugeTable=52;
@@ -154,6 +155,14 @@ void Initialize(rex::Runtime* runtime){
   if(!profile_address)throw std::runtime_error("Could not allocate the profile action label");
   std::memcpy(runtime->virtual_membase()+profile_address,profile,std::strlen(profile)+1);
   profile_label.store(profile_address,std::memory_order_release);
+  const char* split=tr?
+      "Bölünmüş ekran için iki kontrolcü bağlayın veya bir kontrolcü bağlayıp launcher'dan klavye kontrolünü etkinleştirin.":
+      "Split-screen requires two controllers, or one controller with keyboard controls enabled in the launcher.";
+  const auto split_bytes=std::strlen(split)+1;
+  const auto split_address=runtime->memory()->SystemHeapAlloc(split_bytes);
+  if(!split_address)throw std::runtime_error("Could not allocate the split-screen warning");
+  std::memcpy(runtime->virtual_membase()+split_address,split,split_bytes);
+  splitscreen_warning.store(split_address,std::memory_order_release);
   InitializeGauge(runtime,tr);
 }
 uint32_t OnlineLabel(){return online_label.load(std::memory_order_acquire);}
@@ -229,6 +238,13 @@ REX_HOOK_RAW(sub_8224D130){const auto menu=ctx.r3.u32;__imp__sub_8224D130(ctx,ba
 REX_HOOK_RAW(sub_826EDB38){const auto label=motogp::options::OnlineLabel();
   if(label&&ctx.r3.u32==motogp::options::kOnlineHandle&&motogp::options::Read(base,ctx.r3.u32)==731){ctx.r3.u64=label;return;}
   if(const auto gauge=motogp::options::GaugeLabel(ctx.r3.u32)){ctx.r3.u64=gauge;return;}
+  // Bank 0's two controller-warning variants share the PC split-screen rules.
+  // Only replace their text; leave native eligibility and dialog input intact.
+  const auto split=motogp::options::splitscreen_warning.load(std::memory_order_acquire);
+  if(split&&ctx.r3.u32){
+    const auto id=motogp::options::Read(base,ctx.r3.u32);
+    if(id==2065||id==2066){ctx.r3.u64=split;return;}
+  }
   // The native label getter receives a handle containing a bank/index pair.
   // Replace both Gamer Card labels and the lobby help text without changing
   // action IDs, original message banks or the active language's other strings.

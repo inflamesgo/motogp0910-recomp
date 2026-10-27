@@ -137,9 +137,21 @@ This face has no RPM numerals to relabel. Its full original needle sweep maps
 0..the current 09/10 bike's actual configured maximum, as on the unnumbered
 MotoGP 17 face. This intentionally replaces the donor's 6000..14986 input
 normalization while preserving its visual start/end angles. The five lights
-retain their verified original 10000/10500/11000/11500/12000 RPM thresholds;
-the last one blinks for five of each ten UI frames after its threshold.
-They display actual RPM, not invented throttle, brake or damage states.
+now follow the same per-bike scale. Their thresholds are approximately
+64.58%, 67.81%, 71.04%, 74.27% and 77.5% of the current engine maximum.
+The final threshold aligns with the reviewed face's red-zone entry tick
+(about -17.36 degrees from screen right). The previous absolute donor
+10000/10500/11000/11500/12000 thresholds lit too early against the adapted
+needle; their relative spacing is retained. For a 19,000-RPM engine, the final
+light now starts at 14,725 RPM instead of 12,000. It still blinks for five of
+each ten UI frames. This is a visual shift cue, not a change to engine limits,
+the limiter, gear selection or physics.
+
+The focused `gauge_ui_probe ASSET_PACK NEW_FIXTURE --urt2-lights-only` phase
+checks the actual emitted light colors across 14,000/19,000/23,000-RPM engine
+limits, the reported early 12,000-RPM warning, needle-mesh alignment with the
+red-zone entry tick and the original blink phases. These are Wine/CPU render
+checks; native Windows gameplay appearance remains a separate acceptance.
 
 The original PC UI selects an external `tex_gouraudalpha` pixel shader absent
 from the supplied files. Its exact color gain remains unverified. A separate
@@ -168,7 +180,10 @@ its own yellow tint, speed/gear sizing, bearings and faint digit backgrounds.
 The review face is 808×808, the red needle 64×512, the common light mask 128×128
 and the shared digit atlas 1160×512. Texture coordinates change; logical drawing
 rectangles, pivot, normalized RPM sweep, all five light positions, original
-on/off colors, thresholds and fifth-light blink remain unchanged. The needle
+on/off colors and fifth-light blink remain unchanged. Light thresholds use
+the synchronized per-bike scale described above. Repacking an older base pack
+migrates its absolute thresholds once; already normalized packs are retained.
+The needle
 uses the original `(206,4,0)` RGB. Its generated black presentation background
 becomes alpha coverage, as does the white light mask; neither introduces an
 opaque rectangle behind the sprite. The original translucent face opacity

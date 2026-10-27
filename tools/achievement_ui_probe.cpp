@@ -3,6 +3,8 @@
 #include "../src/audio_settings.h"
 #include "../src/nobk_panel.h"
 #include "../src/nobk_panel_visuals.h"
+#include "../src/nobk_startup_strip.h"
+#include "../src/nobk_friend_toast.h"
 #include "../src/in_game_settings.h"
 #include <rex/cvar.h>
 #include <rex/input/input_system.h>
@@ -79,8 +81,107 @@ void Dump(const std::filesystem::path& stem) {
   }
   out<<"]}";
 }
+
+#ifdef MOTOGP_NOBK_VISUAL_PROBE
+using rex::X_STATUS;
+using rex::X_RESULT;
+class StripDriver final:public rex::input::InputDriver {
+ public:
+  rex::input::X_INPUT_STATE state{};
+  StripDriver():InputDriver(nullptr,0){}
+  rex::X_STATUS Setup()override{return X_STATUS_SUCCESS;}
+  void EnumerateDevices(std::vector<rex::input::DeviceInfo>& devices)override{
+    rex::input::DeviceInfo info{};info.id=static_cast<rex::input::DeviceId>(1);devices.push_back(info);
+  }
+  rex::X_RESULT GetDeviceState(rex::input::DeviceId,rex::input::X_INPUT_STATE* out)override{*out=state;return X_ERROR_SUCCESS;}
+  rex::X_RESULT GetDeviceCapabilities(rex::input::DeviceId,uint32_t,rex::input::X_INPUT_CAPABILITIES* out)override{*out={};return X_ERROR_SUCCESS;}
+  rex::X_RESULT SetDeviceVibration(rex::input::DeviceId,rex::input::X_INPUT_VIBRATION*)override{return X_ERROR_SUCCESS;}
+  rex::X_RESULT GetDeviceKeystroke(rex::input::DeviceId,uint32_t,rex::input::X_INPUT_KEYSTROKE*)override{return X_ERROR_EMPTY;}
+};
+int StartupStripChecks(const char* font_path,const char* output) {
+  const std::filesystem::path out=output;
+  Check(!std::filesystem::exists(out),"Startup strip checks use a new isolated fixture");std::filesystem::create_directories(out);
+  for(int scenario=0;scenario<4;++scenario){
+    rex::cvar::SetFlagByName("network_mode",scenario==0?"offline":scenario==1?"lan":"online");
+    rex::cvar::SetFlagByName("online_server",scenario==3?"https://custom.invalid":"https://motogp.nobkonline.com");
+    TestContext context;auto window=rex::ui::Window::Create(context,"Startup strip fixture");
+    rex::input::InputSystem input(nullptr);auto driver=std::make_unique<StripDriver>();auto* pad=driver.get();
+    input.AddDriver(std::move(driver));input.SetDeviceAssignment(std::make_unique<rex::input::SlotAssignment>());
+    Check(input.Setup()==X_STATUS_SUCCESS,"Real controller assignment initializes");
+    auto gate=std::make_shared<motogp::settings::InputGate>();gate->Initialize(&input);gate->SetFocused(true);
+    motogp::settings::SetGuestGate(nullptr,nullptr,gate.get());
+    rex::ui::ImGuiDrawer drawer(window.get(),100);auto& io=drawer.GetIO();
+    io.IniFilename=nullptr;io.LogFilename=nullptr;io.DisplaySize={1920,1080};io.DeltaTime=1.f/60;
+    const ImWchar ranges[]{0x20,0x1ff,0};
+    auto* font=io.Fonts->AddFontFromFileTTF(font_path,48,nullptr,ranges);
+    font->Flags|=ImFontFlags_LockBakedSizes;
+    motogp::nobk::ConfigureFonts(io.Fonts,font_path,font_path,font_path);
+    unsigned char* pixels;int width,height;io.Fonts->GetTexDataAsRGBA32(&pixels,&width,&height);io.Fonts->SetTexID(1);
+    int renderer_errors=0;
+    ImGui::GetCurrentContext()->ErrorCallback=[](ImGuiContext*,void* value,const char*){++*static_cast<int*>(value);};
+    ImGui::GetCurrentContext()->ErrorCallbackUserData=&renderer_errors;
+    rex::system::AchievementManager manager;auto preferences=std::make_shared<Preferences>();preferences->sound=false;
+    motogp::nobk::Initialize(nullptr,gate);motogp::nobk::SetVisualInput(&input);
+    motogp::nobk::SetVisualFixture(false);
+    auto menu=motogp::nobk::CreateMenu(&drawer,nullptr,&manager,font,font,false,nullptr,nullptr,preferences);
+    auto frame=[&]{gate->PollGuest();drawer.GetIO();
+      Check(io.Fonts->IsBuilt(),"Startup strip cannot invalidate the runtime's once-uploaded font atlas");
+      ImGui::NewFrame();menu->Draw();ImGui::Render();
+      Check(io.Fonts->IsBuilt(),"Startup labels and font measurements preserve the uploaded atlas");
+      Check(renderer_errors==0,"Startup strip submits valid production ImGui geometry without recovered errors");};
+    frame();
+    Check(ImGui::GetDrawData()->TotalVtxCount==0,"A missing local account name does not consume or show the startup strip");
+    if(scenario!=2){
+      for(int i=0;i<210;++i)frame();
+      Check(ImGui::GetDrawData()->TotalVtxCount==0,"Offline, LAN and custom services show no production NOBK startup strip");
+    }else{
+      motogp::nobk::SetVisualFixture(true,true);
+      io.DeltaTime=4.f;frame();io.DeltaTime=1.f/60;
+      Check(ImGui::GetDrawData()->TotalVtxCount>0,"Signed-in production snapshot shows startup strip without opening F1");Dump(out/"entering");
+      int entrance_alpha=0;
+      for(const auto* list:ImGui::GetDrawData()->CmdLists)
+        for(const auto& vertex:list->VtxBuffer)entrance_alpha=std::max(entrance_alpha,int(vertex.col>>24));
+      Check(entrance_alpha>0&&entrance_alpha<64,"A four-second first frame cannot skip the startup entrance");
+      for(int i=0;i<30;++i)frame();Dump(out/"steady");
+      io.DeltaTime=4.f;frame();io.DeltaTime=1.f/60;
+      Check(ImGui::GetDrawData()->TotalVtxCount>0,"A later loading stall cannot consume the startup strip's remaining lifetime");
+      Check(!gate->Blocking()&&!io.WantCaptureKeyboard&&!io.WantCaptureMouse,"Passive startup strip captures no guest keyboard, mouse or controller input");
+      for(auto size:{ImVec2(1280,720),ImVec2(2560,1080),ImVec2(320,240)}){
+        const auto layout=motogp::nobk::startup::Measure(font,size,1,123,2,"PageDown","Back'i basılı tut",true);
+        Check(layout.minimum.x>=0&&layout.maximum.x<=size.x&&layout.minimum.y>=0&&layout.maximum.y<size.y,
+              "Long localized labels, remapped keys and pending invites fit narrow and wide viewports");
+        Check(layout.maximum.y<size.y*.25f&&std::abs(layout.minimum.x+layout.maximum.x-size.x)<.01f,
+              "Startup strip stays centered at the top without entering the main panel area");
+      }
+      gate->Open();for(int i=0;i<22;++i)frame();gate->Close();gate->PollGuest();
+      for(int i=0;i<24;++i)frame();Check(ImGui::GetDrawData()->TotalVtxCount>0,"Closing F1 before expiry may finish the same startup presentation");
+      for(int i=0;i<150;++i)frame();Check(ImGui::GetDrawData()->TotalVtxCount==0,"Startup strip expires after its three-second window and exit fade");
+      for(int i=0;i<90;++i)frame();Check(ImGui::GetDrawData()->TotalVtxCount==0,"Startup strip never restarts each frame or on later snapshots");
+      motogp::nobk::SetVisualFixture(false);
+      auto poll=[&](uint16_t buttons,int milliseconds){pad->state.gamepad.buttons=buttons;
+        const auto until=std::chrono::steady_clock::now()+std::chrono::milliseconds(milliseconds);
+        do{motogp::nobk::PollPad();gate->PollGuest();std::this_thread::sleep_for(std::chrono::milliseconds(10));}while(std::chrono::steady_clock::now()<until);};
+      using namespace rex::input;
+      poll(0,80);poll(X_INPUT_GAMEPAD_START,550);Check(!gate->IsOpen(),"Start alone retains its native function");
+      poll(0,80);poll(X_INPUT_GAMEPAD_BACK,200);Check(!gate->IsOpen(),"Short Back press does not open F1");
+      poll(X_INPUT_GAMEPAD_BACK,400);Check(gate->IsOpen(),"Holding Back alone opens the actual production panel gate");
+      gate->Close();poll(X_INPUT_GAMEPAD_BACK,600);Check(!gate->IsOpen(),"Closing while Back remains held cannot immediately reopen the panel");
+      gate->SetFocused(false);poll(0,80);poll(X_INPUT_GAMEPAD_BACK,550);Check(!gate->IsOpen(),"Unfocused Back cannot open the panel");
+      gate->SetFocused(true);poll(X_INPUT_GAMEPAD_BACK,550);Check(!gate->IsOpen(),"Refocusing requires release before rearming held Back");
+      poll(0,80);poll(X_INPUT_GAMEPAD_BACK,600);Check(gate->IsOpen(),"Release and a new Back hold rearm the shortcut");gate->Close();poll(0,80);
+    }
+    menu.reset();motogp::nobk::SetVisualFixture(false);motogp::nobk::Shutdown();gate->PollGuest();motogp::settings::SetGuestGate(nullptr);
+  }
+  std::cout<<"Startup strip lifecycle, renderer and held-Back checks passed\n";return 0;
+}
+#include "nobk_toast_checks.inc"
+#endif
 }
 int main(int argc,char** argv) {try {
+#ifdef MOTOGP_NOBK_VISUAL_PROBE
+  if(argc==4&&std::string_view(argv[3])=="--startup-strip-only")return StartupStripChecks(argv[1],argv[2]);
+  if(argc==4&&std::string_view(argv[3])=="--friend-toast-only")return FriendToastChecks(argv[1],argv[2]);
+#endif
   Check(argc==3,"Usage: achievement_ui_probe font.ttf output-directory");
   const std::filesystem::path out=argv[2];std::filesystem::create_directories(out);
   Preferences preferences;preferences.path=out/"fixture-preferences.toml";preferences.sound=false;preferences.volume=38;

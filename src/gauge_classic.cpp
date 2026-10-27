@@ -29,7 +29,7 @@ template<size_t N> std::array<float,N> Numbers(const Json& value,float low=-4096
 struct Sprite {int texture=0;std::array<float,4> uv{},rect{};ImU32 tint=IM_COL32_WHITE;};
 struct Digit {Sprite sprite;float advance=0;};
 struct Readout {std::array<float,2> center{};float scale=1,ghost=0,line_height=0;int cells=1;bool pad_zero=false;ImU32 color=IM_COL32_WHITE;};
-struct Light {Sprite sprite;float threshold=0;ImU32 off=0,on=0;int blink_frames=0;};
+struct Light {Sprite sprite;float threshold=0;ImU32 off=0,on=0;int blink_frames=0;bool normalized_rpm=false;};
 ImU32 Color(const Json& value){
   const auto color=Numbers<3>(value,0,255);return IM_COL32(int(color[0]),int(color[1]),int(color[2]),255);
 }
@@ -92,7 +92,9 @@ class Renderer final:public ClassicRenderer {
       const auto& lights=json.at("lights");
       if(!lights.is_array()||lights.size()>8)throw std::runtime_error("Invalid classic gauge light count");
       for(const auto& item:lights){
-        Light light;light.sprite=ReadSprite(item.at("sprite"));light.threshold=Number(item.at("threshold"),0,30000);
+        Light light;light.sprite=ReadSprite(item.at("sprite"));
+        light.normalized_rpm=item.value("normalized_rpm",false);
+        light.threshold=Number(item.at("threshold"),0,light.normalized_rpm?1.f:30000.f);
         light.off=Color(item.at("off_color"));light.on=Color(item.at("on_color"));light.blink_frames=item.at("blink_frames").get<int>();
         if(light.blink_frames<0||light.blink_frames>120||light.blink_frames==1)throw std::runtime_error("Invalid classic gauge light animation");
         lights_.push_back(light);
@@ -121,7 +123,8 @@ class Renderer final:public ClassicRenderer {
     const float degrees=low[1]+(high[1]-low[1])*(rpm-low[0])/(high[0]-low[0]);
     DrawSprite(draw,needle_,origin,scale,IM_COL32_WHITE,degrees*0.017453292519943295f);
     for(const auto& light:lights_){
-      const bool lit=sample.rpm>=light.threshold&&(!light.blink_frames||ImGui::GetFrameCount()%light.blink_frames<light.blink_frames/2);
+      const float light_rpm=light.normalized_rpm?sample.rpm/sample.max_rpm:sample.rpm;
+      const bool lit=light_rpm>=light.threshold&&(!light.blink_frames||ImGui::GetFrameCount()%light.blink_frames<light.blink_frames/2);
       DrawSprite(draw,light.sprite,origin,scale,lit?light.on:light.off,0);
     }
     const int velocity=int(std::clamp(sample.mph*(sample.metric?1.609f:1.f),0.f,999.f));

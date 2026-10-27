@@ -356,7 +356,7 @@ struct App {
     RefreshGameFilesAction();
     SetWindowTextW(play,T(process?L"GAME RUNNING":L"PLAY",process?L"OYUN ÇALIŞIYOR":L"OYUNU BAŞLAT"));
     FillCombo(post_effect,{T(L"Off",L"Kapalı"),L"FXAA",L"FXAA Extreme"});
-    FillCombo(backend,{L"SDL — Xbox / PlayStation",T(L"XInput — Xbox-compatible",L"XInput — Xbox uyumlu")});
+    FillCombo(backend,{L"SDL — Xbox / PlayStation",T(L"XInput — Xbox Compatible",L"XInput — Xbox uyumlu")});
     FillCombo(prompt_style,{T(L"Automatic",L"Otomatik"),L"PlayStation 3",L"Xbox 360",T(L"Keyboard",L"Klavye")});
     FillCombo(effect,{T(L"Bilinear (default)",L"Bilineer (varsayılan)"),L"AMD CAS",L"AMD FSR 1",L"AMD FSR 2",L"AMD FSR 3"});
     FillCombo(fsr_quality,{T(L"Auto",L"Otomatik"),T(L"Native AA",L"Doğal AA"),T(L"Quality",L"Kalite"),T(L"Balanced",L"Dengeli"),T(L"Performance",L"Performans"),T(L"Ultra Performance",L"Ultra Performans")});

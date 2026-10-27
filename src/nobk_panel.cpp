@@ -1,5 +1,7 @@
 #include "nobk_panel.h"
 #include "nobk_panel_visuals.h"
+#include "nobk_startup_strip.h"
+#include "nobk_friend_toast.h"
 #include "button_prompts.h"
 #include "gamer_card_flags.h"
 #include "online/social.h"
@@ -58,7 +60,7 @@ namespace {
 using namespace motogp::overlay;
 using json = nlohmann::json;
 using Clock = std::chrono::steady_clock;
-struct VisualFonts {ImFontAtlas* atlas=nullptr;std::array<ImFont*,3> faces{};};
+struct VisualFonts {ImFontAtlas* atlas=nullptr;std::array<ImFont*,3> faces{};ImFont* startup=nullptr;};
 VisualFonts visual_fonts;
 
 // Native track index (view - 1) % 21. Slot 17 is reserved and empty in every package.
@@ -305,7 +307,7 @@ enum class Where { Offline, Site, Menus, Room, Racing };
 struct Friend { std::string name,country,room; Where where=Where::Offline; };
 struct Room { std::string name,host; int members=0,capacity=0; bool racing=false,friends=false,mine=false; };
 struct Recent { std::string name,board,time; int rank=0; int64_t at=0; bool mine=false,friend_=false; };
-struct Event { std::string text; int64_t at=0; int kind=0; };  // kind 0 info, 1 good, 2 bad
+struct Event { std::string text; int64_t at=0; int kind=0; std::string friend_name; };  // kind 0 info, 1 good, 2 bad
 struct Snapshot {
   bool available=false,loaded=false,failed=false;
   std::string me;
@@ -361,6 +363,13 @@ class State {
   }
   void Close(){gate->Close();}
   Snapshot Read(){std::lock_guard lock(mutex_);return snapshot_;}
+#ifdef MOTOGP_NOBK_VISUAL_PROBE
+  void ApplyVisualPresence(const char* live,const char* friends,bool got_live,bool got_friends){
+    const std::lock_guard lock(mutex_);
+    Apply(json::parse(live),got_live,json{},false,json::parse(friends),got_friends,
+        json{},false,json{},false,false);
+  }
+#endif
   bool PopToast(Event& out) {
     std::lock_guard lock(mutex_);
     if(toasts_.empty())return false;
@@ -375,6 +384,9 @@ class State {
   }
   void PollPad(rex::input::InputSystem* input) {
     if(!input||!snapshot_.available)return;
+    const auto epoch=gate->Epoch();
+    if(pad_epoch_!=epoch){pad_epoch_=epoch;combo_since_.reset();combo_used_=true;}
+    if(!gate->Focused()){combo_since_.reset();combo_used_=true;return;}
     const auto now=Clock::now();
     if(now<next_pad_)return;
     next_pad_=now+std::chrono::milliseconds(50);
@@ -385,7 +397,7 @@ class State {
         rex::input::X_INPUT_STATE state{};
         if(input->GetStateForUI(user,&state)!=0)continue;
         const auto b=state.gamepad.buttons;
-        held=(b&rex::input::X_INPUT_GAMEPAD_BACK)&&(b&rex::input::X_INPUT_GAMEPAD_START);
+        held=(b&rex::input::X_INPUT_GAMEPAD_BACK)!=0;
       }
     }
     if(!held){combo_since_.reset();combo_used_=false;return;}
@@ -395,9 +407,9 @@ class State {
   const std::shared_ptr<settings::InputGate> gate;
 
  private:
-  void Push(std::string text,int kind,bool toast=true) {
+  void Push(std::string text,int kind,bool toast=true,std::string friend_name={}) {
     // mutex_ held by caller
-    Event e{std::move(text),int64_t(std::time(nullptr)),kind};
+    Event e{std::move(text),int64_t(std::time(nullptr)),kind,std::move(friend_name)};
     snapshot_.events.push_front(e);
     while(snapshot_.events.size()>30)snapshot_.events.pop_back();
     if(toast&&toasts_.size()<6)toasts_.push_back(std::move(e));
@@ -502,11 +514,23 @@ class State {
         if(it!=where.end()){f.where=it->second.first;f.room=it->second.second;}
         else if(f.where>=Where::Menus){f.where=Where::Offline;f.room.clear();}
         if(first||!s.loaded)continue;
-        if(before<Where::Menus&&f.where>=Where::Menus)
-          Push(f.name+" · MotoGP",0);
         bool hosts=false;for(const auto& r:rooms)if(SameName(r.host,f.name)&&r.name==f.room)hosts=true;
         if(hosts&&f.where==Where::Room&&(before<Where::Room||before_room!=f.room))
           Push(f.name+" ▸ "+f.room,1);
+      }
+      // Keep a trusted per-friend baseline across failed/stale live reads.
+      // First sight of an account seeds it, including a delayed friends list;
+      // only a known offline friend entering MotoGP generates this toast.
+      if(!live.value("stale",false)){
+        std::map<std::string,bool> next_presence;
+        for(const auto& f:s.friends){
+          const auto key=lower(f.name);const bool online=f.where>=Where::Menus;
+          const auto previous=online_presence_.find(key);
+          if(previous!=online_presence_.end()&&!previous->second&&online)
+            Push(f.name+" · MotoGP",0,true,f.name);
+          next_presence[key]=online;
+        }
+        online_presence_=std::move(next_presence);
       }
       std::stable_sort(s.friends.begin(),s.friends.end(),[](const Friend& a,const Friend& b){
         if(a.where!=b.where)return a.where>b.where;return a.name<b.name;});
@@ -563,11 +587,13 @@ class State {
   Snapshot snapshot_;
   std::deque<Event> toasts_;
   std::map<int64_t,std::string> held_;
+  std::map<std::string,bool> online_presence_;
   Http http_;
   std::thread worker_;
   Clock::time_point next_pad_{};
   std::optional<Clock::time_point> combo_since_;
   bool combo_used_=false;
+  uint64_t pad_epoch_=UINT64_MAX;
 };
 
 std::atomic<std::shared_ptr<State>> current;
@@ -623,16 +649,26 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
 
  protected:
   void OnDraw(ImGuiIO& io) override {
+    photo_uploads_=0;friend_toast_visible_=false;
+    if(!startup_finished_){
+      auto snapshot=state_->Read();
+#ifdef MOTOGP_NOBK_VISUAL_PROBE
+      if(visual_fixture)snapshot=*visual_fixture;
+#endif
+      DrawStartupStrip(io,snapshot);
+    }
     DrawToast(io);
     const bool invite_request=online::social::ConsumeOpenRequest();
     if(invite_request){if(!state_->gate->IsOpen())state_->Toggle();tab_=0;selected_=0;invite_picker_=true;}
-    const bool open=state_->gate->IsOpen();friend_photos_.SetOpen(open);
+    const bool open=state_->gate->IsOpen();friend_photos_.SetOpen(open||friend_toast_visible_);
+    if(!open&&!friend_toast_visible_&&!toast_photo_.empty()){
+      photo_textures_.erase(toast_photo_);toast_photo_.clear();
+    }
     if(!open){Backdrop(0);RestoreNavigation(io);armed_=false;previous_=0;return;}
     auto snapshot=state_->Read();
 #ifdef MOTOGP_NOBK_VISUAL_PROBE
     if(visual_fixture)snapshot=*visual_fixture;
 #endif
-    photo_uploads_=0;
     if(photo_serial_!=snapshot.serial){
       photo_serial_=snapshot.serial;
       std::erase_if(photo_textures_,[&](const auto& entry){return std::none_of(snapshot.friends.begin(),snapshot.friends.end(),[&](const Friend& f){return f.name==entry.first;});});
@@ -661,6 +697,32 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
   }
 
  private:
+  void DrawStartupStrip(ImGuiIO& io,const Snapshot& snapshot) {
+    if(!snapshot.available){startup_finished_=true;return;}
+    if(!std::isfinite(io.DisplaySize.x)||!std::isfinite(io.DisplaySize.y)||
+        io.DisplaySize.x<=0||io.DisplaySize.y<=0)return;
+    if(!startup_started_){
+      if(snapshot.me.empty())return;
+      startup_started_=true;
+    }
+    // Loading can stall presentation for seconds. Advance this short, one-shot
+    // animation by bounded draw steps so a stalled frame cannot consume its
+    // entrance or entire lifetime. Other overlays keep their existing clocks.
+    const float step=std::isfinite(io.DeltaTime)?std::clamp(io.DeltaTime,0.f,1.f/30.f):0.f;
+    startup_elapsed_+=step;
+    const bool show=startup_elapsed_<3.&&!state_->gate->Blocking()&&
+        !settings::GuestInputBlocked()&&!quit::Pending();
+    startup_phase_=std::clamp(startup_phase_+(show?1.f:-1.f)*step/.3f,0.f,1.f);
+    if(startup_phase_<=0){startup_finished_=startup_elapsed_>=3.;return;}
+    const int friends=int(std::count_if(snapshot.friends.begin(),snapshot.friends.end(),
+        [](const Friend& item){return item.where!=Where::Offline;}));
+    const auto invites=online::social::Read();
+    auto key=rex::cvar::Query<std::string>("bind_nobk_panel");if(key.empty())key="F1";
+    auto* face=visual_fonts.atlas==io.Fonts&&visual_fonts.startup?visual_fonts.startup:Face(1);
+    startup::Draw(ImGui::GetForegroundDrawList(),face,io.DisplaySize,visual::Smooth(startup_phase_),
+        friends,int(invites.invites.size()),key,
+        Tr(tr_,"Hold Back","Back'i basılı tut"),tr_);
+  }
   void Backdrop(float alpha) {
 #if defined(_WIN32) && !defined(MOTOGP_NOBK_VISUAL_PROBE)
     using SetBackdrop=uint32_t(*)(uint32_t,float,float,float,float);
@@ -698,6 +760,7 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
   }
   void DrawToast(ImGuiIO& io) {
     const double now=ImGui::GetTime();
+    const auto expired=[&]{return !toast_||now-toast_at_>ToastDuration();};
     const auto discord=online::discord_invites::ReadNotice();
     if(discord.serial!=discord_notice_){
       discord_notice_=discord.serial;
@@ -719,17 +782,36 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
     std::set<std::string> pending;
     for(const auto& invite:social.invites)pending.insert(invite.id);
     std::erase_if(invite_notified_,[&](const auto& id){return !pending.contains(id);});
-    if(!toast_||now-toast_at_>6.0)for(const auto& invite:social.invites)if(!invite_notified_.contains(invite.id)) {
+    if(expired())for(const auto& invite:social.invites)if(!invite_notified_.contains(invite.id)) {
       invite_notified_.insert(invite.id);
       toast_=Event{invite.from+Tr(tr_," invited you to their lobby. Open F1 to respond."," seni lobisine davet etti. Yanıtlamak için F1'i aç."),0,1};toast_at_=now;break;
     }
-    if(!toast_||now-toast_at_>6.0) {
+    if(expired()) {
       Event next;
       if(state_->PopToast(next)){toast_=next;toast_at_=now;}
       else toast_.reset();
     }
     if(!toast_||state_->gate->IsOpen())return;
     const float t=float(now-toast_at_);
+    if(!toast_->friend_name.empty()){
+      // Match the startup strip: friend presence belongs to production Online
+      // sessions, even if an event remains queued in an unavailable session.
+      if(!state_->Read().available){toast_.reset();return;}
+      friend_toast_visible_=true;friend_photos_.SetOpen(true);
+      if(toast_photo_!=toast_->friend_name){
+        if(!toast_photo_.empty())photo_textures_.erase(toast_photo_);
+        toast_photo_=toast_->friend_name;
+      }
+      const auto* photo=FriendPhoto(toast_->friend_name);
+      const float u=photo&&photo->width>photo->height?(1.f-float(photo->height)/photo->width)*.5f:0;
+      const float v=photo&&photo->height>photo->width?(1.f-float(photo->width)/photo->height)*.5f:0;
+      // The runtime uploads its font atlas once. Reuse the same semibold
+      // family at its existing high-resolution locked bake for all sizes.
+      friend_toast::Draw(ImGui::GetForegroundDrawList(),Face(1),io.DisplaySize,t,
+          toast_->friend_name,FriendToastActivity(),reinterpret_cast<ImTextureID>(photo),
+          ImVec2(u,v),ImVec2(1-u,1-v),Tr(tr_,"FRIEND ONLINE","ARKADAŞ ÇEVRİMİÇİ"));
+      return;
+    }
     const float alpha=std::clamp(std::min(t/.25f,(6.f-t)/.4f),0.f,1.f);
     Theme theme(font_);
     const ImVec2 size(360,0);
@@ -749,6 +831,12 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
     }
     ImGui::End();
     ImGui::PopStyleVar();
+  }
+  std::string FriendToastActivity()const {
+    return Tr(tr_,"Playing MotoGP 09/10","MotoGP 09/10 oynuyor");
+  }
+  float ToastDuration()const {
+    return toast_&&!toast_->friend_name.empty()?friend_toast::Duration(toast_->friend_name+" "+FriendToastActivity()):6.f;
   }
   void Brand(float size) {
     // NOBK·FRIENDS wordmark: caps, orange dot.
@@ -1145,6 +1233,8 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
   FriendPhotos friend_photos_;
   struct PhotoTexture {std::shared_ptr<const ProfilePhoto> photo;std::unique_ptr<rex::ui::ImmediateTexture> texture;};
   std::map<std::string,PhotoTexture> photo_textures_;
+  std::string toast_photo_;
+  bool friend_toast_visible_=false;
   unsigned photo_uploads_=0;
   uint64_t photo_serial_=UINT64_MAX;
   uint64_t discord_notice_=0;
@@ -1166,10 +1256,19 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
   int tab_=0,selected_=0;
   std::optional<Event> toast_;
   double toast_at_=0;
+  bool startup_started_=false,startup_finished_=false;
+  double startup_elapsed_=0;
+  float startup_phase_=0;
 };
 }  // namespace
 
 #ifdef MOTOGP_NOBK_VISUAL_PROBE
+void ApplyVisualPresence(const char* live,const char* friends,bool got_live,bool got_friends){
+  if(auto state=current.load(std::memory_order_acquire))state->ApplyVisualPresence(live,friends,got_live,got_friends);
+}
+void SetVisualInput(rex::input::InputSystem* input) {
+  input_system.store(input,std::memory_order_release);
+}
 void SetVisualFixture(bool enabled,bool reference) {
   if(!enabled){visual_fixture.reset();return;}
   Snapshot s;s.available=s.loaded=s.server_up=true;s.me="Rider One";
@@ -1206,6 +1305,16 @@ void ConfigureFonts(ImFontAtlas* atlas,const char* regular,const char* semibold,
     visual_fonts.faces[i]=atlas->AddFontFromFileTTF(paths[i],40,&config,ranges);
     if(visual_fonts.faces[i])visual_fonts.faces[i]->Flags|=ImFontFlags_LockBakedSizes;
   }
+#ifdef _WIN32
+  // Match the released FIFA 09 strip's own font chain without redistributing
+  // Windows fonts. Other overlays keep their existing bundled typography.
+  for(const char* path:{"C:\\Windows\\Fonts\\segoeuisb.ttf","C:\\Windows\\Fonts\\segoeui.ttf","C:\\Windows\\Fonts\\arial.ttf"}){
+    std::error_code error;if(!std::filesystem::is_regular_file(path,error))continue;
+    ImFontConfig config;config.OversampleH=2;config.OversampleV=2;
+    visual_fonts.startup=atlas->AddFontFromFileTTF(path,48,&config,ranges);
+    if(visual_fonts.startup){visual_fonts.startup->Flags|=ImFontFlags_LockBakedSizes;break;}
+  }
+#endif
 }
 void Initialize(rex::Runtime* runtime,std::shared_ptr<settings::InputGate> gate) {
   input_system.store(runtime?static_cast<rex::input::InputSystem*>(runtime->input_system()):nullptr,std::memory_order_release);

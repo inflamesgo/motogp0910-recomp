@@ -218,7 +218,11 @@ def convert(overlays_path, fonts_path):
         lights.append({"sprite": sprite(2, [0, 0, 16, 16],
                           [x * 101 - radius, y * 101 - radius,
                            x * 101 + radius, y * 101 + radius]),
-                       "threshold": 10000 + index * 500,
+                       # The port maps the unnumbered needle to each bike's
+                       # maximum. Match that scale: the reviewed face's first
+                       # red-zone tick is at 77.5% of the authored sweep.
+                       "threshold": (10000 + index * 500) / 12000 * 0.775,
+                       "normalized_rpm": True,
                        "off_color": off_colors[index], "on_color": on_colors[index],
                        "blink_frames": 10 if index == 4 else 0})
     digest = lambda data: hashlib.sha256(data).hexdigest()
@@ -234,7 +238,7 @@ def convert(overlays_path, fonts_path):
                            "texture_format": "BC3/DXT5; native format table 0x5DC418, index 2",
                            "native_render": "0x004ad250", "native_font_shift": "0x004ad818",
                            "rpm_adaptation": "Unnumbered native full sweep follows actual RPM / current bike maximum RPM.",
-                           "light_thresholds": "Original absolute RPM thresholds, including frame-based fifth-light blink.",
+                           "light_thresholds": "Normalized to current bike maximum; fifth light at 0.775 matches red-zone entry, retaining donor relative spacing and frame-based blink.",
                            "color_limit": "Native face/needle color 128 may be neutral with Climax shader gain; external shader not supplied. Raw artwork retained."}}
 
 

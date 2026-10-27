@@ -1,7 +1,7 @@
 # NOBK Online panel
 
 Integrated from ChunchunQ's `nobk-online` commit `c432d67` after PR #1 was merged.
-Press **F1**, or hold **Back + Start** for about 450 ms on a controller, to open
+Press **F1**, or hold **Back** for about 450 ms on a controller, to open
 the English/Turkish panel in production Online mode. F1 and the controller
 combo do not open this panel in Offline/LAN mode. Live settings use **F2**.
 The old F4/F1 settings binding migrates to F2; other custom settings bindings remain unchanged.
@@ -78,13 +78,17 @@ refresh for 20/60 seconds (open/closed); own records use 15/45 seconds; recent
 entries use 15 seconds while open. Failed fetches use the ordinary polling loop,
 not those successful-refresh deadlines. There is no push/WebSocket subscription.
 
-The first successful snapshot seeds state without announcing existing activity.
-Later polls enqueue a toast when a friend enters MotoGP or hosts a new room,
+Trusted presence seeds each friend without announcing existing activity,
+including friends whose first list response arrives after the initial live
+snapshot. Failed or stale live reads do not replace this baseline. Later polls
+enqueue a toast when a known offline friend enters MotoGP or hosts a new room,
 or when the set of first-place boards owned by the current rider gains/loses a
 view. A faster lap on an already-owned board does not change that set. Keep this
 ownership-based notification separate from personal-best improvement messages.
 The event feed holds at most 30 entries and the toast queue at most six; these
-are session memory, not persistent history. Toasts last about six seconds.
+are session memory, not persistent history. Ordinary notices last about six
+seconds. Friend-online notifications use the MW reference's nine-second base
+duration, extending for longer messages up to eighteen seconds.
 
 Friend selection opens a browser profile outside the native invite picker;
 room rows remain informational. Accepting a community invitation triggers the
@@ -136,6 +140,119 @@ the Offline/LAN F7 overlay. Its focused Windows/Wine validation is documented in
 [achievements.md](achievements.md#f1-integration-validation--23-october-2026).
 
 ## Apex presentation
+
+### Startup NOBK.FRIENDS strip
+
+The startup-only strip adapts the released
+[FIFA 09 v1.4.0](https://github.com/ChunchunQ/fifa09-recomp/releases/tag/v1.4.0)
+behavior to the approved MotoGP mockup. It is passive and top-centered: at
+1080p its height is 52 pixels and top inset is 22 pixels. The charcoal surface
+has a fine gray outline, an outlined dark keycap and an orange-dot wordmark.
+The friend presence dot/count and optional orange invitation badge precede
+a divider and the compact `Hold Back` hint. Width follows actual text
+measurements; narrow viewports fit proportionally without cropping text.
+This change only affects the startup strip, not the F1 panel or friend-online
+notification design.
+
+It starts once a local account name is available on the existing production
+Online service, has a three-second presentation window, and uses the donor's
+300 ms smoothstep ramp, with 16-pixel movement from above for entrance and exit.
+Its local clock advances by at most 1/30 second per draw, so a long startup
+frame cannot skip the entrance or expire the entire strip. At 30 FPS and above
+the normal timing is unchanged; slower frames prolong presentation instead
+of losing animation steps. The game's simulation and other UI clocks are not
+modified.
+It neither opens F1 nor blocks guest input. Opening another overlay fades it
+away without resetting its presentation window. It does not reappear for subsequent
+friend changes in this first-stage implementation. Offline, LAN and custom
+service origins do not show a production NOBK strip.
+
+The count uses the existing friends snapshot, including shared NOBK presence;
+it is not the total connected player count. Incoming-invitation count uses
+the existing authenticated invitation snapshot. No new request, worker,
+credential use or account database is added. The displayed key follows
+`bind_nobk_panel`; the controller hint now correctly says to hold Back.
+Short presses and Start retain their native handling; holding Back opens the
+same panel gate. Release is required before another activation, including
+after focus changes, and F2 remains live settings.
+
+Only the strip uses the donor's Windows font chain: Segoe UI Semibold, Segoe
+UI, then Arial, loaded at 48 pixels with 2x oversampling. System fonts are
+not redistributed; the existing bundled semibold face is the fallback when
+none is present. Both strip faces and the existing fallback lock their baked
+size and scale the high-resolution glyphs: the runtime uploads the atlas once,
+so notification sizes must not invalidate or resize it during a frame.
+F1's current Apex fonts and layout stay unchanged.
+
+Reference evidence is the actual v1.4.0 `rexruntimerd.dll` (`FriendsStrip::OnDraw`
+at `0x1805de770`, wordmark helper `0x1805b4480`), with the font selection from
+the app source pinned at `4dba1063d742911a81c81aa53347e463c2dc75d5`.
+The older public SDK patch is not treated as the complete 1.4.0 renderer.
+
+The focused `achievement_ui_probe ... --startup-strip-only` phase checks the
+production lifecycle/ImGui drawing, one-time expiry, overlay interaction,
+service gating, four-second first/mid-presentation stalls, narrow/localized
+label layout and real input-system Back
+hold/release/focus behavior. These Wine/CPU checks do not establish native
+Windows GPU or physical-controller acceptance.
+
+### Friend-online notification
+
+`nobk_friend_toast.h` adapts notification kind 3 in the supplied MW
+`SpeedBreaker.exe`, SHA-256
+`85552cb336f1c12e842841f0ce644c173e0a08c1275214a8b600cfe0384f5f46`.
+The `FRIEND ONLINE` branch is at `0x14018f16e` in the native draw function
+`0x14018c170..0x14019108a`; the launcher is not its implementation source.
+
+The approved compact pit-board design is 404 by 108 pixels at 1080p, inset
+28 pixels from the top and right. Its charcoal surface has a fine gray outline,
+chamfered right corners and a thin orange left stripe. A 64-pixel circular
+portrait retains a green online dot. The orange heading sits above a larger
+white friend name and the muted `Playing MotoGP 09/10` subtitle. Long names
+truncate on UTF-8 boundaries rather than overlapping the right edge. The
+orange countdown line shrinks over a faint track along the bottom.
+
+It retains the reference's 300 ms smoothstep entrance from the right and
+350 ms stationary exit fade. Duration follows the native
+`min(18,9+max(0,text_bytes-60)/20)` formula, applied consistently to the full
+name and localized activity text. The subtitle wraps at 270 reference pixels,
+with a bounded five-line fallback for oversized text; narrow viewports fit
+proportionally. The production subtitle normally occupies one line.
+
+The native MW branch uses the current ImGui font. Its effective runtime font
+family was not established by the bounded binary/video inspection. This port
+uses its existing bundled semibold family with the locked high-resolution
+bake, matching the static-atlas renderer's upload contract. Font family
+identity across the two applications is not claimed by the geometry recovery.
+
+This notification is backed by an actual transition in `/api/motogp/live`
+for an existing friend, not the aggregate player count, a fabricated timer or
+the shared FIFA lobby flag. The activity names MotoGP 09/10. Case-only changes,
+first sight of a friend, repeated snapshots and recovery from failed/stale
+polls do not generate a new notification. A genuine disconnect/reconnect
+can generate another one. Other game activity is not inferred from this feed.
+Like the startup strip, friend-online notifications only render in production
+Online mode. Offline, LAN and custom service origins suppress them even if a
+friend event is already queued; existing Discord invitation errors retain
+their separate behavior.
+
+Visible notifications reuse the existing bounded, validated account-photo
+worker/cache while F1 is closed. No HTTP or image decoding occurs on the UI
+thread. Photos fall back to the reference's deterministic colored initial;
+the image is center-cropped before circular drawing. Photo work pauses when
+neither F1 nor the notification needs it, and notification-only GPU textures
+are released afterward. No new endpoint, credential flow or polling worker
+is introduced. Existing invitation and Discord notices keep their prior
+behavior and rendering.
+
+The focused `achievement_ui_probe ... --friend-toast-only` phase exercises
+the actual snapshot merger and notification renderer: initial/delayed friends,
+duplicates, stale/error recovery, case changes, reconnect, lifetime, passive
+input behavior, wrapping, Unicode boundaries, portrait geometry and viewport
+limits. Together with the startup-only phase these are Windows/Wine and CPU
+draw-data checks, not physical-controller or native Windows GPU acceptance.
+
+### F1 panel
 
 The current F1 renderer follows the user-approved left-side Apex concept. The
 approved image is a visual reference, not a shipped game background. The game

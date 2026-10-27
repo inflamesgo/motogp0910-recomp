@@ -15,6 +15,9 @@
 #include <stdexcept>
 #include <bit>
 #include <limits>
+#include <array>
+#include <string_view>
+#include <cmath>
 
 namespace motogp::gauge {
 TelemetryFrame fixture;
@@ -83,7 +86,8 @@ void Dump(const std::filesystem::path& stem){
 }
 }
 int main(int argc,char** argv){try{
-  Check(argc==3,"Usage: gauge_ui_probe ASSET_PACK NEW_FIXTURE_DIRECTORY");
+  const bool lights_only=argc==4&&std::string_view(argv[3])=="--urt2-lights-only";
+  Check(argc==3||lights_only,"Usage: gauge_ui_probe ASSET_PACK NEW_FIXTURE_DIRECTORY [--urt2-lights-only]");
   const std::filesystem::path assets=argv[1],output=argv[2];
   Check(!std::filesystem::exists(output),"Use a new isolated fixture directory");std::filesystem::create_directories(output);
   Context context;auto window=rex::ui::Window::Create(context,"Gauge renderer fixture");
@@ -94,6 +98,54 @@ int main(int argc,char** argv){try{
   auto overlay=motogp::gauge::CreateOverlay(&imgui,&drawer,assets,output,[&]{return blocked;});
   Check(motogp::gauge::Available(),"Original images/fonts/geometry load successfully");
   auto frame=[&]{imgui.GetIO();ImGui::NewFrame();overlay->Draw();ImGui::Render();Check(ImGui::GetCurrentContext()->ErrorCountCurrentFrame==0,"No ImGui renderer errors");};
+  if(lights_only){
+    Check(motogp::gauge::StyleAvailable(3),"URT2 production resource loads");
+    Check(motogp::gauge::StyleAvailable(2)&&motogp::gauge::StyleAvailable(4),"Classic resources without normalized lights remain compatible");
+    motogp::gauge::SelectStyle(3);
+    motogp::gauge::fixture[0]=motogp::gauge::Telemetry{50,0,3000,19000,2,true,0,0,1,1,0};
+    auto& rider=*motogp::gauge::fixture[0];
+    const std::array<ImU32,5> off{IM_COL32(0,32,0,255),IM_COL32(32,32,0,255),IM_COL32(32,16,0,255),IM_COL32(32,0,0,255),IM_COL32(32,0,0,255)};
+    const std::array<ImU32,5> on{IM_COL32(0,128,0,255),IM_COL32(128,128,0,255),IM_COL32(128,64,0,255),IM_COL32(128,0,0,255),IM_COL32(255,0,0,255)};
+    auto colors=[&]{
+      std::vector<ImU32> result;
+      for(const auto* list:ImGui::GetDrawData()->CmdLists)for(const auto& cmd:list->CmdBuffer){
+        if(cmd.GetTexID()<=1)continue;
+        const auto* texture=reinterpret_cast<const Texture*>(cmd.GetTexID());
+        if(texture->width!=128||texture->height!=128)continue;
+        for(unsigned i=0;i<cmd.ElemCount;i+=6)
+          result.push_back(list->VtxBuffer[cmd.VtxOffset+list->IdxBuffer[cmd.IdxOffset+i]].col);
+      }
+      Check(result.size()==5,"Five original light masks are submitted");return result;
+    };
+    auto lit_frame=[&]{frame();while(ImGui::GetFrameCount()%10>=5)frame();};
+    constexpr std::array<float,6> fractions{.64f,.66f,.69f,.72f,.75f,.78f};
+    for(float maximum:{14000.f,19000.f,23000.f}){
+      rider.max_rpm=maximum;
+      for(size_t stage=0;stage<fractions.size();++stage){
+        rider.rpm=maximum*fractions[stage];lit_frame();const auto actual=colors();
+        for(size_t i=0;i<actual.size();++i)
+          Check(actual[i]==(i<stage?on[i]:off[i]),"Light progression follows needle fraction on different engine limits");
+      }
+    }
+    rider.max_rpm=19000;rider.rpm=12000;lit_frame();
+    Check(colors().back()==off.back(),"The old 12000-RPM threshold no longer flashes far before red-zone entry");Dump(output/"urt2-lights-before");
+    rider.rpm=rider.max_rpm*.775f;lit_frame();
+    bool needle_found=false;
+    for(const auto* list:ImGui::GetDrawData()->CmdLists)for(const auto& cmd:list->CmdBuffer){
+      if(cmd.GetTexID()<=1)continue;
+      const auto* texture=reinterpret_cast<const Texture*>(cmd.GetTexID());
+      if(texture->width!=64||texture->height!=512)continue;
+      const auto p=list->VtxBuffer[cmd.VtxOffset+list->IdxBuffer[cmd.IdxOffset]].pos;
+      const auto q=list->VtxBuffer[cmd.VtxOffset+list->IdxBuffer[cmd.IdxOffset+1]].pos;
+      const float angle=std::atan2((p.y+q.y)*.5f-867,(p.x+q.x)*.5f-1660)*57.2957795f;
+      Check(angle>-18&&angle<-16,"Final light threshold points the actual needle mesh at the red-zone entry tick");needle_found=true;
+    }
+    Check(needle_found,"Production URT2 needle geometry is present");
+    rider.rpm=rider.max_rpm*.78f;lit_frame();Check(colors().back()==on.back(),"Final red light illuminates at red-zone entry");Dump(output/"urt2-lights-redzone");
+    while(ImGui::GetFrameCount()%10<5)frame();
+    Check(colors().back()==off.back(),"Final red light retains the original blink phase");
+    overlay.reset();std::cout<<"URT2 needle/light synchronization fixtures passed\n";return 0;
+  }
   motogp::gauge::SelectStyle(0);frame();Check(!motogp::gauge::fixture_enabled,"Original style leaves capture disabled");
   motogp::gauge::SelectStyle(1);frame();Check(motogp::gauge::fixture_enabled,"MotoGP17 enables capture only with usable assets");
   for(int index=0;index<5;++index){

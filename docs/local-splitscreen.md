@@ -16,6 +16,12 @@ unconditional bypass of the two-player requirement is used. Ordinary input
 polling and hotplug detection continue through the pinned SDK; no extra timer or
 per-frame eligibility scan is introduced.
 
+The controller warning uses PC wording: "Split-screen requires two controllers,
+or one controller with keyboard controls enabled in the launcher." The Turkish
+text gives the same two choices. The existing message getter substitutes only
+bank 0 IDs 2065 and 2066; the original message banks, eligibility checks, dialog
+layout and Accept action remain unchanged.
+
 During the local session, user 1 has a temporary, distinct local identity named
 **Player 2**. It is signed in locally, has no Xbox LIVE flag and gains no community
 account or network privileges. The title rejects Xbox LIVE guest accounts in

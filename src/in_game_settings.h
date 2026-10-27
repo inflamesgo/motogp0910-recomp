@@ -60,6 +60,7 @@ class InputGate {
   bool IsOpen()const{return open_.load(std::memory_order_acquire);}
   bool Blocking()const{return held_.load(std::memory_order_acquire);}
   void SetFocused(bool focused);
+  bool Focused()const{return focused_.load(std::memory_order_acquire);}
   uint16_t Buttons()const{return buttons_.load(std::memory_order_acquire);}
   bool NeutralReady()const{return IsOpen()&&focused_.load(std::memory_order_acquire)&&neutral_epoch_.load(std::memory_order_acquire)==Epoch();}
   uint64_t Epoch()const{return epoch_.load(std::memory_order_acquire);}
