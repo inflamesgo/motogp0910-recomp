@@ -149,7 +149,11 @@ behavior to the approved MotoGP mockup. It is passive and top-centered: at
 1080p its height is 52 pixels and top inset is 22 pixels. The charcoal surface
 has a fine gray outline, an outlined dark keycap and an orange-dot wordmark.
 The friend presence dot/count and optional orange invitation badge precede
-a divider and the compact `Hold Back` hint. Width follows actual text
+a divider and an explicit `Controller: hold Back` hint for Xbox prompts or
+`Controller: hold Select` for PlayStation prompts. Keyboard prompts omit the
+controller hint and its divider entirely; the configured keyboard key remains.
+The hint follows the existing active prompt style and manual override, without
+changing the input binding. Width follows actual text
 measurements; narrow viewports fit proportionally without cropping text.
 This change only affects the startup strip, not the F1 panel or friend-online
 notification design.
@@ -242,8 +246,27 @@ thread. Photos fall back to the reference's deterministic colored initial;
 the image is center-cropped before circular drawing. Photo work pauses when
 neither F1 nor the notification needs it, and notification-only GPU textures
 are released afterward. No new endpoint, credential flow or polling worker
-is introduced. Existing invitation and Discord notices keep their prior
-behavior and rendering.
+is introduced. Incoming NOBK lobby invitations now share this same card,
+portrait cache, location and animation with a `LOBBY INVITE` heading, inviter
+name and configured-key `Respond` prompt. Their subtitle stays on one line so
+the reference size remains 404 by 108. Stale invitations stop their toast.
+Discord join-status/error notices retain their separate rendering.
+
+F1's eligible Friends rows use clipped-corner charcoal invitation tickets with
+an orange outline and arrow. The same slot shows pending progress, gray `SENT`
+with a check after server acknowledgement, or `RETRY` after failure. The social
+worker retains this feedback per peer across polls and invalidates it when the
+room host/session/key or eligibility changes. The old global `Invitation sent.`
+line is removed. Incoming invitations appear above friends with a circular
+portrait, invitation heading and separate `ACCEPT`/`DECLINE` tickets. Only Xbox
+A/X or PlayStation Cross/Square hints sit below the buttons; keyboard prompt
+style hides this line. Clicking the row only selects it; A/Enter accepts
+and Delete/X declines. PlayStation uses Cross/Square. Answer controls are
+disabled until the queued answer completes or fails, without changing the
+native acceptance path. See [the approved invitation UI](invitation-ui-concept.md) for
+the source and acceptance boundary. The 28 October local Windows builds include
+this change; dedicated native Windows invitation visual acceptance remains
+outstanding.
 
 The focused `achievement_ui_probe ... --friend-toast-only` phase exercises
 the actual snapshot merger and notification renderer: initial/delayed friends,
@@ -298,8 +321,11 @@ light highlights travel at staggered 8.5–17 second periods using elapsed time,
 without moving the paths or content. Drawing stops while F1 is closed and uses
 ordinary batched lines, without textures, blur passes or background work.
 The selected row
-has a small orange pointer and underline, without a filled background. Friend
-avatars show circular account photos with separate presence dots; charcoal
+has a small orange pointer and underline, without a filled background.
+The underline's visible core and the vertical rail to the left of the section
+tabs are now two reference pixels thick. The curved decoration retains its
+original stroke widths, geometry, colors and timing.
+Friend avatars show circular account photos with separate presence dots; charcoal
 initials remain while loading or when no photo is available. The local profile
 avatar is orange. National flags use the existing embedded atlas also used by
 Rider License, with the uppercase two-letter country code beside each flag.

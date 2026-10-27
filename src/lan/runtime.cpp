@@ -152,7 +152,7 @@ void Start(rex::system::KernelState* kernel){
   auto next_sockets=std::make_unique<SocketBridge>(*next_bridge);
   bridge=std::move(next_bridge);sockets=std::move(next_sockets);
   if(service){
-    online::social::Start(kernel,service);
+    online::social::Start(kernel,service,[]{return CurrentRoom();});
     online::discord_invites::Start(service,[]{return CurrentRoom();},rex::cvar::Query<bool>("discord_presence_enabled"));
   }
   REXLOG_INFO("NETWORK_READY: mode={} adapter={} endpoint={}:{} discovery={}",mode,node->AdapterName(),IPv4(node->Address().ip),node->Address().port,

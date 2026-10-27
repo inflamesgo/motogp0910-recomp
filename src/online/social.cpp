@@ -5,6 +5,7 @@
 #include "../../third_party/nlohmann/json.hpp"
 #include <rex/system/xam/user_profile.h>
 #include <atomic>
+#include <algorithm>
 #include <charconv>
 #include <condition_variable>
 #include <deque>
@@ -34,7 +35,7 @@ std::vector<uint8_t> Unhex(const std::string& text) {
 }
 class State {
  public:
-  State(rex::system::KernelState* kernel,std::shared_ptr<Client> client):kernel_(kernel),client_(std::move(client)),worker_([this]{Run();}){}
+  State(rex::system::KernelState* kernel,std::shared_ptr<Client> client,RoomProvider provider):kernel_(kernel),client_(std::move(client)),provider_(std::move(provider)),worker_([this]{Run();}){}
   ~State(){Stop();}
   void Stop(){
     {std::lock_guard lock(mutex_);stopping_=true;}changed_.notify_all();
@@ -42,10 +43,25 @@ class State {
   }
   Snapshot Read(){std::lock_guard lock(mutex_);return snapshot_;}
   bool Queue(Json action){
+    const auto room=provider_?provider_():std::nullopt;
     std::lock_guard lock(mutex_);
     if(stopping_||!snapshot_.supported||queue_.size()>=8)return false;
+    SyncRoom(room);
+    if(action.value("action","")=="send") {
+      const auto peer=Peer(action.at("to").get<std::string>());
+      const auto found=std::find_if(snapshot_.friends.begin(),snapshot_.friends.end(),[&](const auto& f){return f.peer==peer&&f.online;});
+      if(!snapshot_.can_invite||found==snapshot_.friends.end()||(provider_&&!Joinable(room)))return false;
+      const auto pending=snapshot_.outgoing.find(peer);
+      if(pending!=snapshot_.outgoing.end()&&pending->second==SendState::Pending)return false;
+      snapshot_.outgoing[peer]=SendState::Pending;
+    }
+    if(action.value("action","")=="accept"||action.value("action","")=="decline") {
+      const auto id=action.at("id").get<std::string>();
+      if(std::none_of(snapshot_.invites.begin(),snapshot_.invites.end(),[&](const auto& invite){return invite.id==id;})||
+          !snapshot_.answering.insert(id).second)return false;
+    }
     snapshot_.action="sending";snapshot_.error.clear();
-    queue_.push_back(std::move(action));changed_.notify_one();return true;
+    queue_.push_back({std::move(action),room});changed_.notify_one();return true;
   }
   std::optional<lan::Room> Room(){std::lock_guard lock(mutex_);return accepted_;}
   bool Adopt(const lan::Room& room,uint64_t inviter){
@@ -63,17 +79,37 @@ class State {
     return InviteInfo(kernel_->user_profile()->xuid(),accepted_inviter_,*accepted_);
   }
  private:
+  static bool Joinable(const std::optional<lan::Room>& room) {
+    return room&&room->id&&room->host&&!room->state&&room->members<room->capacity;
+  }
+  static bool SameRoom(const std::optional<lan::Room>& a,const std::optional<lan::Room>& b) {
+    return a&&b&&a->id==b->id&&a->host==b->host&&a->key==b->key;
+  }
+  void SyncRoom(const std::optional<lan::Room>& room) {
+    if(!provider_)return;
+    if(!Joinable(room)||!SameRoom(room,feedback_room_))snapshot_.outgoing.clear();
+    feedback_room_=room;
+  }
+  struct Action {Json body;std::optional<lan::Room> room;};
   void Run(){
     bool first=true;
     for(;;){
       Json request={{"action","poll"}};
+      std::optional<lan::Room> request_room;
       {
         std::unique_lock lock(mutex_);
         if(!first)changed_.wait_for(lock,std::chrono::seconds(snapshot_.supported?3:15),[&]{return stopping_||!queue_.empty();});
         if(stopping_)return;
-        if(!queue_.empty()){request=std::move(queue_.front());queue_.pop_front();}
+        if(!queue_.empty()){request=std::move(queue_.front().body);request_room=std::move(queue_.front().room);queue_.pop_front();}
       }
       first=false;
+      const bool sending=request.value("action","")=="send";
+      const uint64_t recipient=sending?Peer(request.at("to").get<std::string>()):0;
+      if(sending&&provider_) {
+        const auto room=provider_();
+        std::lock_guard lock(mutex_);SyncRoom(room);
+        if(!Joinable(room)||!SameRoom(room,request_room))continue;
+      }
       try {
         const auto body=request.dump();
         const auto raw=client_->Social({reinterpret_cast<const uint8_t*>(body.data()),body.size()});
@@ -98,32 +134,52 @@ class State {
           (void)Peer(Hex(accepted->host)); // Validate the host's MotoGP namespace independently of the inviter.
           accepted->endpoint=VirtualEndpoint(accepted->host);
         }
+        const auto room=provider_?provider_():std::nullopt;
         {
           std::lock_guard lock(mutex_);if(stopping_)return;
+          SyncRoom(room);
+          next.answering=std::move(snapshot_.answering);
+          if(request.contains("id"))next.answering.erase(request.at("id").get<std::string>());
+          std::erase_if(next.answering,[&](const auto& id){
+            return std::none_of(next.invites.begin(),next.invites.end(),[&](const auto& invite){return invite.id==id;});
+          });
+          next.outgoing=std::move(snapshot_.outgoing);
+          if(sending&&(!provider_||SameRoom(room,request_room)))
+            next.outgoing[recipient]=next.supported?SendState::Sent:SendState::Failed;
+          if(!next.supported||!next.can_invite)next.outgoing.clear();
+          else std::erase_if(next.outgoing,[&](const auto& entry){
+            return std::none_of(next.friends.begin(),next.friends.end(),[&](const auto& f){return f.peer==entry.first&&f.online;});
+          });
           snapshot_=std::move(next);if(accepted){accepted_=std::move(accepted);accepted_inviter_=inviter;}
         }
         if(accepted)kernel_->BroadcastNotification(0x02000002,0); // XN_LIVE_INVITE_ACCEPTED, primary user.
       }catch(const std::exception&){
+        const auto room=provider_?provider_():std::nullopt;
         std::lock_guard lock(mutex_);if(stopping_)return;
+        SyncRoom(room);
+        if(request.contains("id"))snapshot_.answering.erase(request.at("id").get<std::string>());
+        if(sending&&(!provider_||SameRoom(room,request_room)))snapshot_.outgoing[recipient]=SendState::Failed;
         snapshot_.loaded=true;snapshot_.action=request.value("action","");snapshot_.error="Friends/invites service unavailable";
       }
     }
   }
   rex::system::KernelState* kernel_;
   std::shared_ptr<Client> client_;
+  RoomProvider provider_;
   std::mutex mutex_;
   std::condition_variable changed_;
   bool stopping_=false;
   Snapshot snapshot_;
   std::optional<lan::Room> accepted_;
   uint64_t accepted_inviter_=0;
-  std::deque<Json> queue_;
+  std::optional<lan::Room> feedback_room_;
+  std::deque<Action> queue_;
   std::thread worker_;
 };
 std::atomic<std::shared_ptr<State>> current;
 std::atomic<bool> open_requested{false};
 }
-void Start(rex::system::KernelState* kernel,std::shared_ptr<Client> client){Stop();if(kernel&&client)current.store(std::make_shared<State>(kernel,std::move(client)));}
+void Start(rex::system::KernelState* kernel,std::shared_ptr<Client> client,RoomProvider provider){Stop();if(kernel&&client)current.store(std::make_shared<State>(kernel,std::move(client),std::move(provider)));}
 void Stop(){open_requested=false;if(auto state=current.exchange({}))state->Stop();}
 Snapshot Read(){if(auto state=current.load())return state->Read();return {};}
 bool Send(uint64_t peer){if(auto state=current.load())return state->Queue({{"action","send"},{"to",Hex(peer)}});return false;}

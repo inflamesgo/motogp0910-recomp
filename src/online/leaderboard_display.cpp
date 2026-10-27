@@ -1,4 +1,5 @@
 #include "leaderboard_display.h"
+#include "../leaderboard_scope_capture.h"
 #include "leaderboard_filter.h"
 #include <map>
 #include <rex/cvar.h>
@@ -47,6 +48,9 @@ void Initialize(rex::Runtime* runtime){
 }
 
 REX_HOOK_RAW(sub_8223CF40){
+ const motogp::online::categories::DrawScope header(
+  motogp::online::scope_capture::IsStandaloneBoard(base,ctx.r3.u32)?
+   motogp::online::categories::Drawing::Board:motogp::online::categories::Drawing::None);
  // Base leaderboard draw: +24 selects Lap Times (0), Arcade (1),
  // All Time Ghost (2) or Monthly Ghost (3). All timed rows share the getter.
  // Scope the override to this call, so another board/thread cannot inherit it.
@@ -94,10 +98,12 @@ REX_HOOK_RAW(sub_8223E558){
  // Keep one request alive until the menu consumes it; Offline/LAN stay native.
  if(ctx.lr==0x82234790 && rex::cvar::Query<std::string>("network_mode")=="online")return;
  const motogp::online::BoardModeScope scope(motogp::online::lap_times::TrackMode(ctx.r3.u32,ctx.lr,base));
+ const motogp::online::scope_capture::ReadScope season(base,ctx.r3.u32);
  __imp__sub_8223E558(ctx,base);
 }
 REX_HOOK_RAW(sub_8223E630){
  const motogp::online::BoardModeScope scope(motogp::online::lap_times::TrackMode(ctx.r3.u32,ctx.lr,base));
+ const motogp::online::scope_capture::ReadScope season(base,ctx.r3.u32);
  __imp__sub_8223E630(ctx,base);
 }
 REX_HOOK_RAW(sub_8223CEB8){

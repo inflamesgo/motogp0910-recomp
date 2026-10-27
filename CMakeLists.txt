@@ -23,6 +23,12 @@ add_executable(config_file_probe EXCLUDE_FROM_ALL tools/config_file_probe.cpp)
 target_link_libraries(config_file_probe PRIVATE motogp_config rex::runtime)
 rexglue_apply_target_settings(config_file_probe)
 
+# Recovered season/class selection and query identity, separate from native hooks.
+add_library(motogp_leaderboard_categories STATIC src/leaderboard_categories.cpp src/leaderboard_scope_capture.cpp)
+target_include_directories(motogp_leaderboard_categories PUBLIC src)
+target_link_libraries(motogp_leaderboard_categories PUBLIC rex::runtime)
+rexglue_apply_target_settings(motogp_leaderboard_categories)
+
 # Native LAN protocol/service, separate from guest memory and GPU presentation.
 add_library(motogp_lan STATIC src/lan/protocol.cpp src/lan/node.cpp src/online/relay.cpp src/online/client.cpp)
 target_include_directories(motogp_lan PUBLIC src)
@@ -50,7 +56,7 @@ target_include_directories(motogp_social PUBLIC src)
 target_link_libraries(motogp_social PUBLIC motogp_lan rex::runtime)
 rexglue_apply_target_settings(motogp_social)
 add_library(motogp_lan_guest STATIC src/lan/guest_bridge.cpp src/lan/socket_bridge.cpp src/lan/metadata.cpp src/online/stats.cpp src/online/social_guest.cpp)
-target_link_libraries(motogp_lan_guest PUBLIC motogp_lan motogp_social rex::runtime)
+target_link_libraries(motogp_lan_guest PUBLIC motogp_lan motogp_social motogp_leaderboard_categories rex::runtime)
 rexglue_apply_target_settings(motogp_lan_guest)
 add_executable(leaderboard_filter_probe EXCLUDE_FROM_ALL tools/leaderboard_filter_probe.cpp)
 target_include_directories(leaderboard_filter_probe PRIVATE src)
@@ -129,6 +135,8 @@ set(MOTOGP0910_SOURCES
     src/dlc_content.cpp
     src/rider_selection.cpp
     src/online/leaderboard_display.cpp
+    src/leaderboard_categories_hooks.cpp
+    src/leaderboard_scope_hooks.cpp
     src/frame_pacing.cpp
     src/display_settings.cpp
     src/engine_settings.cpp

@@ -1,5 +1,22 @@
 # Friends/invitations and ghost handoff — 23 October 2026
 
+For the user's subsequent local Discord invitation result, the successful
+synthetic ghost-transport console result, approved invitation UI polish and the
+remaining production acceptance gate, see the
+[27 October observations and UI implementation](invitation-ui-concept.md). Local test
+success does not establish production account/API/proxy compatibility or native
+ghost playback. The approved invitation presentation is now implemented in
+source and included in the 28 October local Windows builds. Dedicated native
+Windows invitation visual acceptance remains outstanding.
+
+The 28 October [leaderboard menu reconstruction](leaderboard-menu-recovery.md)
+documents the recovered client-side selection/scoping sources and five menu
+corrections. The user subsequently confirmed the local build's menu navigation,
+text and audio; see the report's acceptance record. The earlier
+matching scoped Python service/API sources are still absent from this working
+copy and were not contained in the Windows ZIP; this is an explicit handoff
+gap, not a completed server deployment or a reason to use mixed legacy boards.
+
 Prepared against MotoGP fork commit `d952868`. The supplied patch is local source
 work, not a published commit or built game. Review/merge it against your current
 branch before applying it. No live service deployment or player invitations were

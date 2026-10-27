@@ -1,5 +1,6 @@
 #include "options_menu.h"
 #include "gauge_hud.h"
+#include "leaderboard_categories.h"
 #include <rex/hook.h>
 #include <rex/memory.h>
 #include <rex/runtime.h>
@@ -236,6 +237,7 @@ REX_HOOK_RAW(sub_8224D130){const auto menu=ctx.r3.u32;__imp__sub_8224D130(ctx,ba
   }
 }
 REX_HOOK_RAW(sub_826EDB38){const auto label=motogp::options::OnlineLabel();
+  if(const auto category=motogp::online::categories::Label(ctx.r3.u32)){ctx.r3.u64=category;return;}
   if(label&&ctx.r3.u32==motogp::options::kOnlineHandle&&motogp::options::Read(base,ctx.r3.u32)==731){ctx.r3.u64=label;return;}
   if(const auto gauge=motogp::options::GaugeLabel(ctx.r3.u32)){ctx.r3.u64=gauge;return;}
   // Bank 0's two controller-warning variants share the PC split-screen rules.
@@ -254,4 +256,5 @@ REX_HOOK_RAW(sub_826EDB38){const auto label=motogp::options::OnlineLabel();
     if(id==1137||id==1433||id==1416){ctx.r3.u64=profile;return;}
   }
   __imp__sub_826EDB38(ctx,base);
+  if(const auto category=motogp::online::categories::ResolvedLabel(base,ctx.r3.u32))ctx.r3.u64=category;
 }

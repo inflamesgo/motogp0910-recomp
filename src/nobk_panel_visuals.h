@@ -132,7 +132,7 @@ inline void ApexLines(ImDrawList* draw,float scale,float alpha,double elapsed) {
   }
 }
 inline void Underline(ImDrawList* draw,ImVec2 a,float right,float scale,float alpha) {
-  for(int i=3;i>0;--i)draw->AddLine(a,ImVec2(right,a.y),Color(255,106,19,alpha*(i==1?.8f:.045f)),float(i*i)*scale);
+  for(int i=3;i>0;--i)draw->AddLine(a,ImVec2(right,a.y),Color(255,106,19,alpha*(i==1?.8f:.045f)),(i==1?2.f:float(i*i))*scale);
 }
 inline void Marker(ImDrawList* draw,ImVec2 center,float scale,float alpha) {
   draw->AddTriangleFilled(ImVec2(center.x-8*scale,center.y-11*scale),

@@ -37,6 +37,7 @@
 #include "gauge_hud.h"
 #include "gauge_capture.h"
 #include "online/leaderboard_display.h"
+#include "leaderboard_categories.h"
 #include "dlc_content.h"
 #include "dlc_installation.h"
 #include "localization.h"
@@ -194,6 +195,7 @@ class Motogp0910App : public rex::ReXApp {
     motogp::quit::Initialize(runtime());
     motogp::options::Initialize(runtime());
     motogp::online::lap_times::Initialize(runtime());
+    motogp::online::categories::Initialize(runtime(),rex::cvar::Query<std::string>("game_text_language")=="turkish");
     settings_gate_->Initialize(static_cast<rex::input::InputSystem*>(runtime()->input_system()));
     settings_gate_->SetFocused(window()->HasFocus());
     gamer_card_gate_->Initialize(static_cast<rex::input::InputSystem*>(runtime()->input_system()));

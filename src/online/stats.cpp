@@ -1,4 +1,5 @@
 #include "stats.h"
+#include "../leaderboard_scope_capture.h"
 #include "lan/guest_bridge.h"
 #include <rex/system/xenumerator.h>
 #include <rex/system/xam/user_profile.h>
@@ -69,6 +70,8 @@ std::vector<Spec> Specs(lan::GuestBridge& bridge,uint32_t count,uint32_t address
  if(!count || count>16 || !bridge.Valid(address,count*136))throw std::runtime_error("Invalid statistics specifications");
  std::vector<Spec> result;const auto* base=bridge.Kernel()->memory()->virtual_membase();
  for(unsigned i=0;i<count;++i){const auto* p=base+address+i*136;Spec spec;spec.view=U32(p);spec.mode=requested_board_mode;const auto columns=U32(p+4);if(!spec.view || spec.view>378 || columns>64)throw std::runtime_error("Unsupported statistics specification");
+  spec.scope=scope_capture::ResolveForRead(spec.view,base);
+  if(!spec.scope)throw std::runtime_error("Unknown or mismatched leaderboard class/season");
   std::set<uint16_t> distinct;for(unsigned j=0;j<columns;++j){const auto id=rex::memory::load_and_swap<uint16_t>(p+8+j*2);if(!distinct.insert(id).second)throw std::runtime_error("Duplicate statistics column");spec.columns.push_back(id);}if(!TimedDisplay(spec))spec.mode=BoardMode::Any;result.push_back(std::move(spec));
  }return result;
 }
@@ -76,7 +79,7 @@ Page ReadBoard(const std::shared_ptr<Client>& client,const Spec& spec,uint32_t s
                std::span<const uint64_t> users={},uint64_t around=0){
  return ReadModeBoard(spec.view,spec.mode,start,count,users,around,
   [&](uint32_t view,uint32_t first,uint32_t amount,std::span<const uint64_t> selected,uint64_t center){
-   return client->Read(view,first,amount,selected,center);
+   return client->Read(view,first,amount,selected,center,spec.scope);
   });
 }
 class Enumerator final:public rex::system::XEnumerator {
@@ -162,18 +165,27 @@ std::function<uint32_t()> PrepareWrite(lan::GuestBridge& bridge,uint32_t buffer)
  const auto id=U64(b+8);if(id!=bridge.Network().Identity() && id!=bridge.Kernel()->user_profile()->xuid())return fail(Error(5));
  const auto count=U32(b+16),input=U32(b+20);if(!count || count>16 || !bridge.Valid(input,count*12))return fail(Error(87));
  try{
-  std::vector<View> views;
+  std::map<categories::Scope,std::vector<View>> groups;
   for(unsigned i=0;i<count;++i){const auto* p=base+input+i*12;View view;view.id=U32(p);const auto columns=U32(p+4),properties=U32(p+8);
    if(!view.id || view.id>378 || !columns || columns>64 || !bridge.Valid(properties,columns*24))return fail(Error(87));
    for(unsigned j=0;j<columns;++j){const auto* property=base+properties+j*24;const auto prop=U32(property),type=prop>>28;if(type!=property[8] || (type!=1 && type!=2 && type!=3 && type!=5))return fail(Error(87));
     const auto bits=type==1?static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(U32(property+16)))):type==5?uint64_t(U32(property+16)):U64(property+16);view.columns.push_back({static_cast<uint16_t>(prop),static_cast<uint8_t>(type),bits});
-   }views.push_back(std::move(view));
+   }
+   const auto season=std::find_if(view.columns.begin(),view.columns.end(),[](const auto& c){return c.id==13;});
+   if(season==view.columns.end()||season->type!=1||season->bits>1)throw std::runtime_error("Missing or invalid statistics season");
+   const auto scope=categories::ForView(view.id,uint32_t(season->bits));
+   if(!scope)throw std::runtime_error("Invalid statistics class/season");
+   groups[*scope].push_back(std::move(view));
   }
   std::array<uint8_t,16> nonce{};lan::RandomBytes(nonce);std::string key;constexpr char hex[]="0123456789abcdef";for(auto byte:nonce){key+=hex[byte>>4];key+=hex[byte&15];}
   auto reservation=std::make_shared<WriteReservation>(bridge.Online());
-  return [reservation,views=std::move(views),key=std::move(key)](){
+  return [reservation,groups=std::move(groups),key=std::move(key)](){
    uint32_t result=0;
-   try{reservation->client->Write(views,key);REXLOG_DEBUG("ONLINE_STATS: {} native view(s) stored for this player",views.size());}
+   try{
+    size_t count=0;
+    for(const auto& [scope,views]:groups){reservation->client->Write(views,key,scope);count+=views.size();}
+    REXLOG_DEBUG("ONLINE_STATS: {} native view(s) stored in explicit class/season groups",count);
+   }
    catch(const std::exception& error){REXLOG_WARN("ONLINE_STATS: write failed: {}",error.what());result=Error(1231);}
    reservation->Finish();return result;
   };

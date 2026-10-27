@@ -92,14 +92,16 @@ struct Layout {
   std::vector<std::string> lines;
 };
 inline Layout Measure(ImFont* font,ImVec2 viewport,float age,const std::string& text,
-                      const std::string& name={}) {
+                      const std::string& name={},bool single_line=false) {
   Layout result;result.duration=Duration(name.empty()?text:name+" "+text);
   if(!font||!std::isfinite(viewport.x)||!std::isfinite(viewport.y)||
       viewport.x<=0||viewport.y<=0||!std::isfinite(age)||age<0||age>result.duration)return result;
   float s=std::clamp(viewport.y/1080.f,.7f,2.5f);
   // Fit the approved compact card without cropping its avatar or text column.
   if(460*s>viewport.x)s=viewport.x/460.f;
-  result.scale=s;result.lines=detail::Wrap(font,20*s,270*s,text);
+  result.scale=s;
+  if(single_line)result.lines={detail::Ellipsize(font,20*s,270*s,text)};
+  else result.lines=detail::Wrap(font,20*s,270*s,text);
   result.name=detail::Ellipsize(font,30*s,270*s,name);
   const float width=404*s,height=std::max(108.f,84.f+24.f*float(result.lines.size()))*s;
   const float entrance=Smooth(age/.3f);
@@ -113,9 +115,9 @@ inline Layout Measure(ImFont* font,ImVec2 viewport,float age,const std::string& 
 inline void Draw(ImDrawList* draw,ImFont* font,ImVec2 viewport,float age,
                  const std::string& name,const std::string& text,ImTextureID photo=0,
                  ImVec2 uv0=ImVec2(0,0),ImVec2 uv1=ImVec2(1,1),
-                 const char* title="FRIEND ONLINE") {
+                 const char* title="FRIEND ONLINE",bool single_line=false) {
   if(!draw)return;
-  const auto layout=Measure(font,viewport,age,text,name);
+  const auto layout=Measure(font,viewport,age,text,name,single_line);
   const float s=layout.scale,alpha=layout.alpha;
   if(s<=0||alpha<=0)return;
   const auto a=layout.minimum,b=layout.maximum;

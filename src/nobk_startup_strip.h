@@ -62,7 +62,7 @@ struct Layout {
 
 inline Layout Measure(ImFont* font,ImVec2 viewport,float alpha,int friends,int invites,
                       const std::string& key="F1",
-                      const std::string& hint="Hold Back",bool turkish=false) {
+                      const std::string& hint="",bool turkish=false) {
   Layout layout;
   if(!font||!std::isfinite(viewport.x)||!std::isfinite(viewport.y)||
      viewport.x<=0||viewport.y<=0)return layout;
@@ -78,7 +78,8 @@ inline Layout Measure(ImFont* font,ImVec2 viewport,float alpha,int friends,int i
     layout.invite_width=detail::TextSize(font,18*scale,layout.invite.c_str()).x+24*scale;
     width=24*scale+layout.key_width+24*scale+layout.brand_width+32*scale+
           layout.count_width+(invites>0?20*scale+layout.invite_width:0.f)+
-          24*scale+1.f+24*scale+detail::TextSize(font,18*scale,hint.c_str()).x+24*scale;
+          24*scale+(hint.empty()?0.f:1.f+24*scale+
+          detail::TextSize(font,18*scale,hint.c_str()).x+24*scale);
   };
   // Only unusually narrow viewports need
   // proportional fitting; keep every word rather than clipping or ellipsizing.
@@ -96,7 +97,7 @@ inline Layout Measure(ImFont* font,ImVec2 viewport,float alpha,int friends,int i
 
 inline void Draw(ImDrawList* draw,ImFont* font,ImVec2 viewport,float alpha,int friends,int invites,
                  const std::string& key="F1",
-                 const std::string& hint="Hold Back",bool turkish=false) {
+                 const std::string& hint="",bool turkish=false) {
   if(!draw||!font||!std::isfinite(alpha)||alpha<=0)return;
   alpha=std::clamp(alpha,0.f,1.f);
   const auto layout=Measure(font,viewport,alpha,friends,invites,key,hint,turkish);
@@ -134,11 +135,13 @@ inline void Draw(ImDrawList* draw,ImFont* font,ImVec2 viewport,float alpha,int f
     draw->AddText(font,18*s,ImVec2(x+12*s,count_y),detail::Color(17,17,17,alpha),layout.invite.c_str());
     x+=layout.invite_width;
   }
-  x+=24*s;
-  draw->AddLine(ImVec2(x,cy-13*s),ImVec2(x,cy+13*s),detail::Color(255,255,255,.32f*alpha),1.f);
-  x+=1.f+24*s;
-  draw->AddText(font,18*s,ImVec2(x,cy-detail::TextSize(font,18*s,"N").y*.5f),
-                detail::Color(168,168,176,alpha),hint.c_str());
+  if(!hint.empty()) {
+    x+=24*s;
+    draw->AddLine(ImVec2(x,cy-13*s),ImVec2(x,cy+13*s),detail::Color(255,255,255,.32f*alpha),1.f);
+    x+=1.f+24*s;
+    draw->AddText(font,18*s,ImVec2(x,cy-detail::TextSize(font,18*s,"N").y*.5f),
+                  detail::Color(168,168,176,alpha),hint.c_str());
+  }
   draw->PopClipRect();
 }
 }  // namespace motogp::nobk::startup

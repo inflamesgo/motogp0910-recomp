@@ -307,7 +307,7 @@ enum class Where { Offline, Site, Menus, Room, Racing };
 struct Friend { std::string name,country,room; Where where=Where::Offline; };
 struct Room { std::string name,host; int members=0,capacity=0; bool racing=false,friends=false,mine=false; };
 struct Recent { std::string name,board,time; int rank=0; int64_t at=0; bool mine=false,friend_=false; };
-struct Event { std::string text; int64_t at=0; int kind=0; std::string friend_name; };  // kind 0 info, 1 good, 2 bad
+struct Event { std::string text; int64_t at=0; int kind=0; std::string friend_name,invite_id; };  // kind 0 info, 1 good, 2 bad
 struct Snapshot {
   bool available=false,loaded=false,failed=false;
   std::string me;
@@ -719,9 +719,16 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
     const auto invites=online::social::Read();
     auto key=rex::cvar::Query<std::string>("bind_nobk_panel");if(key.empty())key="F1";
     auto* face=visual_fonts.atlas==io.Fonts&&visual_fonts.startup?visual_fonts.startup:Face(1);
+    const char* controller_hint="";
+    switch(prompts::CurrentStyle()) {
+      case prompts::Style::Xbox:
+        controller_hint=Tr(tr_,"Controller: hold Back","Kontrolcü: Back'i basılı tut");break;
+      case prompts::Style::PlayStation:
+        controller_hint=Tr(tr_,"Controller: hold Select","Kontrolcü: Select'i basılı tut");break;
+      case prompts::Style::Keyboard:break;
+    }
     startup::Draw(ImGui::GetForegroundDrawList(),face,io.DisplaySize,visual::Smooth(startup_phase_),
-        friends,int(invites.invites.size()),key,
-        Tr(tr_,"Hold Back","Back'i basılı tut"),tr_);
+        friends,int(invites.invites.size()),key,controller_hint,tr_);
   }
   void Backdrop(float alpha) {
 #if defined(_WIN32) && !defined(MOTOGP_NOBK_VISUAL_PROBE)
@@ -782,9 +789,10 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
     std::set<std::string> pending;
     for(const auto& invite:social.invites)pending.insert(invite.id);
     std::erase_if(invite_notified_,[&](const auto& id){return !pending.contains(id);});
+    if(toast_&&!toast_->invite_id.empty()&&!pending.contains(toast_->invite_id))toast_.reset();
     if(expired())for(const auto& invite:social.invites)if(!invite_notified_.contains(invite.id)) {
       invite_notified_.insert(invite.id);
-      toast_=Event{invite.from+Tr(tr_," invited you to their lobby. Open F1 to respond."," seni lobisine davet etti. Yanıtlamak için F1'i aç."),0,1};toast_at_=now;break;
+      toast_=Event{{},0,1,invite.from,invite.id};toast_at_=now;break;
     }
     if(expired()) {
       Event next;
@@ -808,8 +816,9 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
       // The runtime uploads its font atlas once. Reuse the same semibold
       // family at its existing high-resolution locked bake for all sizes.
       friend_toast::Draw(ImGui::GetForegroundDrawList(),Face(1),io.DisplaySize,t,
-          toast_->friend_name,FriendToastActivity(),reinterpret_cast<ImTextureID>(photo),
-          ImVec2(u,v),ImVec2(1-u,1-v),Tr(tr_,"FRIEND ONLINE","ARKADAŞ ÇEVRİMİÇİ"));
+          toast_->friend_name,ToastActivity(),reinterpret_cast<ImTextureID>(photo),
+          ImVec2(u,v),ImVec2(1-u,1-v),toast_->invite_id.empty()?
+          Tr(tr_,"FRIEND ONLINE","ARKADAŞ ÇEVRİMİÇİ"):Tr(tr_,"LOBBY INVITE","LOBİ DAVETİ"),!toast_->invite_id.empty());
       return;
     }
     const float alpha=std::clamp(std::min(t/.25f,(6.f-t)/.4f),0.f,1.f);
@@ -835,8 +844,13 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
   std::string FriendToastActivity()const {
     return Tr(tr_,"Playing MotoGP 09/10","MotoGP 09/10 oynuyor");
   }
+  std::string ToastActivity()const {
+    if(!toast_||toast_->invite_id.empty())return FriendToastActivity();
+    auto key=rex::cvar::Query<std::string>("bind_nobk_panel");if(key.empty())key="F1";
+    return key+Tr(tr_," · Respond"," · Yanıtla");
+  }
   float ToastDuration()const {
-    return toast_&&!toast_->friend_name.empty()?friend_toast::Duration(toast_->friend_name+" "+FriendToastActivity()):6.f;
+    return toast_&&!toast_->friend_name.empty()?friend_toast::Duration(toast_->friend_name+" "+ToastActivity()):6.f;
   }
   void Brand(float size) {
     // NOBK·FRIENDS wordmark: caps, orange dot.
@@ -887,7 +901,7 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
     const char* names[]{Tr(tr_,"FRIENDS","ARKADAŞLAR"),Tr(tr_,"SERVER","SUNUCU"),
         Tr(tr_,"RECORDS","REKORLAR"),Tr(tr_,"ACHIEVEMENTS","BAŞARIMLAR")};
     const float x=96*s+shift,top=250*s,height=60*s;
-    draw->AddLine(ImVec2(64*s+shift,268*s),ImVec2(64*s+shift,448*s),visual::Color(255,106,19,.18f*alpha_),s);
+    draw->AddLine(ImVec2(64*s+shift,268*s),ImVec2(64*s+shift,448*s),visual::Color(255,106,19,.18f*alpha_),2*s);
     for(int side=0;side<2;++side) {
       const char* label=side?hints.next:hints.previous;
       const ImVec2 a(x,(side?508.f:196.f)*s),b(x+34*s,a.y+28*s);
@@ -1036,6 +1050,42 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
   void RowLabel(const std::string& text,float x,float y,float size,ImVec4 color,float right,ImFont* font=nullptr) {
     visual::Label(ImGui::GetWindowDrawList(),font?font:Face(),size,ImVec2(x,y),color,text,right,layout_.scale,alpha_);
   }
+  enum class TicketIcon { None, Arrow, Check, Cross };
+  bool ActionTicket(const char* id,ImVec2 a,float width,const char* label,bool quiet,bool disabled,TicketIcon icon) {
+    const float s=layout_.scale;const ImVec2 b(a.x+width,a.y+36*s);
+    ImGui::SetCursorScreenPos(a);ImGui::BeginDisabled(disabled);
+    const bool clicked=ImGui::InvisibleButton(id,ImVec2(width,36*s));
+    const bool hover=ImGui::IsItemHovered()||ImGui::IsItemFocused();ImGui::EndDisabled();
+    auto* draw=ImGui::GetWindowDrawList();
+    const std::array<ImVec2,5> points{{a,ImVec2(b.x,a.y),ImVec2(b.x,b.y-8*s),ImVec2(b.x-8*s,b.y),ImVec2(a.x,b.y)}};
+    const auto edge=quiet?visual::Color(168,172,180,(hover?.85f:.55f)*alpha_):
+        visual::Color(255,106,19,(hover?1.f:.8f)*alpha_);
+    draw->AddConvexPolyFilled(points.data(),int(points.size()),visual::Color(16,19,23,.88f*alpha_));
+    draw->AddPolyline(points.data(),int(points.size()),edge,ImDrawFlags_Closed,(hover?1.8f:1.2f)*s);
+    const float label_right=b.x-(icon==TicketIcon::None?8.f:30.f)*s;
+    float size=16*s;const float available=std::max(s,label_right-a.x-10*s);
+    const float measured=visual::TextWidth(Face(1),size,label);
+    if(measured>available)size*=available/measured;
+    RowLabel(label,a.x+10*s,a.y+(36*s-size)*.5f,size,quiet?muted:white,label_right,Face(1));
+    const float cy=(a.y+b.y)*.5f;
+    if(icon==TicketIcon::Check) {
+      draw->AddLine(ImVec2(b.x-24*s,cy),ImVec2(b.x-20*s,cy+4*s),edge,2*s);
+      draw->AddLine(ImVec2(b.x-20*s,cy+4*s),ImVec2(b.x-12*s,cy-5*s),edge,2*s);
+    } else if(icon==TicketIcon::Arrow)draw->AddTriangleFilled(ImVec2(b.x-23*s,cy-7*s),ImVec2(b.x-13*s,cy),ImVec2(b.x-23*s,cy+7*s),edge);
+    else if(icon==TicketIcon::Cross) {
+      draw->AddLine(ImVec2(b.x-23*s,cy-5*s),ImVec2(b.x-13*s,cy+5*s),edge,2*s);
+      draw->AddLine(ImVec2(b.x-23*s,cy+5*s),ImVec2(b.x-13*s,cy-5*s),edge,2*s);
+    }
+    return clicked;
+  }
+  bool InviteTicket(ImVec2 a,float width,std::optional<online::social::SendState> feedback) {
+    using SendState=online::social::SendState;
+    const bool pending=feedback==SendState::Pending,sent=feedback==SendState::Sent;
+    const char* label=pending?Tr(tr_,"SENDING…","GÖNDERİLİYOR…"):sent?Tr(tr_,"SENT","GÖNDERİLDİ"):
+        feedback==SendState::Failed?Tr(tr_,"RETRY","TEKRAR DENE"):Tr(tr_,"INVITE","DAVET ET");
+    return ActionTicket("##invite_ticket",a,width,label,sent||pending,pending,
+        pending?TicketIcon::None:sent?TicketIcon::Check:TicketIcon::Arrow);
+  }
   void Friends(const Snapshot& snapshot) {
     const float s=layout_.scale;const auto social=online::social::Read();
     const auto hints=visual::Hints(prompts::CurrentStyle());
@@ -1045,19 +1095,36 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
       else if(!social.supported)ImGui::TextColored(orange,"%s",Tr(tr_,"This server does not support community invitations yet.","Bu sunucu topluluk davetlerini henüz desteklemiyor."));
       else if(!social.can_invite)ImGui::TextWrapped("%s",Tr(tr_,"Host a lobby before sending invitations.","Davet göndermeden önce bir lobi kur."));
     }
-    if(!social.error.empty())ImGui::TextColored(orange,"%s",Tr(tr_,"Invitation service unavailable. Try again shortly.","Davet servisine ulaşılamıyor. Birazdan yeniden dene."));
-    else if(social.action=="sending")ImGui::TextColored(muted,"%s",Tr(tr_,"Sending…","Gönderiliyor…"));
-    else if(social.action=="send")ImGui::TextColored(orange,"%s",Tr(tr_,"Invitation sent.","Davet gönderildi."));
+    if(!social.error.empty()&&social.action!="send")ImGui::TextColored(orange,"%s",Tr(tr_,"Invitation service unavailable. Try again shortly.","Davet servisine ulaşılamıyor. Birazdan yeniden dene."));
     const int incoming=int(social.invites.size());
     selected_=std::clamp(selected_,0,std::max(0,incoming+int(snapshot.friends.size())-1));
     for(int i=0;i<incoming;++i) {
       const auto& invite=social.invites[i];const auto pos=ImGui::GetCursorScreenPos();
       const float right=pos.x+ImGui::GetContentRegionAvail().x;
-      const bool accept=Row(i,62*s,104*s);const auto a=row_position_;
-      RowLabel(invite.from+Tr(tr_," invited you"," seni davet etti"),a.x+46*s,a.y+10*s,22*s,RowText(),right-110*s);
-      RowLabel(std::string(hints.select)+Tr(tr_,": accept  ·  ",": kabul et  ·  ")+hints.decline+Tr(tr_,": decline",": reddet"),a.x+46*s,a.y+36*s,14*s,RowText(true),right-110*s);
-      ImGui::SetCursorScreenPos(ImVec2(right-96*s,a.y+17*s));ImGui::PushID(invite.id.c_str());
-      const bool decline=ImGui::Button(Tr(tr_,"Decline","Reddet"),ImVec2(88*s,28*s))||(selected_==i&&decline_);ImGui::PopID();
+      const float ticket_width=112*s,actions_width=2*ticket_width+12*s;
+      // Clicking the row selects it; joining requires the explicit action or A/Enter.
+      Row(i,116*s,actions_width+12*s,true);const auto a=row_position_;
+      const float action_left=right-actions_width,text_left=a.x+142*s,text_right=action_left-14*s;
+      const ImVec2 avatar(a.x+36*s,a.y+22*s);
+      const bool visible=ImGui::IsRectVisible(avatar,ImVec2(avatar.x+62*s,avatar.y+62*s));
+      Initial(avatar,62*s,invite.from,0,false,visible?FriendPhoto(invite.from):nullptr);
+      RowLabel(Tr(tr_,"LOBBY INVITATION","LOBİ DAVETİ"),text_left,a.y+8*s,13*s,orange,text_right,Face(1));
+      RowLabel(invite.from,text_left,a.y+30*s,28*s,RowText(),text_right,Face(1));
+      RowLabel(Tr(tr_,"Invited you to their lobby","Seni lobisine davet etti"),text_left,a.y+68*s,16*s,RowText(true),text_right);
+      const bool pending=social.answering.contains(invite.id);
+      ImGui::PushID(invite.id.c_str());
+      const bool accept=ActionTicket("##accept",ImVec2(action_left,a.y+32*s),ticket_width,
+          Tr(tr_,"ACCEPT","KABUL ET"),false,pending,TicketIcon::Check)||(selected_==i&&activate_&&!pending);
+      const float decline_left=action_left+ticket_width+12*s;
+      const bool decline=ActionTicket("##decline",ImVec2(decline_left,a.y+32*s),ticket_width,
+          Tr(tr_,"DECLINE","REDDET"),true,pending,TicketIcon::Cross)||(selected_==i&&decline_&&!pending);
+      ImGui::PopID();
+      if(prompts::CurrentStyle()!=prompts::Style::Keyboard) {
+        for(const auto& [x,label]:{std::pair{action_left,hints.select},std::pair{decline_left,hints.decline}}) {
+          const float size=14*s,width=visual::TextWidth(Face(),size,label);
+          RowLabel(label,x+std::max(0.f,(ticket_width-width)*.5f),a.y+75*s,size,RowText(true),x+ticket_width);
+        }
+      }
       if(decline)online::social::Answer(invite.id,false);
       else if(accept&&online::social::Answer(invite.id,true))state_->Close();
       ImGui::SetCursorScreenPos(pos);ImGui::Dummy(ImVec2(0,row_height_));
@@ -1071,7 +1138,8 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
       const float right=pos.x+ImGui::GetContentRegionAvail().x;
       const auto mapped=std::find_if(social.friends.begin(),social.friends.end(),[&](const auto& entry){return SameName(entry.name,f.name);});
       const bool can_invite=social.supported&&social.can_invite&&mapped!=social.friends.end()&&mapped->online;
-      if(Row(incoming+i,100*s,can_invite?104*s:0,true)) {
+      const float ticket_width=124*s;
+      if(Row(incoming+i,100*s,can_invite?ticket_width+12*s:0,true)) {
         if(invite_picker_){if(can_invite)online::social::Send(mapped->peer);}
         else OpenUrl("https://nobkonline.com/profile/?u="+Encode(f.name));
       }
@@ -1080,14 +1148,20 @@ class Dialog final : public rex::ui::ImGuiDialog, public rex::ui::WindowInputLis
       const bool visible=ImGui::IsRectVisible(avatar_pos,ImVec2(avatar_pos.x+avatar,avatar_pos.y+avatar));
       Initial(avatar_pos,avatar,f.name,WhereColor(f.where),false,visible?FriendPhoto(f.name):nullptr);
       const float nx=a.x+142*s,name_size=(row_selected_?34.f:32.f)*s;
-      const float country_x=a.x+282*s,status_left=a.x+455*s,status_right=right-4*s;
+      const float country_x=a.x+282*s,status_left=a.x+(can_invite?410.f:455.f)*s;
+      const float status_right=right-(can_invite?ticket_width+12*s:4*s);
       RowLabel(f.name,nx,a.y+(row_height_-name_size)*.5f,name_size,RowText(),country_x-12*s,Face(row_selected_?2:0));
       Flag(ImVec2(country_x,a.y+(row_height_-34.5f*s)*.5f),f.country);
       const auto status=WhereText(f,tr_);
-      RowLabel(status,status_left,a.y+(row_height_-24*s)*.5f,24*s,RowText(),status_right);
+      float status_size=(can_invite?20.f:24.f)*s;
+      const float status_width=visual::TextWidth(Face(),status_size,status);
+      if(status_width>status_right-status_left)status_size*=std::max(s,status_right-status_left)/status_width;
+      RowLabel(status,status_left,a.y+(row_height_-status_size)*.5f,status_size,RowText(),status_right);
       if(can_invite) {
-        ImGui::SetCursorScreenPos(ImVec2(right-96*s,a.y+66*s));ImGui::PushID(i);
-        if(ImGui::Button(Tr(tr_,"Invite","Davet et"),ImVec2(88*s,28*s)))online::social::Send(mapped->peer);
+        std::optional<online::social::SendState> feedback;
+        if(const auto found=social.outgoing.find(mapped->peer);found!=social.outgoing.end())feedback=found->second;
+        ImGui::PushID(i);
+        if(InviteTicket(ImVec2(right-ticket_width,a.y+32*s),ticket_width,feedback))online::social::Send(mapped->peer);
         ImGui::PopID();
       }
       ImGui::SetCursorScreenPos(pos);ImGui::Dummy(ImVec2(0,row_height_));
