@@ -17,6 +17,8 @@
 namespace launcher::updates {
 namespace {
 constexpr size_t kManifestLimit = 128 * 1024;
+constexpr size_t kGitHubLimit = 1024 * 1024;
+constexpr size_t kGitHubNotesLimit = 64 * 1024;
 constexpr uint64_t kDownloadLimit = 512ull * 1024 * 1024;
 constexpr wchar_t kStagingPrefix[] = L"MotoGP0910-update-";
 using Clock = std::chrono::steady_clock;
@@ -155,6 +157,85 @@ class Request {
   }
 };
 
+std::string ReadMetadata(std::wstring_view address, const Configuration& configuration,
+                         const std::atomic_bool* cancelled, size_t limit = kManifestLimit) {
+  Request request(address, configuration, false, cancelled);
+  if (request.length > limit) throw std::runtime_error("Update metadata exceeds the size limit");
+  std::string body; std::array<char, 32768> buffer{};
+  while (const auto count = request.Read(buffer)) {
+    if (body.size() + count > limit) throw std::runtime_error("Update metadata exceeds the size limit");
+    body.append(buffer.data(), count);
+  }
+  return body;
+}
+
+std::optional<Release> GitHubRelease(const Configuration& configuration, const std::atomic_bool* cancelled) {
+  const auto body = ReadMetadata(configuration.github_releases_url, configuration, cancelled, kGitHubLimit);
+  const auto releases = nlohmann::json::parse(body, nullptr, false);
+  if (!releases.is_array() || releases.size() > 20) throw std::runtime_error("Invalid GitHub Releases response");
+  std::optional<Release> best;
+  std::string manifest_url;
+  for (const auto& item : releases) {
+    if (!item.is_object() || !item.contains("draft") || !item["draft"].is_boolean() ||
+        !item.contains("prerelease") || !item["prerelease"].is_boolean() ||
+        item["draft"].get<bool>() || item["prerelease"].get<bool>()) continue;
+    if (!item.contains("tag_name") || !item["tag_name"].is_string() ||
+        !item.contains("assets") || !item["assets"].is_array() || item["assets"].size() > 64) continue;
+    auto version = item["tag_name"].get<std::string>();
+    if (version.size() > 65) continue;
+    if (version.starts_with('v') || version.starts_with('V')) version.erase(0, 1);
+    try {
+      if (!IsNewer(version, configuration.current_version) || (best && !IsNewer(version, best->version))) continue;
+    } catch (const std::exception&) { continue; }  // Not a numeric stable release tag.
+    Release candidate; candidate.version = version; candidate.publisher = "GitHub";
+    std::string attached_manifest;
+    size_t packages = 0, manifests = 0;
+    for (const auto& asset : item["assets"]) {
+      if (!asset.is_object() || !asset.contains("name") || !asset["name"].is_string() ||
+          !asset.contains("browser_download_url") || !asset["browser_download_url"].is_string()) continue;
+      const auto name = asset["name"].get<std::string>();
+      const auto url = asset["browser_download_url"].get<std::string>();
+      if (url.size() > 8192) continue;
+      if (name == "version.json") { attached_manifest = url; ++manifests; }
+      if (!name.starts_with("MotoGP0910-Windows-x64-") || !name.ends_with(".zip")) continue;
+      ++packages;
+      candidate.url = url;
+      if (asset.contains("digest") && asset["digest"].is_string()) {
+        const auto digest = asset["digest"].get<std::string>();
+        if (digest.starts_with("sha256:")) candidate.sha256 = digest.substr(7);
+      }
+    }
+    // Never guess between multiple Windows packages or use GitHub's source ZIP.
+    if (packages != 1 || manifests > 1) continue;
+    if (item.contains("body") && item["body"].is_string()) {
+      auto notes = item["body"].get<std::string>();
+      if (notes.size() > kGitHubNotesLimit) {
+        auto length = kGitHubNotesLimit;
+        while (length && (static_cast<unsigned char>(notes[length]) & 0xc0) == 0x80) --length;
+        notes.resize(length); notes += "\n…";
+      }
+      // All launcher languages show the publisher's actual GitHub description.
+      // Manifest notes are a fallback only for an empty/missing description.
+      if (notes.find_first_not_of(" \t\r\n") != std::string::npos) candidate.notes["en"] = std::move(notes);
+    }
+    best = std::move(candidate); manifest_url = std::move(attached_manifest);
+  }
+  if (!best) return {};
+  // GitHub's asset digest is authoritative when present. Older uploads can
+  // attach our existing version.json schema alongside the full Windows ZIP.
+  if (!manifest_url.empty()) {
+    auto manifest = ParseManifest(ReadMetadata(detail::WideText(manifest_url), configuration, cancelled));
+    if (Version(manifest.version) != Version(best->version) || manifest.url != best->url)
+      throw std::runtime_error("GitHub manifest does not match its release asset");
+    if (!best->sha256.empty() && Digest(best->sha256) != Digest(manifest.sha256))
+      throw std::runtime_error("GitHub manifest and asset checksums disagree");
+    best->sha256 = manifest.sha256;
+    if (best->notes.empty() && !manifest.notes.empty()) best->notes = std::move(manifest.notes);
+  }
+  ValidatePackage(*best);
+  return best;
+}
+
 std::filesystem::path TemporaryDirectory() {
   std::array<wchar_t, 32768> buffer{};
   const auto count = GetTempPathW(static_cast<DWORD>(buffer.size()), buffer.data());
@@ -192,14 +273,14 @@ bool Release::CanInstall() const {
 }
 
 bool Configured(const Configuration& configuration) {
-  return !configuration.manifest_url.empty() && !configuration.current_version.empty() &&
+  return (!configuration.manifest_url.empty() || !configuration.github_releases_url.empty()) && !configuration.current_version.empty() &&
       configuration.current_version != "0.0.0";
 }
 
 bool IsNewer(std::string_view candidate, std::string_view installed) { return Version(candidate) > Version(installed); }
 
 std::wstring VersionRequestUrl(const Configuration& configuration) {
-  if (!Configured(configuration)) return {};
+  if (!Configured(configuration) || configuration.manifest_url.empty()) return {};
   HttpsUrl(configuration.manifest_url);
   auto address = configuration.manifest_url;
   address += address.find(L'?') == std::wstring::npos ? L"?v=" :
@@ -237,20 +318,32 @@ Release ParseManifest(std::string_view json) {
 
 CheckResult CheckForUpdate(const Configuration& configuration, const std::atomic_bool* cancelled) {
   if (!Configured(configuration)) return {};
-  try {
-    const auto address = VersionRequestUrl(configuration);
-    Request request(address, configuration, false, cancelled);
-    if (request.length > kManifestLimit) throw std::runtime_error("Update manifest exceeds the size limit");
-    std::string body; std::array<char, 32768> buffer{};
-    while (const auto count = request.Read(buffer)) {
-      if (body.size() + count > kManifestLimit) throw std::runtime_error("Update manifest exceeds the size limit");
-      body.append(buffer.data(), count);
-    }
-    auto release = ParseManifest(body);
-    if (!IsNewer(release.version, configuration.current_version)) return {CheckStatus::UpToDate, {}, {}};
-    return {CheckStatus::Available, std::move(release), {}};
+  std::optional<Release> github, nobk;
+  std::string errors;
+  // Always check both sources, in this order. Otherwise simultaneous updates
+  // could never be compared. One unavailable publisher cannot hide the other.
+  if (!configuration.github_releases_url.empty()) try {
+    github = GitHubRelease(configuration, cancelled);
   } catch (const Cancelled&) { return {CheckStatus::Cancelled, {}, {}}; }
-    catch (const std::exception& error) { return {CheckStatus::Failed, {}, error.what()}; }
+    catch (const std::exception& error) { errors = std::string("GitHub: ") + error.what(); }
+  if (!configuration.manifest_url.empty()) try {
+    auto release = ParseManifest(ReadMetadata(VersionRequestUrl(configuration), configuration, cancelled));
+    if (IsNewer(release.version, configuration.current_version)) {
+      ValidatePackage(release); release.publisher = "NOBK Online"; nobk = std::move(release);
+    }
+  } catch (const Cancelled&) { return {CheckStatus::Cancelled, {}, {}}; }
+    catch (const std::exception& error) { if (!errors.empty()) errors += "; "; errors += std::string("NOBK: ") + error.what(); }
+  if (cancelled && cancelled->load()) return {CheckStatus::Cancelled, {}, {}};
+  if (!github && !nobk) return {errors.empty() ? CheckStatus::UpToDate : CheckStatus::Failed, {}, errors};
+  Release primary = github ? *github : *nobk;
+  if (github && nobk) {
+    const bool nobk_newer = IsNewer(nobk->version, github->version);
+    primary = nobk_newer ? *nobk : *github;
+    const auto& secondary = nobk_newer ? *github : *nobk;
+    if (Digest(primary.sha256) != Digest(secondary.sha256))
+      primary.companion = Package{secondary.version, secondary.url, secondary.sha256};
+  }
+  return {CheckStatus::Available, std::move(primary), errors};
 }
 
 StagedUpdate DownloadVerified(const Configuration& configuration, const Release& release,
@@ -258,29 +351,43 @@ StagedUpdate DownloadVerified(const Configuration& configuration, const Release&
   if (!Configured(configuration)) throw std::runtime_error("Update service is not configured");
   ValidatePackage(release);
   if (!IsNewer(release.version, configuration.current_version)) throw std::runtime_error("Update is not newer than this build");
-  Request request(detail::WideText(release.url), configuration, true, cancelled);
-  if (request.length > kDownloadLimit) throw std::runtime_error("Update package exceeds the size limit");
   StagedUpdate staged{release, TemporaryDirectory(), {}};
   try {
     staged.archive = staged.directory / L"update.zip";
-    std::ofstream file(staged.archive, std::ios::binary);
-    if (!file) throw std::runtime_error("Cannot create temporary update archive");
-    std::array<char, 32768> buffer{}; uint64_t received{};
-    while (const auto count = request.Read(buffer)) {
-      if (received + count > kDownloadLimit) throw std::runtime_error("Update package exceeds the size limit");
-      file.write(buffer.data(), count);
-      if (!file) throw std::runtime_error("Could not write temporary update archive");
-      received += count;
-      if (progress) progress(received, request.length);
+    uint64_t completed = 0;
+    auto download = [&](const Release& package, const std::filesystem::path& archive) {
+      ValidatePackage(package);
+      Request request(detail::WideText(package.url), configuration, true, cancelled);
+      if (request.length > kDownloadLimit) throw std::runtime_error("Update package exceeds the size limit");
+      std::ofstream file(archive, std::ios::binary);
+      if (!file) throw std::runtime_error("Cannot create temporary update archive");
+      std::array<char, 32768> buffer{}; uint64_t received{};
+      while (const auto count = request.Read(buffer)) {
+        if (received + count > kDownloadLimit) throw std::runtime_error("Update package exceeds the size limit");
+        file.write(buffer.data(), count);
+        if (!file) throw std::runtime_error("Could not write temporary update archive");
+        received += count;
+        if (progress) progress(completed + received, release.companion ? 0 : request.length);
+      }
+      file.close();
+      if (!file || !received || (request.length && received != request.length)) throw std::runtime_error("Incomplete update package");
+      request.Check();
+      if (detail::FileHash(archive) != Digest(package.sha256)) throw std::runtime_error("Update package SHA-256 mismatch");
+      request.Check();
+      std::ifstream input(archive, std::ios::binary); std::array<unsigned char, 4> signature{};
+      input.read(reinterpret_cast<char*>(signature.data()), static_cast<std::streamsize>(signature.size()));
+      if (!input || signature != std::array<unsigned char, 4>{'P', 'K', 3, 4}) throw std::runtime_error("Update package is not a ZIP archive");
+      completed += received;
+    };
+    download(release, staged.archive);
+    if (release.companion) {
+      const auto& companion = *release.companion;
+      if (!IsNewer(companion.version, configuration.current_version) || IsNewer(companion.version, release.version))
+        throw std::runtime_error("Invalid companion update version");
+      staged.companion_archive = staged.directory / L"companion.zip";
+      download(Release{companion.version, companion.url, companion.sha256, {}}, staged.companion_archive);
     }
-    file.close();
-    if (!file || !received || (request.length && received != request.length)) throw std::runtime_error("Incomplete update package");
-    request.Check();
-    if (detail::FileHash(staged.archive) != Digest(release.sha256)) throw std::runtime_error("Update package SHA-256 mismatch");
-    request.Check();
-    std::ifstream input(staged.archive, std::ios::binary); std::array<unsigned char, 4> signature{};
-    input.read(reinterpret_cast<char*>(signature.data()), static_cast<std::streamsize>(signature.size()));
-    if (!input || signature != std::array<unsigned char, 4>{'P', 'K', 3, 4}) throw std::runtime_error("Update package is not a ZIP archive");
+    if (progress) progress(completed, completed);
     return staged;
   } catch (...) { DiscardStaged(staged); throw; }
 }

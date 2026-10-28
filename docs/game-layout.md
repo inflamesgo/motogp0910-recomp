@@ -1,7 +1,8 @@
 # Game data layout
 
 The public Windows entry point is `MotoGP09-10Launcher.exe`. The launcher version
-is **1.1.11**; the supported original title update is **0.0.1.1**. Build pins live
+is **1.2.0** in the prepared PR source; the supported original title update is
+**0.0.1.1**. A local 1.2.0 test package is built; the operator must still build/verify the final integrated release. Build pins live
 in `sdk-version.json` and `third_party/rexglue-runtime/manifest.json`.
 See [Windows builds](windows-build.md), [launcher setup](launcher.md) and
 [DLC installation](dlc.md). Historical archives are not a current-release index.

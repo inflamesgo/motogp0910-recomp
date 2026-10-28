@@ -1,76 +1,113 @@
 # Launcher updates
 
-The Windows updater adapts the public FIFA09 launcher's NOBK backend protocol
-and numeric version comparison to this C++/Win32 launcher. The source reference
-is `ChunchunQ/fifa09-recomp`, revision
-`711da3941d81879db06ea4f2c36c3a519ac826d9`, `launcher/Updater.cs`.
-It includes a notification
-panel, background download, an independent installation helper, rollback and a
-restart acknowledgement. The current source is included in the main Windows
-Release build. Wine preview checks are recorded below; a real update transaction
-and native Windows installation acceptance remain unverified.
+The Windows launcher checks two independent publishers, starting with the
+maintainer's GitHub Releases and then the existing NOBK manifest. It compares
+available full Windows packages before installation, preserving the existing
+backup, rollback and launcher-restart handshake. No account token is sent to
+these public update endpoints.
 
-The current launcher version is **1.1.12**. ChunchunQ configured the MotoGP
-manifest at `https://nobkonline.com/downloads/motogp/version.json` in
-`src/launcher/updates.h::kConfiguration`. Update checks are therefore enabled.
-The game's title update remains independently versioned as `0.0.1.1`.
-The previous Rider License milestone was 1.1.11; documentation and CI changes
-do not increment the product version. The live manifest contents and an actual
-installation transaction were not verified as part of the upstream merge.
+The approved PR/release source version is **1.2.0**. Earlier local test packages
+remain **1.1.12** and **1.1.13**, with their original matching manifests/hashes;
+they are not 1.2.0 builds. The dual-source implementation is a
+local change after main `28ba765` and published preview `f5250a9`; those older
+commits and the earlier Windows test package do not contain it. Source syntax
+checks are not native update/installation acceptance. A subsequent explicit
+local-build request produced the latest Windows package; build/package checks
+passed, without a real update transaction.
 
-## Required release version bump
+## Approved release version and publication
 
-Before publishing this feature update, the operator must increase
-`src/launcher/updates.h::kConfiguration.current_version` above the currently
-published release (the source baseline is 1.1.12) and rebuild the final branch.
-Use that same version in the built launcher, MotoGP `version.json`, release
-notes and website download label. Publish the actual final archive URL, size
-and SHA-256. An unchanged 1.1.12 manifest will not offer an update to existing
-1.1.12 installations; changing only the manifest while shipping an old-version
-binary can cause repeated update offers. The game TU remains 0.0.1.1.
+`updates.h::kConfiguration.current_version` is set to **1.2.0**, as approved by
+the user. Before publishing, rebuild the integrated branch and use **1.2.0** /
+**v1.2.0** consistently in the compiled launcher, release tag, manifest and
+website download details. Publish the final package before its metadata, with
+the SHA-256 of that exact ZIP. An unchanged 1.1.12 offer cannot update existing
+1.1.12 installations. Changing metadata alone while shipping an old-version
+launcher causes repeated offers. Game Title Update **0.0.1.1** is independent.
 
-## Approved launcher behavior
+Both publishers must use a coordinated, increasing numeric product version
+sequence. These are full builds of the same application, not independently
+comparable client/backend component versions. Each must retain this updater and
+its matching helper; installing a higher-version older fork can otherwise remove
+features, including GitHub update checking. Separate repositories do not remove
+that release-integration responsibility.
 
-- Perform one update check per launcher opening. There are no periodic retries
-  and clicking the notification button does not trigger another network check.
-- Show the orange download icon to the left of Minimize only for a strictly newer version.
-  Clicking it opens an animated panel downward over the right-side artwork.
-  The panel contains the version, localized changelog and **Update now**.
-  Closing the panel keeps the download icon available for that session.
-- Disable **Update now** while this installation's game is running. The client
-  checks both its game handle and native process enumeration. Installation also
-  checks independently; it never closes the game.
-- After **Update now**, show download percentage when the response provides a
-  length, and allow cancellation during download. Metadata and download failures
-  do not alter installed program files. Startup check failures are quiet.
-- After a verified download, save the current launcher settings and prepare the
-  installation without a second confirmation. Disable editing during preparation.
-  Cancellation and launcher closing are unavailable during this final handoff.
-- Restart the launcher after installation. Delete the previous-version backup
-  after the new launcher has created/painted its real window, acknowledged the
-  helper, and remained alive for a short confirmation interval. A small native
-  progress window covers installation and rollback while the launcher is closed.
+## Sources and selection
 
-## Service connection and manifest
+Configuration is in `src/launcher/updates.h`:
 
-The configured **MotoGP-specific HTTPS manifest endpoint** is
-`https://nobkonline.com/downloads/motogp/version.json`. Following FIFA's `CheckAsync`,
-`VersionRequestUrl` appends `?v=<major.minor.build>` to the endpoint (or `&v=`
-when the operator's endpoint already has a query). A URL template is not needed.
-Keep the version accurate
-in every release. Leaving either the endpoint empty or version at the unset
-placeholder `0.0.0` disables checks.
+1. `https://api.github.com/repos/inflamesgo/motogp0910-recomp/releases?per_page=20`
+2. `https://nobkonline.com/downloads/motogp/version.json`
 
-The request is GET with the same `v` query and
-`User-Agent: NOBK-Launcher/<major.minor.build>` as FIFA, without
-an account token or request body. A successful endpoint returns HTTP 200 and
-these lowercase JSON fields:
+The launcher always checks both in this order so simultaneous offers can be
+compared. A source failure does not suppress a valid offer from the other.
+Checks run on a worker once per launcher opening and again when **Update now**
+is pressed. There are no periodic retries. Opening the notification panel alone
+does not contact either source. A later recheck cannot silently substitute a
+lower version than the one already offered in that session.
+
+| Available updates newer than the installed launcher | Action |
+| --- | --- |
+| GitHub only | Install its verified complete package |
+| NOBK only | Install its verified complete package |
+| Both, same ZIP digest | Download the higher-version offer once |
+| Both, different ZIP digests | Download and verify both, compare their extracted application files |
+| Different contents at any common application path, or different EXE/DLL sets | Install only the higher-version complete package |
+| Every common application file and the complete EXE/DLL sets are identical | Add allowed files unique to the other package to the higher-version payload |
+| Same numeric version with conflicting packages | GitHub wins the tie; no mixed binaries |
+| Neither newer | No update icon |
+
+The merge is a union of compatible files. It never merges C++ changes, rewrites
+EXE/DLL bytes or guesses which conflicting resource is right. Even different
+JSON/text/font files at the same application-owned path force the full-package
+fallback. A new executable/DLL found in only one package also prevents merging.
+Most separately compiled full releases will therefore use the higher-version
+package, exactly as the user approved. Bringing both publishers' code features
+into a new executable still requires integrating source and compiling it.
+
+Both candidates must be complete valid Windows releases. A bad checksum,
+malformed/traversing ZIP, missing required program file or cancelled companion
+download aborts before installation; it is not treated as an ordinary content
+conflict. Existing files are preserved. If a publisher disappears after the
+startup offer, retry rather than silently installing an older announced version.
+
+Comparison retains FIFA's existing numeric rule: two to four numeric components,
+compare major/minor/build, zero for a missing build, ignore the fourth revision.
+Publishers must increment one of the compared components; revision-only releases
+will not update. GitHub tags may use a leading `v` or `V`, stripped before
+comparison. Prerelease suffixes are unsupported.
+
+## GitHub publication contract
+
+Only the newest 20 returned stable, non-draft GitHub Releases are considered;
+commits, tags without a release, drafts, prereleases and source-code ZIPs do not
+qualify. Keep the current stable Windows release within this bounded list.
+Each release must have exactly one full package asset named
+`MotoGP0910-Windows-x64-<change-label>.zip`. Multiple matching Windows packages are
+ambiguous and skipped. Do not upload a prepared application ZIP inside another
+Actions ZIP: the downloadable asset must open directly to the application.
+
+The package needs a SHA-256. Either GitHub's asset metadata provides
+`digest: "sha256:<64 hexadecimal characters>"`, or attach **version.json** with
+the schema below. When attached, its version must numerically match the release
+tag, its URL must exactly match the selected ZIP's `browser_download_url`, and
+its checksum must agree with any GitHub digest. The launcher's notes now use the
+actual GitHub Release description, preserving its text/line breaks in the plain
+text viewer. The same description is shown in either launcher language. Only
+when that description is empty/missing do attached manifest notes supply the
+English/Turkish fallback. Descriptions are capped at 64 KiB and truncated on a
+UTF-8 boundary with an ellipsis. The highest eligible release must validate before it is offered.
+Do not put authentication credentials or game files in release assets.
+
+## NOBK manifest contract
+
+Keep the existing FIFA-compatible lowercase JSON fields:
 
 ```json
 {
-  "version": "1.1.11",
-  "url": "https://nobkonline.com/downloads/motogp/MotoGP0910-Windows-x64-online.zip",
-  "sha256": "<replace with the actual ZIP SHA-256: 64 hexadecimal characters>",
+  "version": "1.2.0",
+  "url": "https://nobkonline.com/downloads/motogp/MotoGP0910-Windows-x64-dual-source-updates.zip",
+  "sha256": "<actual ZIP SHA-256: 64 hexadecimal characters>",
   "notes": {
     "en": "Short release notes.",
     "tr": "Kısa sürüm notları."
@@ -78,137 +115,99 @@ these lowercase JSON fields:
 }
 ```
 
-This is a schema example, not a ready-to-install manifest. The operator must
-supply the actual release version and digest. The digest covers the ZIP bytes,
-not an extracted executable or an outer GitHub Actions artifact wrapper. Upload
-the package before publishing matching metadata. Prefer versioned download URLs
-so a package does not change between a check and its download.
+This is a schema example, not a published offer. NOBK requests append
+`?v=<major.minor.build>` (or `&v=` after an existing query) and use
+`User-Agent: NOBK-Launcher/<major.minor.build>`, without a request body or account
+credential. Package URLs require HTTPS and a `.zip` suffix; query strings after
+that suffix do not qualify. Localized notes fall back to English and then a
+no-notes message. Missing/invalid package metadata is not installable.
 
-Comparison accepts two to four numeric components, uses major/minor/build,
-substitutes zero for an absent build, and ignores revision. Only strictly newer
-versions qualify. Prefixes such as `v1.0.1` and prerelease suffixes are unsupported.
-Localized notes fall back to English, then a generic no-notes message in the UI.
-The reference's `CanInstall` rule requires HTTPS, a URL ending in `.zip`, and a
-64-character checksum. Actual downloads also validate the digest as hexadecimal.
-A query after `.zip` does not pass the reference's suffix rule.
+For a GitHub-attached manifest use the GitHub ZIP asset's exact browser URL,
+not the example NOBK URL. The existing NOBK endpoint/schema needs no GitHub API
+hosting or new merge endpoint. Old installed launchers cannot discover GitHub
+until this launcher/helper pair is delivered by their existing updater or a
+manual complete-package installation.
 
-### Observed reference service
+## User interface and transaction
 
-Static REA metadata/CIL inspection identified the FIFA09 request as
-`https://nobkonline.com/api/launcher/version?v=1.2.1`. A direct GET on 2026-10-19
-returned version `1.2.3` and a **FIFA09** package. That endpoint must not be wired
-unchanged into MotoGP. No MotoGP selector or manifest route was established.
+The existing orange download icon opens the 390 × 360 logical-pixel panel with
+version, publisher, notes and **Update now**. When two packages are available,
+the panel explains the compatibility comparison/full-package fallback. The
+normal launch path is unchanged. Game activity disables Update now; native
+process enumeration is checked again before replacement, and the game is never
+terminated. Startup check failures remain quiet.
 
-The supplied MotoGP ZIP URL separately returned HTTP 206 and a ZIP signature for
-a four-byte range request. This verifies the route at that time, not its full
-contents, authoritative release version or SHA-256. The endpoint remains blank
-until the service operator provides the MotoGP contract.
+Downloads and metadata run off the window thread. Cancellation remains available
+during checking/downloading. Single-package downloads show a percentage when
+length is known; dual downloads show progress without a misleading per-package
+reset. A clipped orange fill inside the download button follows known progress;
+unknown length uses a moving segment. A 33 ms repaint timer runs only while the
+busy update panel is open. After verification, settings are saved and controls
+are disabled during helper preflight. There is no second installation confirmation.
 
-### Handoff and fallback mechanism
+After Update now, normal installation, restart and rollback do not create the
+separate helper status/progress window. The helper remains headless through
+normal completion, preserving its checks and restart acknowledgement. Real
+failures still report an error instead of silently disappearing. This is not
+automatic installation at launcher startup: Update now remains the user's action.
+Presentation is owned by the installed launcher/helper starting the transaction;
+an older version can show its old notes/progress window once when upgrading to
+this version. New release assets cannot retroactively change that running UI.
 
-The MotoGP endpoint is now set in `updates.h::kConfiguration`; requests and JSON match
-FIFA's `Updater.cs`. The UI is unchanged. MotoGP additionally retains a local
-**fallback mechanism** in `update_helper.cpp`: failed installation/startup
-restores the previous program files. Backups are removed only after healthy
-startup; game files, DLC, saves and settings are excluded. No extra server fields
-are needed. The endpoint stays blank until configured by the operator.
+The static-runtime helper is copied from the installed `bin/` to a unique
+`MotoGP0910-update-<random-token>` directory under Windows TEMP. It validates
+both ZIP hashes again, extracts separately with built-in PowerShell/.NET,
+compares case-insensitive application paths and stages the permitted union.
+A protocol-2 selection receipt proves that the running helper understood the
+job before the old launcher authorizes replacement. An outdated helper fails
+preflight instead of silently ignoring the second package. Ship launcher and
+helper from the same final build.
 
-## Installation transaction
+Only explicit application-owned paths are installable. This includes the four
+approved converted `gauge.json` resources and Open Sans Regular/SemiBold/Bold.
+Game files, DLC, settings, credentials, saves, logs and unrelated files are not
+installed from update ZIPs. Configured data roots and links/junctions are checked
+before any application replacement. Both standard package roots and one
+outer directory are accepted; a complete set of launcher, game, UI, helper and
+runtime files is required in each candidate.
 
-`motogp0910-update-helper.exe` is built with the static Microsoft C++ runtime and
-packaged under `bin`. Before handoff, the current helper is copied to a unique
-Windows TEMP staging directory so it can replace installed binaries without
-loading their DLLs. It uses the built-in Windows PowerShell 5/.NET ZIP reader
-only for extraction; backup, file replacement, rollback and restart use native
-C++. PowerShell is invoked by its absolute System32 path with no profile or
-interactive prompt. No external archiver or .NET runtime is downloaded.
+Changed files are backed up and hashed before the readiness signal. Following
+commit and old-launcher exit, replacements use flushed scratch files and atomic
+rename with hash verification. The new launcher must create/paint its window,
+acknowledge the helper and remain alive briefly. Handled failures restore old
+files and remove newly introduced files. The helper may stop only the failed
+launcher it started, never the game. Failed rollback retains the recovery backup.
+Files absent from a package are not generally deleted. Forced termination/power
+loss remains outside this handled-error recovery path.
 
-1. Verify the downloaded archive hash again in the client and helper. Extract
-   into TEMP with bounds on entry count and expanded size. Reject traversing,
-   duplicate, rooted, device/ADS, symlink and reparse paths.
-2. Accept the standard package root or one enclosing directory. Require the
-   public MotoGP launcher, game, UI, helper and runtime DLLs. Only an explicit
-   list of application-owned program/resource paths can be installed; unrelated
-   archive entries are ignored.
-3. Validate destination paths, deny links/junctions, and reject overlaps with
-   configured game/user/cache/update/metadata roots. Root configuration,
-   account data, saves, logs, original game files and unrelated local files
-   are excluded by the application path list.
-4. Back up every changed existing file under `.motogp-update-<token>` beside the
-   installed launcher and record its relative path and prior existence. All
-   backups are taken and verified before any application file replacement.
-5. Signal readiness to the old launcher. Wait for its explicit commit and full
-   process exit, then recheck that the game is closed. A per-installation lock
-   blocks unrelated launcher starts during replacement; only the helper's
-   acknowledged restart is admitted.
-6. Copy each new file to a scratch file on the destination volume, flush it,
-   and atomically rename it over its destination, with bounded retries. Verify
-   the installed file's hash. Files absent from the new package are not deleted.
-7. Start the public launcher with a private session acknowledgement token. A
-   launcher initialization failure, early exit or missing acknowledgement
-   triggers rollback. The helper may stop only the unsuccessful launcher it
-   started; it never stops the game. PLAY stays disabled during confirmation.
-8. On a handled installation failure, restore changed files in reverse order
-   and remove files introduced by this transaction. Restart the previous
-   launcher after a completed rollback. If restoration cannot finish, preserve
-   the backup and show an error instead of deleting the recovery files.
+Limits: 128 KiB per manifest; 1 MiB for the GitHub list; at most 20 releases and
+64 assets per release; 512 MiB per ZIP (up to two); 4,096 entries, 1 GiB per file
+and 2 GiB expanded per ZIP. HTTPS certificate validation remains enabled and
+HTTPS-to-HTTP redirects are forbidden. Metadata deadlines are eight seconds
+per request; each package has a ten-minute deadline, checked between bounded
+WinHTTP calls. Helper preflight allows three minutes for one package and six
+for two. The installation directory must be writable with space for downloads,
+both extracted payloads, backups and scratch files. No elevation is requested.
 
-No elevation is requested. Installation requires a writable portable application
-folder and sufficient space for the payload, previous files and scratch copy.
-A restricted folder or unavailable PowerShell fails preflight while the current
-launcher is still open. Following success, the helper attempts to remove the
-backup and large staging files. Its own running executable can remain in TEMP.
-An OS interruption or forced helper termination is outside the automatic
-handled-error rollback path; an unfinished backup index remains available for
-manual recovery. The startup acknowledgement verifies launcher initialization,
-not a game playthrough or GPU compatibility.
+## Validation and release gate
 
-## Source layout and validation
+The six changed source units passed Windows-target compiler syntax checks on
+28 October, along with focused native label/cue and documentation checks. A subsequent explicit local-build request completed the Windows build and
+package/runtime/inclusion checks. Real installation, rollback and native Windows
+audio acceptance were not performed for these changes. Historical Windows/Wine update-preview checks
+from 20 October cover the earlier panel only, not dual-source behavior.
 
-- `updates.h` / `updates.cpp`: configuration, manifest parsing, comparison,
-  WinHTTP download, limits, cancellation and SHA-256 validation.
-- `update_panel.inc`: launcher state, download icon/panel, animation and worker polling.
-- `update_install.cpp`: preflight process, explicit commit and startup handshake.
-- `update_helper.cpp`: extraction, package validation, backup/replacement,
-  rollback and restart.
-- `update_protocol.h`: shared names, argument quoting, process checks and hashes.
-- CMake and `scripts/package-windows.py`: build and ship the helper. The public
-  launcher target depends on it, including explicit launcher-only builds.
+Before public release, use a disposable Windows installation to verify both
+single-source offers, simultaneous disjoint resources with identical program
+files, a conflicting binary/resource selecting the higher complete package,
+equal-version GitHub priority, an unreachable source, a newer release appearing
+before Update now, wrong hashes, unsafe ZIP paths, cancellation, outdated helper,
+failed restart and rollback. Confirm credentials, saves/config and game/DLC
+files remain untouched. Do not test destructive update cases on a real profile.
 
-Network limits are 128 KiB per manifest and 512 MiB per ZIP. Extraction allows
-at most 4,096 entries, 1 GiB per file and 2 GiB total. HTTPS certificate validation
-remains enabled; HTTPS-to-HTTP redirects are denied. Metadata uses an eight-second
-deadline and downloads ten minutes, checked between blocking WinHTTP calls.
-Cancellation is cooperative and does not instantly interrupt an in-flight call.
-
-The reference launcher and installer were not executed. The Windows release
-cross-build and **13 targeted Windows/Wine update-preview UI checks** passed
-on 20 October 2026. End-to-end download, installation and rollback have not
-been executed. Before enabling a live endpoint, validate a
-successful update plus cancellation, malformed/wrong-product packages, locked
-files, failed restart and rollback in a disposable installation. Verify the
-helper's static-runtime imports and actual UI layout on native Windows.
-
-## Visual preview
-
-The panel is 390 × 360 logical pixels, widened to the left over the cover art.
-The changelog has 240 pixels of height, and Update now sits at the lower edge.
-Its scrollbar uses the launcher's existing slim rail geometry, colors and drag
-handling. The native EDIT scrollbar is omitted; wheel, keyboard and rail input
-scroll the wrapped text. During download, Cancel shares the bottom action row.
-This layout revision was initially built without UI tests. The later main
-launcher viewport audit includes the current source; successful live-service
-updates and native visual review remain separate from that coverage.
-
-The close control now uses a 32 × 32 logical-pixel button with a larger,
-antialiased vector X, a hand cursor, a translucent hover/pressed background and
-keyboard focus. This polish is included in the later main Windows Release build and launcher
-viewport audit. Those checks do not validate end-to-end update installation or
-native Windows transition smoothness; see [local validation](https://github.com/inflamesgo/motogp0910-recomp/blob/28ba765/docs/rider-license-validation.md).
-
-Run `MotoGP09-10Launcher.exe --preview-update` to show a synthetic v1.1.11
-notification with English/Turkish sample release notes. Click the download icon
-to expand the normal update panel. Update now shows an informational preview
-message; this mode does not check an update endpoint, download a package or
-start installation. Normal launches retain the configured update behavior and
-do not show the synthetic notification. The sample is not a published release.
+`MotoGP09-10Launcher.exe --preview-update` retains the existing synthetic panel
+preview. Its displayed version now follows `kConfiguration.current_version`
+(**1.2.0**) instead of hardcoding an old sample version. It does not check either
+server, download packages or validate this
+update transaction. Source: `updates.*`, `update_panel.inc`, `update_install.cpp`,
+`update_helper.cpp` and `update_protocol.h`.

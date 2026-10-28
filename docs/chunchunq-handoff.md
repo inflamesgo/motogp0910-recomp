@@ -1,13 +1,22 @@
 # MotoGP 09/10 integration handoff — 28 October 2026
 
-Source anchor: **`inflamesgo/motogp0910-recomp` main at `28ba765`**,
-`feat(port): add season leaderboards and polish invitations`. Documentation
-review after that commit adds no new application behavior or release version.
+This handoff accompanies **`inflamesgo:preview` → `ChunchunQ:nobk-online`**,
+with launcher version **1.2.0**. It includes custom gauges, invitations,
+season/class leaderboards, the dual-source updater, Multiplayer CHAMPIONSHIP
+text/audio and the website/deployment notes. The initial source baseline was
+main `28ba765`; the later production edits and their evidence are enumerated
+in [the transfer manifest](pr-handoff.md).
+Earlier explicit local-build requests produced 1.1.12/1.1.13 test packages;
+build/package checks passed. A later explicit request also produced local
+1.1.14/1.2.0 updater-UI test packages; native update/audio acceptance remains
+outstanding. See [release readiness](release-readiness.md).
+The user subsequently observed a real GitHub offer and download/restart UI in
+the 1.1.13 test. The later local presentation changes (GitHub description notes,
+download fill and no normal helper-status window) are not in that test package.
 Target: **`ChunchunQ/motogp0910-recomp:nobk-online`**. Its branch tip was
 read on 28 October as `c432d67ffb95a2c9383493b9a8c7a723b9ed52b0`.
-This is a source-content reference, not a claim that a new PR is open or merged.
-The earlier PR #1 and `preview` delivery are historical, not instructions to
-append to an open PR.
+This source handoff is not a production deployment or merged-PR claim. The
+earlier PR #1 is historical; use the current preview delivery and review links.
 
 ## Read order and release decision
 
@@ -23,16 +32,16 @@ season/class backend and its matching website/API/help update.** Do not advertis
 independent 2009/2010 records or working ghost downloads until their respective
 end-to-end gates pass. The client deliberately refuses mixed legacy boards.
 
-| Area | Delivered in the source anchor | Remaining integration |
+| Area | Delivered in this source | Remaining integration |
 | --- | --- | --- |
 | Season/class leaderboard | 2009/2010 selectors, native transitions/history, class-specific headings and native announcements; explicit read/write identity | Scoped service/storage routes are absent from current `server/`; public API/site consumers need matching identity and migration |
 | Invitations | Native F1 picker, accept/decline, per-friend feedback, pit-board incoming toast and room validation; Discord warm/cold-launch code | Shared immutable friend IDs, matching service/proxy deployment, real-account and cold-launch acceptance |
 | Ghosts | Native analysis and proposed lifecycle/API; older synthetic transport success reported by the user | No tracked ghost transport/service/task/save/playback implementation in this source anchor; native binding is ChunchunQ integration work |
 | UI/HUD/input | Apex panel, startup strip, friend-online card, four custom gauges, control/layout fixes and precise URT2 shift-light source changes | Carry resource/runtime dependencies; do not claim a fresh full-game/controller QA pass |
-| Updater | Launcher 1.1.12, configured MotoGP manifest, install helper and rollback | Publish actual package/manifest and verify real install/restart/rollback |
+| Updater | GitHub-first/NOBK checks, compatible-file union, higher-version full-package fallback, Release-description notes, filling download button and headless normal installation | Build final integrated 1.2.0 launcher/helper, publish matching metadata and verify native install/restart/rollback |
 | Rider License | Public profile, rank, 20-circuit domination and selected-view personal best | Already includes published rows from both seasons; view-only public identity, DLC outline bindings and lobby context need integration |
 
-Native Windows user acceptance of the latest test package covers both seasons,
+Native Windows user acceptance of the earlier `season-input-audio-fix` package covers both seasons,
 all three class selections, forward/Back navigation, text and audio. The user
 also reported Discord invitations working locally. This does not validate
 production scoped storage, a real two-player Internet race or ghost playback.
@@ -212,21 +221,33 @@ remain incomplete.
 
 ## 5. Launcher update and setup contract
 
-The current launcher is **1.1.12**, with manifest
+The approved PR launcher version is **1.2.0**. Existing local test builds remain
+**1.1.12** and **1.1.13** with their original hashes. New local updater-UI
+packages are 1.1.14 (test starter) and 1.2.0 (target); no Release was published here. The manifest is
 `https://nobkonline.com/downloads/motogp/version.json`, configured in
-`src/launcher/updates.h`. It is not empty or disabled. Keep the existing
+`src/launcher/updates.h`. Local source also checks stable published Releases at
+`inflamesgo/motogp0910-recomp` before the NOBK endpoint, including a fresh check
+when Update now is pressed. It checks both sources even when GitHub has an offer
+so simultaneous packages can be compared. Keep the existing
 FIFA-compatible lowercase `version`, HTTPS ZIP `url`, actual ZIP `sha256` and
 localized `notes` fields, `?v=<installed-version>` and
 `User-Agent: NOBK-Launcher/<installed-version>`.
 
-**Before publishing this update, the operator must increase the launcher's
-source version above the currently published release (baseline 1.1.12)** in
-`src/launcher/updates.h::kConfiguration.current_version`, then rebuild. The
-built launcher, public `version.json`, release notes and website download label
-must use the same new version. Publish the actual final ZIP URL/size/SHA-256;
-changing the manifest alone does not update the binary's reported version.
-The original game's TU remains 0.0.1.1. This handoff does not select or publish
-a new release number on the operator's behalf.
+**Before publishing this PR's update, build the final branch with the approved
+launcher version 1.2.0.** Match **1.2.0** / **v1.2.0** across the launcher, GitHub release tag, manifest,
+website and actual package/hash; TU 0.0.1.1 is unchanged. Both publishers must
+retain the new updater and matching protocol-2 helper in full packages. Older
+launchers need this pair delivered through the old updater/manual extraction
+before they can discover GitHub Releases.
+
+If both sources have updates, every common application file and the complete
+EXE/DLL sets must be identical before extra allowed resources are combined.
+Otherwise install the numerically higher complete package; GitHub wins a tie.
+This does not combine features from different EXE/DLL builds. Malformed packages,
+wrong hashes and cancellation fail without replacing installed program files.
+See [launcher update publication and acceptance](launcher-updates.md) for exact
+GitHub asset/manifest, versioning, rollback and verification requirements. Native
+Windows transactions remain unverified for this source change.
 
 Publish the complete matching application ZIP before its manifest, using the
 application archive itself. Current Actions stages application files directly;
@@ -235,6 +256,30 @@ opens to `MotoGP09-10Launcher.exe`, `bin/`, `resources/`, `game/` and `dlc/`.
 Keep `game/` and `dlc/` empty in distributions. Preserve the helper, embedded
 notices, archive-reader source and configured rollback. No live updater
 transaction was performed for this documentation review.
+
+For the public How to play page, the user requests **Select ISO → Select title
+update → Install DLC**, then mode/sign-in/Play. Remove **Verify game files** from
+the normal installation sequence rather than describing it as required. It is
+optional troubleshooting for damaged files/startup failures; the user does not
+want a replacement verification paragraph in the public guide. The launcher's
+existing verification action itself is not removed by this website correction.
+
+The Race section also needs replacement: the user confirms **game main menu
+→ Multiplayer → Online → desired race type → lobby screen**. There is no
+Play button in the game's main menu. Keep this native route, actual lobby
+controls and record-upload conditions distinct; verify any additional submenu
+labels against the matching build rather than copying the old Player Match text.
+The local Multiplayer mode label is now **CHAMPIONSHIP**, reusing the original
+main-menu Championship voice. Single-player Career is unchanged. Use the final
+build's actual labels in screenshots and instructions; native visual/audio
+acceptance remains required after a new build.
+
+Also replace About the game with the current PC/two-season description and
+expand the supported-game table with TU **0.0.1.1** and all three named DLC
+packages. The [website checklist](website-release-checklist.md) includes the
+copy, identifiers and P0 corrections; the
+[comparison/design review](how-to-play-design-review.md) explains the compact
+download-first layout and separate setup cards from FIFA/NFS/WWE references.
 
 The one General-page action follows **Select ISO → Select title update →
 Install DLC → Verify game files**, depending on files already present. All
@@ -271,8 +316,9 @@ The committed repository and the files named in the PR manifest are the source.
 The Windows SDK pin is `0.10.0.24-dev.gbd833a2`; the custom F1-backdrop runtime
 manifest must match. Copying only an EXE or mixing runtime DLLs breaks that
 contract. Build/package checks and older Wine/CPU observations retain their
-specific scope. The latest user-tested ZIP predates only removal of temporary
-menu debug calls; it is not a new upstream integration build.
+specific scope. The earlier user-tested season-menu ZIP predates debug-call
+removal and the later updater/Multiplayer edits. The latest local 1.2.0 package
+has build/package evidence, not a completed upstream integration playthrough.
 
 ## 7. Acceptance still owned by integration
 

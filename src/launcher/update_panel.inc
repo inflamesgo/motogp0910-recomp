@@ -13,12 +13,14 @@
   std::atomic<uint64_t> update_received{0},update_total{0};
   bool update_finishing=false,update_busy=false,update_preparing=false,update_handoff=false,update_open=false;
   bool update_preview=false;
+  bool update_progress_animating=false;
   std::vector<std::pair<HWND,bool>> update_disabled_controls;
   int update_panel_height=0,update_animation_from=0;
   ULONGLONG update_animation_start=0;
   static constexpr int kUpdateWidth=390,kUpdateHeight=360,kUpdateNotesY=58,kUpdateNotesHeight=240,kUpdateActionY=310;
 
   void StopUpdates(){
+    KillTimer(window,11);update_progress_animating=false;
     update_cancelled=true;
     if(update_check.valid())update_check.wait();
     if(update_download.valid()){
@@ -95,6 +97,34 @@
     }
     if(focused){InflateRect(&bounds,-S(3),-S(3));DrawFocusRect(dc,&bounds);}
   }
+  void DrawUpdateProgress(HDC dc,RECT bounds){
+    if(!update_busy)return;
+    InflateRect(&bounds,-S(1),-S(1));
+    const int width=std::max<LONG>(0,bounds.right-bounds.left);
+    if(!width)return;
+    const auto total=update_total.load(),received=update_received.load();
+    RECT fill=bounds;
+    if(total){
+      const auto fraction=std::clamp(static_cast<double>(received)/total,0.0,1.0);
+      fill.right=fill.left+static_cast<int>(width*fraction);
+    }else{
+      // No reliable aggregate length: animate a bounded segment instead of
+      // inventing a percentage (including metadata and helper preparation).
+      const int segment=std::max(S(24),width/3);
+      const double phase=(GetTickCount64()%1800)/1800.0;
+      fill.left=bounds.left-segment+static_cast<int>((width+segment)*phase);
+      fill.right=fill.left+segment;
+    }
+    const auto saved=SaveDC(dc);
+    if(!saved)return;
+    auto clip=CreateRoundRectRgn(bounds.left,bounds.top,bounds.right+1,bounds.bottom+1,S(8),S(8));
+    if(!clip){RestoreDC(dc,saved);return;}
+    ExtSelectClipRgn(dc,clip,RGN_AND);DeleteObject(clip);
+    auto brush=CreateSolidBrush(RGB(113,58,27));FillRect(dc,&fill,brush);DeleteObject(brush);
+    fill.top=std::max<LONG>(fill.top,fill.bottom-S(3));
+    brush=CreateSolidBrush(kAccent);FillRect(dc,&fill,brush);DeleteObject(brush);
+    RestoreDC(dc,saved);
+  }
   static LRESULT CALLBACK UpdateCloseProc(HWND control,UINT message,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_PTR data){
     auto& app=*reinterpret_cast<App*>(data);
     if(message==WM_SETCURSOR&&LOWORD(lp)==HTCLIENT){SetCursor(LoadCursorW(nullptr,IDC_HAND));return TRUE;}
@@ -110,11 +140,21 @@
     RefreshSteam();
     RefreshDlc();
     if(!update_panel||!update_release)return;
+    const bool animate=update_busy&&update_open;
+    if(animate&&!update_progress_animating)update_progress_animating=SetTimer(window,11,33,nullptr)!=0;
+    else if(!animate&&update_progress_animating){KillTimer(window,11);update_progress_animating=false;}
     SetWindowTextW(update_notice,T(L"Launcher update",L"Launcher güncellemesi"));
     SetWindowTextW(update_close,T(L"Close update panel",L"Güncelleme panelini kapat"));
     Tip(update_close,L"Close update panel",L"Güncelleme panelini kapat");
     auto notes=update_release->NotesFor(turkish?"tr":"en");
     if(notes.empty())notes=turkish?"Bu sürüm için değişiklik notu yok.":"No release notes for this version.";
+    if(!update_release->publisher.empty()){
+      std::string source=(turkish?"Kaynak: ":"Source: ")+update_release->publisher;
+      if(update_release->companion)source+=turkish?
+          "\nİki güncelleme bulundu. Uyumlu dosyalar birleştirilir; çakışmada bu sürümün tam paketi kurulur.":
+          "\nTwo updates found. Compatible files are combined; conflicts use this version's complete package.";
+      notes=source+"\n\n"+notes;
+    }
     auto wide=Wide(notes);std::wstring multiline;
     for(size_t i=0;i<wide.size();++i){if(wide[i]==L'\n'&&(i==0||wide[i-1]!=L'\r'))multiline+=L'\r';multiline+=wide[i];}
     if(Text(update_notes)!=multiline){SetWindowTextW(update_notes,multiline.c_str());SendMessageW(update_notes,EM_SETSEL,0,0);SendMessageW(update_notes,EM_LINESCROLL,0,-SendMessageW(update_notes,EM_GETFIRSTVISIBLELINE,0,0));}
@@ -134,6 +174,7 @@
     EnableWindow(play,game_ready&&!dlc_busy&&!steam_busy&&!update_finishing&&!update_busy&&!process&&!verifying&&!importing_iso);
     LayoutUpdatePanel();
     InvalidateRect(update_panel,nullptr,FALSE);
+    if(update_busy)InvalidateRect(update_action,nullptr,FALSE);
   }
   std::array<int,3> UpdateScrollState()const{
     RECT text{};SendMessageW(update_notes,EM_GETRECT,0,reinterpret_cast<LPARAM>(&text));
@@ -222,7 +263,7 @@
     int count=0;auto arguments=CommandLineToArgvW(GetCommandLineW(),&count);
     if(arguments){for(int i=1;i<count;++i)if(std::wstring_view(arguments[i])==L"--preview-update")update_preview=true;LocalFree(arguments);}
     if(update_preview){
-      update_release=updates::Release{"1.1.11",{}, {},{
+      update_release=updates::Release{updates::kConfiguration.current_version,{}, {},{
           {"en","UPDATE PREVIEW\n\nSample release notes\n\n• Updated launcher interface.\n• Improved controller and focus handling.\n• Added ISO import and clearer title-update warnings.\n\nThis is a visual preview. No update is downloaded or installed."},
           {"tr","GÜNCELLEME ÖNİZLEMESİ\n\nÖrnek değişiklik notları\n\n• Launcher arayüzü güncellendi.\n• Kontrolcü ve odak geçişleri iyileştirildi.\n• ISO çıkarma ve belirgin oyun güncellemesi uyarıları eklendi.\n\nBu görsel bir önizlemedir. Güncelleme indirilmez veya kurulmaz."}}};
       ShowWindow(update_notice,SW_SHOWNOACTIVATE);RefreshUpdatePanel();return;
@@ -242,8 +283,19 @@
     }
     if(!update_release||update_finishing||update_busy||importing_iso||verifying||UpdateGameRunning()||!update_release->CanInstall())return;
     update_cancelled=false;update_received=0;update_total=0;update_busy=true;RefreshUpdatePanel();
-    const auto release=*update_release;
-    try{update_download=std::async(std::launch::async,[this,release]{return updates::DownloadVerified(updates::kConfiguration,release,&update_cancelled,[this](uint64_t received,uint64_t total){update_received=received;update_total=total;});});}
+    const auto offered=*update_release;
+    try{update_download=std::async(std::launch::async,[this,offered]{
+      // Recheck both publishers before every installation attempt. A stale
+      // notification must not suppress a release published since startup.
+      auto fresh=updates::CheckForUpdate(updates::kConfiguration,&update_cancelled);
+      if(fresh.status!=updates::CheckStatus::Available||!fresh.release)
+        throw std::runtime_error(fresh.status==updates::CheckStatus::Cancelled?"Update cancelled":
+            fresh.status==updates::CheckStatus::Failed?fresh.error:"The update offer changed. Restart the launcher to check again");
+      if(updates::IsNewer(offered.version,fresh.release->version))
+        throw std::runtime_error("The previously offered newer release is unavailable. Try again later");
+      return updates::DownloadVerified(updates::kConfiguration,*fresh.release,&update_cancelled,
+          [this](uint64_t received,uint64_t total){update_received=received;update_total=total;});
+    });}
     catch(...){update_busy=false;RefreshUpdatePanel();throw;}
   }
   void PollUpdates(){
@@ -255,11 +307,12 @@
       if(update_check.valid()&&update_check.wait_for(std::chrono::seconds(0))==std::future_status::ready){
         auto result=update_check.get();
         if(result.status==updates::CheckStatus::Available){update_release=std::move(result.release);ShowWindow(update_notice,SW_SHOW);LayoutUpdatePanel();}
-        // Startup errors are quiet. No timer retries or button-triggered checks.
+        // Startup errors are quiet; Update now rechecks both publishers.
         if(!update_release&&!update_finishing){KillTimer(window,4);return;}
       }
       if(update_download.valid()&&update_download.wait_for(std::chrono::seconds(0))==std::future_status::ready){
         update_staged=update_download.get();
+        update_release=update_staged->release;
         if(update_cancelled){updates::DiscardStaged(*update_staged);update_staged.reset();update_busy=false;}
         else{
           if(UpdateGameRunning())throw std::runtime_error("Close the game before installing this update");

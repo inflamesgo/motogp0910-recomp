@@ -4,6 +4,7 @@
 #include "../../third_party/nlohmann/json.hpp"
 #include <chrono>
 #include <exception>
+#include <map>
 #include <set>
 #include <vector>
 
@@ -64,31 +65,6 @@ try {
 )PS";
 
 bool turkish=false,installation_authorized=false;
-HWND progress_window{};
-std::wstring progress_text;
-LRESULT CALLBACK ProgressProc(HWND window,UINT message,WPARAM wp,LPARAM lp){
-  if(message==WM_CLOSE)return 0;
-  if(message==WM_PAINT){
-    PAINTSTRUCT ps;auto dc=BeginPaint(window,&ps);RECT r;GetClientRect(window,&r);
-    SetDCBrushColor(dc,RGB(23,26,33));FillRect(dc,&r,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
-    RECT line{0,0,r.right,3};SetDCBrushColor(dc,RGB(255,106,19));FillRect(dc,&line,static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
-    SetBkMode(dc,TRANSPARENT);SetTextColor(dc,RGB(242,244,247));auto font=CreateFontW(-17,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
-    auto old=SelectObject(dc,font);r.left+=24;r.right-=24;DrawTextW(dc,progress_text.c_str(),-1,&r,DT_CENTER|DT_VCENTER|DT_SINGLELINE|DT_NOPREFIX);
-    SelectObject(dc,old);DeleteObject(font);EndPaint(window,&ps);return 0;
-  }
-  return DefWindowProcW(window,message,wp,lp);
-}
-void Progress(std::wstring text){
-  progress_text=std::move(text);
-  if(!progress_window){
-    WNDCLASSW cls{};cls.hInstance=GetModuleHandleW(nullptr);cls.lpfnWndProc=ProgressProc;cls.lpszClassName=L"MotoGPUpdateInstaller";cls.hCursor=LoadCursorW(nullptr,IDC_WAIT);RegisterClassW(&cls);
-    RECT work{};SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
-    progress_window=CreateWindowExW(WS_EX_TOPMOST,cls.lpszClassName,L"MotoGP 09/10",WS_POPUP|WS_BORDER,(work.left+work.right-440)/2,(work.top+work.bottom-110)/2,440,110,nullptr,nullptr,cls.hInstance,nullptr);
-    ShowWindow(progress_window,SW_SHOWNOACTIVATE);
-  }
-  InvalidateRect(progress_window,nullptr,FALSE);UpdateWindow(progress_window);
-  MSG msg;while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);}
-}
 void NoLinks(const fs::path& path){
   for(auto current=path;!current.empty();){
     auto attributes=GetFileAttributesW(current.c_str());
@@ -109,35 +85,95 @@ bool PackageOwned(const fs::path& relative){
       L"bin/gamecontrollerdb.txt",L"bin/runtime-manifest.json"};
   if(binaries.contains(name))return true;
   if(name==L"resources/controller/ps3-controls.bin"||name==L"resources/controller/ps3-controls.json"||name==L"resources/controller/ps3-prompts.bin"||name==L"resources/controller/ps3-prompts.json")return true;
-  if(name==L"resources/localization/tr/manifest.json"||name==L"resources/ui/opensans-semibold.ttf")return true;
+  if(name==L"resources/localization/tr/manifest.json"||name==L"resources/ui/opensans-semibold.ttf"||
+      name==L"resources/ui/opensans-regular.ttf"||name==L"resources/ui/opensans-bold.ttf")return true;
+  if(name==L"resources/hud/motogp17/gauge.json"||name==L"resources/hud/motogp06/gauge.json"||
+      name==L"resources/hud/motogpurt2/gauge.json"||name==L"resources/hud/motogpurt3/gauge.json")return true;
   if(name==L"resources/archive/7z.exe"||name==L"resources/archive/7z.dll"||name==L"resources/archive/7zip-source.tar.xz")return true;
   if(name==L"resources/steam/icon.png"||name==L"resources/steam/logo.png"||name==L"resources/steam/banner.png"||name==L"resources/steam/cover.png"||name==L"resources/steam/wide.png")return true;
   return name.starts_with(L"resources/localization/tr/overlay/")&&(name.ends_with(L".font")||name.ends_with(L".lua")||name.ends_with(L".msg"));
 }
 struct File {fs::path relative;bool existed=false;bool attempted=false;};
 void RetryCopy(const fs::path& from,const fs::path& to){
-  for(int attempt=0;attempt<20;++attempt){if(CopyFileW(from.c_str(),to.c_str(),FALSE))return;if(progress_window)Progress(progress_text);Sleep(250);}
+  for(int attempt=0;attempt<20;++attempt){if(CopyFileW(from.c_str(),to.c_str(),FALSE))return;Sleep(250);}
   throw std::runtime_error("Cannot copy update file. Check permissions, free space and running applications");
 }
 void AtomicCopy(const fs::path& from,const fs::path& to,const fs::path& scratch){
   NoLinks(to);fs::create_directories(to.parent_path());NoLinks(to.parent_path());RetryCopy(from,scratch);
   {Handle file(CreateFileW(scratch.c_str(),GENERIC_WRITE,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr));
     if(file.value==INVALID_HANDLE_VALUE||!FlushFileBuffers(file.value))throw std::runtime_error("Cannot flush update file");}
-  for(int attempt=0;attempt<20;++attempt){if(MoveFileExW(scratch.c_str(),to.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))return;if(progress_window)Progress(progress_text);Sleep(250);}
+  for(int attempt=0;attempt<20;++attempt){if(MoveFileExW(scratch.c_str(),to.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))return;Sleep(250);}
   throw std::runtime_error("Cannot replace update file. The previous version will be restored");
 }
-void Extract(const fs::path& stage,HANDLE cancel,std::wstring_view cancel_name){
+void Extract(const fs::path& stage,HANDLE cancel,std::wstring_view cancel_name,
+             const wchar_t* archive=L"update.zip",const wchar_t* output=L"files"){
   const auto script=stage/kExtractScript;
   {std::ofstream output(script,std::ios::binary);output<<kExtract;output.close();if(!output)throw std::runtime_error("Cannot prepare ZIP extraction");}
   std::array<wchar_t,32768> buffer{};const auto count=GetSystemDirectoryW(buffer.data(),static_cast<UINT>(buffer.size()));
   if(!count||count>=buffer.size())throw std::runtime_error("Cannot locate Windows PowerShell");
   auto powershell=fs::path(buffer.data())/L"WindowsPowerShell/v1.0/powershell.exe";
-  auto child=Spawn(powershell,L"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "+Quote(script.wstring())+L" -Archive "+Quote((stage/L"update.zip").wstring())+L" -Destination "+Quote((stage/L"files").wstring())+L" -CancelName "+Quote(cancel_name),stage);
+  auto child=Spawn(powershell,L"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "+Quote(script.wstring())+L" -Archive "+Quote((stage/archive).wstring())+L" -Destination "+Quote((stage/output).wstring())+L" -CancelName "+Quote(cancel_name),stage);
   const auto deadline=GetTickCount64()+150000;
   while(WaitForSingleObject(child.value,100)==WAIT_TIMEOUT){
     if(WaitForSingleObject(cancel,0)==WAIT_OBJECT_0||GetTickCount64()>deadline){TerminateProcess(child.value,1);WaitForSingleObject(child.value,5000);throw std::runtime_error("Update extraction cancelled or timed out");}
   }
   DWORD code{};if(!GetExitCodeProcess(child.value,&code)||code)throw std::runtime_error("Could not extract update ZIP. The archive is invalid or Windows PowerShell is unavailable");
+}
+fs::path PayloadRoot(fs::path payload){
+  if(!fs::is_regular_file(payload/kLauncher)){
+    std::vector<fs::path> children;for(auto& entry:fs::directory_iterator(payload))children.push_back(entry.path());
+    if(children.size()!=1||!fs::is_directory(children[0]))throw std::runtime_error("ZIP does not contain a MotoGP release");
+    payload=children[0];
+  }
+  for(const auto* required:{kLauncher,L"bin/motogp0910-ui.dll",L"bin/motogp0910.exe",L"bin/motogp0910-update-helper.exe",L"bin/rexruntime.dll",L"bin/rexgpu-xenos.dll",L"bin/amd_fidelityfx_dx12.dll",L"bin/msvcp140.dll",L"bin/msvcp140_atomic_wait.dll",L"bin/vcruntime140.dll",L"bin/vcruntime140_1.dll"})
+    if(!fs::is_regular_file(payload/required))throw std::runtime_error("Update ZIP is missing required MotoGP program files");
+  return payload;
+}
+struct PayloadFile {fs::path relative,path;std::string hash;};
+using PayloadIndex=std::map<std::wstring,PayloadFile>;
+PayloadIndex IndexPayload(const fs::path& root,HANDLE cancel){
+  PayloadIndex result;
+  for(const auto& entry:fs::recursive_directory_iterator(root)){
+    if(WaitForSingleObject(cancel,0)==WAIT_OBJECT_0)throw std::runtime_error("Update cancelled");
+    NoLinks(entry.path());if(entry.is_directory())continue;
+    const auto relative=entry.path().lexically_relative(root);
+    if(!PackageOwned(relative))continue;
+    if(!entry.is_regular_file())throw std::runtime_error("Invalid update payload file");
+    const auto key=Fold(relative.generic_wstring());
+    if(!result.emplace(key,PayloadFile{relative,entry.path(),FileHash(entry.path())}).second)
+      throw std::runtime_error("Duplicate update payload file");
+  }
+  return result;
+}
+bool BinaryPath(const fs::path& path){
+  const auto extension=Fold(path.extension().wstring());return extension==L".exe"||extension==L".dll";
+}
+bool MergeCompanion(const fs::path& primary,const fs::path& companion,HANDLE cancel){
+  const auto a=IndexPayload(primary,cancel),b=IndexPayload(companion,cancel);
+  // No binary patching and no last-writer-wins overlay. The complete executable
+  // and DLL sets must be identical; EVERY common app-owned file must match.
+  // Otherwise retain primary, already selected as the higher full release.
+  for(const auto& [key,file]:a){
+    const auto found=b.find(key);
+    if(found==b.end()){if(BinaryPath(file.relative))return false;}
+    else if(file.hash!=found->second.hash)return false;
+  }
+  for(const auto& [key,file]:b){
+    if(a.contains(key))continue;
+    if(BinaryPath(file.relative)||fs::exists(primary/file.relative))return false;
+    for(auto parent=file.relative.parent_path();!parent.empty();parent=parent.parent_path())
+      if(fs::exists(primary/parent)&&!fs::is_directory(primary/parent))return false;
+  }
+  // Only stage the union after the whole comparison passes. Installed files
+  // still go through the same protection, backup and rollback transaction.
+  for(const auto& [key,file]:b)if(!a.contains(key)){
+    if(WaitForSingleObject(cancel,0)==WAIT_OBJECT_0)throw std::runtime_error("Update cancelled");
+    const auto destination=primary/file.relative;NoLinks(destination);
+    fs::create_directories(destination.parent_path());NoLinks(destination.parent_path());
+    if(!CopyFileW(file.path.c_str(),destination.c_str(),TRUE)||FileHash(destination)!=file.hash)
+      throw std::runtime_error("Cannot prepare merged update resources");
+  }
+  return true;
 }
 struct Restart {
   Handle process;
@@ -160,13 +196,13 @@ bool Healthy(Restart& restart){
     const auto status=WaitForMultipleObjects(2,handles,FALSE,100);
     if(status==WAIT_OBJECT_0){acknowledged=true;break;}
     if(status!=WAIT_TIMEOUT)return false;
-    if(progress_window)Progress(progress_text);
+
   }
   if(!acknowledged)return false;
   const auto stable=GetTickCount64()+2000;
   while(GetTickCount64()<stable){
     if(WaitForSingleObject(restart.process.value,100)!=WAIT_TIMEOUT)return false;
-    if(progress_window)Progress(progress_text);
+
   }
   return true;
 }
@@ -189,6 +225,7 @@ void Install(const fs::path& job_path){
   NoLinks(stage);
   if(job_path.filename()!=L"install.json"||fs::file_size(job_path)>65536)throw std::runtime_error("Invalid update job");
   std::ifstream input(job_path);const auto job=nlohmann::json::parse(input);
+  if(job.contains("protocol")&&job.at("protocol").get<int>()!=2)throw std::runtime_error("Unsupported update job protocol");
   auto root=fs::canonical(fs::path(WideText(job.at("root").get<std::string>())));NoLinks(root);
   if(!fs::is_regular_file(root/kLauncher))throw std::runtime_error("Installed launcher not found");
   turkish=job.at("turkish").get<bool>();
@@ -205,14 +242,14 @@ void Install(const fs::path& job_path){
       ((static_cast<uint64_t>(created.dwHighDateTime)<<32)|created.dwLowDateTime)!=job.at("parent_created").get<uint64_t>())throw std::runtime_error("Original launcher identity changed");
   if(FileHash(stage/L"update.zip")!=Utf8Text(Fold(WideText(job.at("sha256").get<std::string>()))))throw std::runtime_error("Update ZIP checksum mismatch");
   Extract(stage,cancel.value,EventName(token,L"cancel"));
-  auto payload=stage/L"files";
-  if(!fs::is_regular_file(payload/kLauncher)){
-    std::vector<fs::path> children;for(auto& entry:fs::directory_iterator(payload))children.push_back(entry.path());
-    if(children.size()!=1||!fs::is_directory(children[0]))throw std::runtime_error("ZIP does not contain a MotoGP release");
-    payload=children[0];
+  auto payload=PayloadRoot(stage/L"files");
+  bool merged=false;
+  if(job.contains("companion_sha256")){
+    if(FileHash(stage/L"companion.zip")!=Utf8Text(Fold(WideText(job.at("companion_sha256").get<std::string>()))))
+      throw std::runtime_error("Companion ZIP checksum mismatch");
+    Extract(stage,cancel.value,EventName(token,L"cancel"),L"companion.zip",L"companion-files");
+    merged=MergeCompanion(payload,PayloadRoot(stage/L"companion-files"),cancel.value);
   }
-  for(const auto* required:{kLauncher,L"bin/motogp0910-ui.dll",L"bin/motogp0910.exe",L"bin/motogp0910-update-helper.exe",L"bin/rexruntime.dll",L"bin/rexgpu-xenos.dll",L"bin/amd_fidelityfx_dx12.dll",L"bin/msvcp140.dll",L"bin/msvcp140_atomic_wait.dll",L"bin/vcruntime140.dll",L"bin/vcruntime140_1.dll"})
-    if(!fs::is_regular_file(payload/required))throw std::runtime_error("Update ZIP is missing required MotoGP program files");
   std::vector<fs::path> protected_roots;
   for(auto& item:job.at("protected"))protected_roots.emplace_back(WideText(item.get<std::string>()));
   std::vector<File> files;
@@ -243,20 +280,20 @@ void Install(const fs::path& job_path){
       journal.push_back({{"path",Utf8Text(file.relative.generic_wstring())},{"existed",file.existed}});
     }
     {std::ofstream output(backup/L"files.json");output<<journal.dump();output.close();if(!output)throw std::runtime_error("Cannot save update backup index");}
+    {std::ofstream receipt(stage/L"selection.json",std::ios::binary);
+      receipt<<nlohmann::json{{"protocol",2},{"companion_checked",job.contains("companion_sha256")},{"merged",merged}}.dump();
+      receipt.close();if(!receipt)throw std::runtime_error("Cannot acknowledge update package selection");}
     if(!SetEvent(ready.value))throw std::runtime_error("Cannot notify original launcher");
     HANDLE events[]{commit.value,cancel.value,parent.value};
     if(WaitForMultipleObjects(3,events,FALSE,60000)!=WAIT_OBJECT_0)throw std::runtime_error("Update installation was not authorized");
     installation_authorized=true;
     if(WaitForSingleObject(parent.value,30000)!=WAIT_OBJECT_0)throw std::runtime_error("Original launcher did not close; update cancelled");
     if(RunningGame(root))throw std::runtime_error("Game started before installation; update cancelled");
-    Progress(turkish?L"Güncelleme kuruluyor…":L"Installing update…");
     for(size_t i=0;i<files.size();++i){
       auto& file=files[i];file.attempted=true;modified=true;
       AtomicCopy(payload/file.relative,root/file.relative,backup/L"new"/L"replace.tmp");
       if(FileHash(root/file.relative)!=FileHash(payload/file.relative))throw std::runtime_error("Installed update file verification failed");
-      Progress(std::wstring(turkish?L"Güncelleme kuruluyor… ":L"Installing update… ")+std::to_wstring((i+1)*100/std::max<size_t>(1,files.size()))+L"%");
     }
-    Progress(turkish?L"Launcher yeniden açılıyor…":L"Restarting launcher…");
     auto restart=Launch(root,token);
     if(!Healthy(restart)){StopFailedRestart(restart);throw std::runtime_error("The updated launcher did not start successfully");}
     success=true;
@@ -265,7 +302,6 @@ void Install(const fs::path& job_path){
     // or restart fails. Game data, DLC, saves and settings are excluded.
     const auto failure=std::current_exception();
     if(modified){
-      Progress(turkish?L"Önceki sürüm geri yükleniyor…":L"Restoring previous version…");
       for(auto it=files.rbegin();it!=files.rend();++it){
         if(!it->attempted)continue;
         try{
@@ -286,20 +322,20 @@ void Install(const fs::path& job_path){
   if(success){std::error_code error;fs::remove_all(backup,error);}
   // The running helper image itself can remain in TEMP until a later cleanup;
   // remove the potentially large archive, payload, script and job now.
-  for(const auto* item:{L"files",L"update.zip",kExtractScript,L"install.json"}){std::error_code error;fs::remove_all(stage/item,error);}
+  for(const auto* item:{L"files",L"update.zip",L"companion.zip",L"companion-files",kExtractScript,L"install.json",L"selection.json"}){std::error_code error;fs::remove_all(stage/item,error);}
 }
 }
 int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int){
   int count{};auto arguments=CommandLineToArgvW(GetCommandLineW(),&count);fs::path job;
   if(arguments){if(count==2)job=arguments[1];LocalFree(arguments);}
   if(job.empty())return 1;
-  try{Install(job);if(progress_window)DestroyWindow(progress_window);return 0;}
+  try{Install(job);return 0;}
   catch(const std::exception& e){
     // Preparation errors are reported by the still-open launcher; installation
     // errors must be visible even after that launcher has exited.
     {std::ofstream output(job.parent_path()/L"error.txt",std::ios::binary);output<<e.what();}
-    if(progress_window||installation_authorized){
-      if(progress_window)DestroyWindow(progress_window);std::wstring details;
+    if(installation_authorized){
+      std::wstring details;
       try{details=WideText(e.what());}catch(...){details=L"See the updater error.txt for details.";}
       MessageBoxW(nullptr,(std::wstring(turkish?L"Güncelleme tamamlanamadı.\n":L"Update could not finish.\n")+details).c_str(),L"MotoGP 09/10",MB_OK|MB_ICONERROR);
     }

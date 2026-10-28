@@ -541,8 +541,9 @@ struct App {
     if(disabled)fill=RGB(40,43,50);
     if(GetParent(c)==update_panel)FillRect(hdc,&r,card);else DrawSurface(hdc,c);
     Rounded(hdc,r,fill,primary?fill:nav?fill:kBorder,10);
+    if(c==update_action&&update_busy)DrawUpdateProgress(hdc,r);
     if(active){RECT line{r.left,r.top+S(9),r.left+S(3),r.bottom-S(9)};auto b=CreateSolidBrush(kRed);FillRect(hdc,&line,b);DeleteObject(b);}
-    SetTextColor(hdc,disabled?kMuted:primary?kBackground:active?kAccent:kText);
+    SetTextColor(hdc,c==update_action&&update_busy?kText:disabled?kMuted:primary?kBackground:active?kAccent:kText);
     auto text=Text(c);if(nav)r.left+=S(18);
     DrawTextW(hdc,text.c_str(),-1,&r,(nav?DT_LEFT:DT_CENTER)|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
   }
@@ -805,7 +806,7 @@ LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam
     case kApplyLauncherLanguage:try{app->ApplyLanguage();}catch(const std::exception& e){app->ErrorBox(e);}return 0;
     case kDiscordInviteLaunch:app->DiscordInviteLaunch();return 0;
     case WM_CONTEXTMENU:app->BindingMenu(reinterpret_cast<HWND>(wparam),{static_cast<short>(LOWORD(lparam)),static_cast<short>(HIWORD(lparam))});return 0;
-    case WM_TIMER:if(wparam==10)app->PollDiscordLaunch();else if(wparam==9)app->PollDlc();else if(wparam==8)app->PollSteam();else if(wparam==4)app->PollUpdates();else if(wparam==5)app->AnimateUpdatePanel();else if(wparam==6)app->PollIsoImport();else if(wparam==7){KillTimer(window,7);if(!app->importing_iso&&!app->verifying)app->ReadyStatus();}else if(wparam==2)app->PollAchievements();else if(wparam==3)app->PollVerification();else app->Poll();return 0;
+    case WM_TIMER:if(wparam==11){if(app->update_busy&&app->update_open)InvalidateRect(app->update_action,nullptr,FALSE);}else if(wparam==10)app->PollDiscordLaunch();else if(wparam==9)app->PollDlc();else if(wparam==8)app->PollSteam();else if(wparam==4)app->PollUpdates();else if(wparam==5)app->AnimateUpdatePanel();else if(wparam==6)app->PollIsoImport();else if(wparam==7){KillTimer(window,7);if(!app->importing_iso&&!app->verifying)app->ReadyStatus();}else if(wparam==2)app->PollAchievements();else if(wparam==3)app->PollVerification();else app->Poll();return 0;
     case WM_DRAWITEM:{auto& draw=*reinterpret_cast<DRAWITEMSTRUCT*>(lparam);if(draw.CtlType==ODT_BUTTON)app->PaintControl(draw.hDC,draw.hwndItem,&draw);else if(draw.CtlType==ODT_COMBOBOX)app->DrawCombo(draw);
       else if(draw.CtlType==ODT_MENU)DrawPopupText(draw.hDC,draw.rcItem,reinterpret_cast<const wchar_t*>(draw.itemData),app->font,app->scale,bool(draw.itemState&ODS_SELECTED),bool(draw.itemState&(ODS_DISABLED|ODS_GRAYED)));return TRUE;}
     case WM_MEASUREITEM:{auto& measure=*reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);measure.itemHeight=app->S(32);if(measure.CtlType==ODT_MENU)measure.itemWidth=app->S(184);return TRUE;}

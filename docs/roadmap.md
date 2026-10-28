@@ -29,8 +29,9 @@ supersede the current SDK pin or [installation instructions](game-layout.md).
     PC menu cleanup and native quit confirmation.
 11. Rider License Overview/Records with Rider Rank, Tracks Held, Records Held,
     Boards Entered, selected-board map/lap/date and bounded bio/general emoji.
-12. Launcher update-service client/helper with local rollback; version 1.1.11.
-    The manifest endpoint remains empty pending operator configuration.
+12. Launcher update-service client/helper with local rollback; PR version **1.2.0**.
+    GitHub Releases and NOBK metadata are configured; final build/publication and
+    native transaction acceptance remain. See [updater contract](launcher-updates.md).
 
 ## Acceptance work still needed
 

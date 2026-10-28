@@ -14,6 +14,17 @@ service, so this report cannot certify them. Implement the
 explicit parser/proxy limits; preserve existing authentication/identity checks.
 No new security test or production audit was performed for this doc update.
 
+The later local dual-source updater preserves public credential-free HTTPS,
+archive SHA-256 checks, bounded/traversal-safe extraction, an explicit program
+path allowlist and protected data roots. It requires identical overlapping
+files and complete EXE/DLL sets before a resource union; conflicts use the
+higher complete release. A matching-helper receipt precedes authorization;
+backup/restart/handled-failure rollback remains in place. These source controls
+are not a new security certification or an executed update transaction. Follow
+the publication contract and disposable Windows acceptance cases in
+[launcher updates](launcher-updates.md). Do not put tokens, profiles, original
+game data or user configuration into either publisher's package.
+
 Scope: the Python control API, authenticated UDP relay, SQLite identity/stats,
 Windows control/UDP client, protocol transitions, packaging and the supplied
 Linux/Windows deployment instructions. This was a source review plus bounded

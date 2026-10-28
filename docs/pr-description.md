@@ -1,80 +1,82 @@
 ## Changes
 
-Add four selectable custom gauges (MotoGP 17, MotoGP 06, URT2 and URT3),
-including the converted resources, settings and URT2 shift-light refinements.
-Update the Apex NOBK.FRIENDS panel, startup strip, achievements and compact
-pit-board notifications, with controller hints and the related control/layout fixes.
-
-Add native NOBK and Discord lobby invitation source. F1 provides explicit
-accept/decline actions and per-friend sending/sent/retry feedback; incoming
-invitations share the friend-online card's size and theme. Keep the native
-session join authority and the separate authenticated invitation workers.
-Discord activity also includes the updated circuit/mode/rider presentation
-and launcher-first activation for closed-game invitations.
-
-Separate native leaderboard browsing into **2009 SEASON** and **2010 SEASON**:
+Prepare launcher **1.2.0** with four selectable custom gauges, the Apex friends
+panel and compact pit-board notifications, native/Discord lobby invitations,
+and separate 2009/2010 native leaderboard browsing. Preserve Offline/LAN, F1
+(or held Back/Select), F2 settings and the original native join authority.
 
 | Season | A | B | C |
 | --- | --- | --- | --- |
 | 2009 | MotoGP | 250cc | 125cc |
 | 2010 | MotoGP | Moto2 | 125cc |
 
-Preserve native transitions and one-level Back navigation, class-specific
-headings and existing class/season announcer audio. Client queries/uploads now
-carry explicit category/year identity. Include track-menu mode isolation and
-Time Trial duplicate-query handling without altering the native score units.
+Leaderboard reads/uploads carry explicit category/year identity. Native menu
+transitions, one-level Back navigation and class/season announcements are retained.
+Multiplayer's CAREER option becomes CHAMPIONSHIP with the existing Championship
+voice; single-player Career is unchanged. The gauge resources and matching
+custom runtime are included, with URT2 shift-light and input/layout refinements.
+
+Invitations have per-friend sending/sent/retry feedback and explicit accept/decline.
+Incoming invitations share the friend-online card's size/theme; Discord also
+supports launcher-first activation for closed-game invitations.
+
+The updater checks stable GitHub Releases first, then the existing NOBK manifest,
+and rechecks before installation. Compatible files can be combined only when all
+common application files and the complete EXE/DLL sets match; conflicts install
+the higher-version full package, with GitHub priority on a numeric tie. Retain
+SHA-256 checks, protected game/user paths, matching-helper acknowledgement,
+backup and rollback. Use GitHub's Release description for notes, draw progress
+inside the download button and omit normal helper-status windows. Commits alone
+do not publish updates. Game TU **0.0.1.1** and SDK/runtime pins are unchanged.
 
 ## Validation
 
-- Local Windows x64 source build and packaging checks passed with the pinned
-  SDK/custom runtime. The user confirmed both seasons, all class menu selections,
-  text, audio and repeated forward/Back navigation on Windows; their debug log
-  agrees with those paths and normal shutdown.
-- The user separately reported a working local Discord invitation, with Discord
-  displaying `Joined`. This is one scenario, not full production acceptance.
-- Temporary menu debug traces were removed after that test. This selective
-  `preview` transfer has not been rebuilt or run through a fresh full suite.
-- Existing preview history and upstream account/ranking/updater changes are
-  retained. Local validation tools, CI/workspace rules, historical ZIP changes,
-  screenshots and original game/player data are excluded.
+- Local Windows x64 cross-builds/packages passed with the pinned SDK/runtime,
+  including the latest 1.1.14/1.2.0 updater-UI pair. ZIP CRC, compiled version,
+  binaries/runtime/resources, private-data exclusions and helper imports were
+  checked. The eight later production files match that primary build source.
+- The user accepted both seasons/all class menu selections, text/audio and
+  forward/Back in the earlier Windows menu package, and separately reported
+  one working local Discord invitation (`Joined`). GitHub update discovery
+  and download/restart UI were also observed. These are scoped observations,
+  not complete production/cold-launch/rollback or latest visual acceptance.
+- The selective preview branch has not received a separate build or fresh full
+  suite. Existing target ancestry, account/ranking fixes, CI/workspace rules,
+  local tools, historical archives/screenshots and original game/player data
+  are preserved under the agreed transfer boundary.
 
 ## Integration required before public release
 
-**The most critical remaining work is the scoped leaderboard backend and the
-matching website/API/How to play update.** Current server source does not yet
-implement the new scoped stats routes/storage. The client refuses mixed legacy
-boards; the menu test's missing-capability warnings are not successful queries.
+**P0: implement scoped leaderboard storage/API and the matching website/help
+corrections.** Current server source lacks the scoped stats routes/storage;
+the client refuses mixed legacy boards. The menu test's missing-capability
+warnings are not successful record queries.
 
-- Implement scoped storage, capability/read/write routes and conservative
-  migration; preserve player IDs and surviving records. Then verify independent
-  2009/250cc and 2010/Moto2 results for the same rider/circuit.
-- Carry season/class identity through website queries, rankings, board/rider
-  links and public consumers. Preserve the already-completed 20-track DLC
-  catalogue. Correct the old `Back + Start` instructions and verify installation
-  steps/download details against the matching final release.
-- Supply verified immutable owner/friend IDs for native NOBK invitations, deploy
-  the matching social/proxy source and check real-account send/accept/decline.
-  Discord uses a separate capability path; verify production and cold launch.
-- Ghost download is **not delivered as working replay transport/playback**.
-  The current tree contains native analysis/API planning. ChunchunQ must implement
-  or recover transport and complete native format/task/save/playback validation
-  before enabling it. An earlier synthetic transport success is not native replay.
-- Before publishing, bump the launcher's source version in
-  `src/launcher/updates.h::kConfiguration.current_version` above the currently
-  published release (this source baseline is 1.1.12), then rebuild. Use that
-  same version in the MotoGP update manifest, release notes and website download
-  label, with the actual final ZIP URL, size and SHA-256. Changing only the
-  manifest leaves the installed binary reporting the old version.
+- Implement the scoped capability/read/write and migration contract, preserving
+  player IDs/records. Verify independent 2009/250cc and 2010/Moto2 records for
+  the same rider/circuit; carry scope through rankings, links and public consumers.
+- Complete the website checklist: accurate setup cards, no required Verify step,
+  Multiplayer → Online → race type → lobby, held Back/Select, both-season About
+  copy and named TU/three DLC prerequisites. Preserve the existing 20-track work.
+- Supply verified immutable friend IDs for native invitations, deploy the
+  matching social/proxy modules and verify real-account accept/decline/join.
+  Discord has separate capability requirements; verify production/cold launch.
+- **Ghost transfer/playback is not implemented here.** Native analysis/API
+  planning is supplied; transport and native task/save/playback integration
+  still belong to the recipient. Do not advertise it as working meanwhile.
+- Build the final integrated **1.2.0** launcher/helper and publish matching
+  **v1.2.0** package/hash/manifest/site details. Both publishers must retain
+  this updater and coordinate increasing product versions. Verify installation,
+  conflict fallback and rollback before public delivery.
 
-Operator read order:
+Read first:
 
 1. [Master handoff](https://github.com/inflamesgo/motogp0910-recomp/blob/preview/docs/chunchunq-handoff.md).
 2. [Scoped leaderboard contract](https://github.com/inflamesgo/motogp0910-recomp/blob/preview/docs/leaderboard-season-integration.md).
-3. [Critical website and setup checklist](https://github.com/inflamesgo/motogp0910-recomp/blob/preview/docs/website-release-checklist.md).
-4. [Invitations and ghost ownership](https://github.com/inflamesgo/motogp0910-recomp/blob/preview/docs/chunchunq-friends-invites-ghost-handoff.md).
+3. [Critical website checklist](https://github.com/inflamesgo/motogp0910-recomp/blob/preview/docs/website-release-checklist.md).
+4. [Invitations and ghosts](https://github.com/inflamesgo/motogp0910-recomp/blob/preview/docs/chunchunq-friends-invites-ghost-handoff.md).
+5. [Release readiness and ownership](https://github.com/inflamesgo/motogp0910-recomp/blob/preview/docs/release-readiness.md).
 
-No production service/database/site changes, release publication or real updater
-transaction are claimed by this source transfer. Source currently reports
-1.1.12; the operator must perform the release version bump described above.
-The MotoGP manifest is already configured. The final integrated branch needs
-its own Windows build and the remaining native/service acceptance checks.
+No production service/database/site modification, release publication or merge
+is performed by this source PR. Windows/Linux Release automation remains
+explicitly deferred until the replacement repository is created.

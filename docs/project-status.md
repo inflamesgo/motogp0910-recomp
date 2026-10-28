@@ -6,9 +6,13 @@ this documentation update does not merge main or change application code. Older 
 reports retain their original evidence; they do not replace current build pins,
 installation instructions or validation limits.
 
+Current release target: **1.2.0**. The earlier evidence below retains its dated
+scope; see [current handoff](chunchunq-handoff.md) and
+[remaining work](release-readiness.md).
+
 ## Platform and delivery
 
-Windows 10/11 x64 is the product target. Launcher **1.1.11** and the supported
+Windows 10/11 x64 is the product target. Prepared PR launcher **1.2.0** (local test build passed; not published here) and the supported
 game title update **0.0.1.1** have independent versions. ReXGlue is pinned to
 `0.10.0.24-dev.gbd833a2` (`bd833a2ab69d305f99ddf57418fc38ffec8af93d`) in
 `sdk-version.json`, with the matching custom DLLs in the runtime manifest.

@@ -1,15 +1,22 @@
 # PR preparation and transfer manifest — 28 October 2026
 
-Source anchor: `inflamesgo:main` at `28ba765`. Target branch observed on
-28 October: `ChunchunQ:nobk-online` at
-`c432d67ffb95a2c9383493b9a8c7a723b9ed52b0`. The documentation review itself changed Markdown only. The user then explicitly
-requested a selective commit/push to the existing `preview` branch. Its old
-`d788d0c` history is preserved and fast-forwarded through the target tip before
-the feature transfer; no PR opening, new build or deployment is authorized.
+Source baseline: `inflamesgo:main` at `28ba765`, with the later production
+changes listed below. Delivery is `inflamesgo:preview` →
+`ChunchunQ:nobk-online`. The target was rechecked on 28 October at
+`c432d67ffb95a2c9383493b9a8c7a723b9ed52b0`. Existing preview history through
+`d788d0c`, the target ancestry and earlier feature/documentation commits are
+preserved. The user authorized the final document check, preview commit/push
+and PR creation. No merge, production deployment or new build is included.
 
 ## Proposed title
 
-`feat(port): add custom gauges, invitations and season leaderboards`
+`feat(port): add gauges, invitations, season leaderboards and dual-source updates`
+
+This revision includes the dual-source updater, Multiplayer CHAMPIONSHIP
+text/audio, website notes and approved **1.2.0** version. Local 1.1.14/1.2.0
+updater-UI test packages were built from the matching primary source tree;
+the selective preview branch itself has not received a separate build or broad
+native acceptance. Publication uses the reviewed source and the body below.
 
 The copy-ready body is [pr-description.md](pr-description.md). Paste that file
 into the PR description; this document is the dependency/review reference.
@@ -54,6 +61,10 @@ source tree, not native recording transfer/save/playback. See the handoff links.
   and [ghost design](ghost-download-plan.md).
 - [Menu evidence and package](leaderboard-menu-recovery.md), [panel maintenance map](nobk-panel.md),
   [gauge dependencies](classic-gauges.md) and [DLC catalogue](online-dlc-catalog.json).
+- [Dual-source publication/installation contract](launcher-updates.md),
+  [native menu scope](pc-menu-cleanup.md) and
+  [How to play design comparison](how-to-play-design-review.md).
+- [Remaining work and ownership for 1.2.0](release-readiness.md).
 
 ## Source dependency manifest
 
@@ -65,6 +76,8 @@ Do not copy the entire local `main` branch merely to obtain the latest hooks.
 | Area | Source/resources that must stay together |
 | --- | --- |
 | Season leaderboard | `src/leaderboard_categories.*`, `leaderboard_categories_hooks.cpp`, `leaderboard_scope_capture.*`, `leaderboard_scope_hooks.cpp`; scoped `online/client.*`, `online/stats.*`, `online/leaderboard_display.cpp`; observer/label/init hooks in `local_splitscreen.cpp`, `options_menu.cpp`, `motogp0910_app.h`; CMake category library and hook sources |
+| Dual-source updater | `src/launcher/updates.h`, `updates.cpp`, `update_panel.inc`, `main.cpp` button/timer painting, `update_install.cpp`, `update_helper.cpp`, existing `update_protocol.h`; keep the launcher/helper pair and package-owned gauge/font paths together |
+| Multiplayer CHAMPIONSHIP | Scoped label in `src/options_menu.cpp`, scoped native audio in `leaderboard_categories_hooks.cpp`; no native bank or asset replacement |
 | Native invitations | `src/online/social.*`, `social_guest.*`, `social_codec.h`; relevant `lan/runtime.cpp` / `guest_bridge.cpp` wiring; `server/social.py`, `community_server.py`, `security.py`, `Caddyfile.example`, `test_social.py`; CMake library/Windows links |
 | Discord | `src/discord/*`, `discord_presence.*`, `online/discord_invites.*`; launcher activation/configuration handling and app lifecycle; `server/discord_invites.py` / social dispatch and `test_discord_invites.py`; existing presence assets/notices |
 | Apex panel and notifications | `src/nobk_panel.*`, `nobk_panel_visuals.h`, `nobk_startup_strip.h`, `nobk_friend_toast.h`; app fonts/input gates, panel worker wiring and room-provider callback; achievement preference handling |
@@ -97,7 +110,8 @@ of local `main` is not a build of a new selective transfer branch.
 The tested package is `MotoGP0910-Windows-x64-season-input-audio-fix.zip`,
 42,659,815 bytes, SHA-256
 `1db08fdcd8571035870e0c374ddf241eddec77893f2a215a4b799f89e48bc55d`.
-It predates only removal of temporary `LEADERBOARD_MENU` traces. It contains
+It predates removal of temporary `LEADERBOARD_MENU` traces and the later local
+dual-source updater / Multiplayer CHAMPIONSHIP changes. It contains
 no original game files. It is a local test delivery, not a published release.
 
 ## Release blockers and owner actions
@@ -115,6 +129,10 @@ no original game files. It is a local test delivery, not a published release.
 4. **Ghost feature claim:** leave unsupported until native fixtures, full format
    validation and task/save/playback integration are delivered. An earlier
    synthetic transport message is not a supplied implementation in this commit.
+5. **Launcher release:** build the approved **1.2.0** source with its matching
+   launcher/helper, publish coherent **1.2.0** / **v1.2.0** GitHub/NOBK
+   metadata and perform the disposable-installation cases in the updater doc.
+   Syntax checks do not establish installation or rollback acceptance.
 
 This is suitable for a client/integration review with explicit dependent work.
 It is not a fully working Online release until these owners complete the
@@ -124,8 +142,11 @@ make the PR checklist look complete.
 
 ## Prepared preview boundary
 
-All transferred production `src/` files match main anchor `28ba765` byte for
-byte. CMake retains the production libraries, hooks, resources and links while
+The initial production transfer matched main anchor `28ba765`. This revision
+adds later changes in `src/launcher/{main.cpp,updates.h,updates.cpp,update_panel.inc,
+update_install.cpp,update_helper.cpp}`, `src/options_menu.cpp` and
+`src/leaderboard_categories_hooks.cpp`. These eight files match the latest
+primary checkout and the 1.2.0 local-build receipt. CMake retains the production libraries, hooks, resources and links while
 excluding newly added local probe targets. Existing preview `tools/`, CI,
 workspace rules, root README, historical archives and screenshots are preserved.
 The resource regeneration scripts, approved gauge JSONs and matching runtime

@@ -30,6 +30,19 @@ clamp to a remaining row. Original disc files and message banks are not rewritte
 | Custom Match | `0x82035E0C` | `7` (Premium Content), `8` (Private Slots) |
 
 The scoped Online override targets message handle `0x8288D258` (ID 731).
+The Multiplayer Online race-type selector's action 0 now displays uppercase
+**CHAMPIONSHIP** in place of Career. Only the row-builder lookup at return
+address `0x82247FA4`, handle `0x8288C6F0` (message 1, `CAREER`), in the
+`0x82039E5C` MP_MainMenu row builder is replaced; the shared language bank
+and single-player Career are unchanged. The corresponding multiplayer callback
+`0x821E5688` uses the existing main-menu Championship cue `372` in place of
+Career cue `0`, scoped to the audio call returning to `0x821E572C`. Action IDs,
+navigation, animation and gameplay mode semantics remain native. This source
+change is included in the latest local Windows build; native visual/audio
+acceptance remains outstanding.
+The cue registration in `0x821EDC68` copies `0328_championship_modeselect`
+to the 68-byte cue table at index `25296 / 68 = 372`; the main Championship
+entry `0x821F9620` plays that same index. No audio file is copied or distributed.
 Other Xbox LIVE error/help messages retain their original meaning. Offline,
 LAN and community Online implementation and service requirements are unchanged.
 

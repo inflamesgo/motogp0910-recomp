@@ -104,6 +104,10 @@ REX_HOOK_RAW(sub_82241928) {
   __imp__sub_82241928(ctx,base);
 }
 REX_HOOK_RAW(sub_821F3518) {
+  // Multiplayer's action-0 callback 821E5688 used Career cue 0 here.
+  // Reuse Championship cue 372 from the main menu's 821F9620 callback;
+  // no bank edits and no change to single-player Career or Arcade audio.
+  if(ctx.lr==0x821E572C&&ctx.r3.u32==0)ctx.r3.u64=372;
   // 821E41F8/821F7540/821F8E10 use cue 285 for the native Moto2 selection.
   // Correct the reordered rows only at this leaderboard announcement site.
   if(Online()&&ctx.lr==0x8224112C) {

@@ -34,6 +34,7 @@ namespace motogp::options {
 namespace {
 std::atomic<uint32_t> online_label{0};
 std::atomic<uint32_t> profile_label{0};
+std::atomic<uint32_t> multiplayer_championship_label{0};
 std::atomic<uint32_t> splitscreen_warning{0};
 std::atomic<uint32_t> gauge_storage{0};
 constexpr uint32_t kGaugeChoiceVtable=0x8201EEC8;
@@ -150,6 +151,10 @@ bool AppendGauge(uint8_t* base,uint32_t menu){
 void Initialize(rex::Runtime* runtime){
   const auto address=runtime->memory()->SystemHeapAlloc(8);if(!address)throw std::runtime_error("Could not allocate the PC Online label");
   std::memcpy(runtime->virtual_membase()+address,"ONLINE",7);online_label.store(address,std::memory_order_release);
+  const auto championship=runtime->memory()->SystemHeapAlloc(16);
+  if(!championship)throw std::runtime_error("Could not allocate the multiplayer Championship label");
+  std::memcpy(runtime->virtual_membase()+championship,"CHAMPIONSHIP",13);
+  multiplayer_championship_label.store(championship,std::memory_order_release);
   const bool tr=rex::cvar::Query<std::string>("game_text_language")=="turkish";
   const char* profile=tr?"Profili incele":"View profile";
   const auto profile_address=runtime->memory()->SystemHeapAlloc(32);
@@ -237,6 +242,10 @@ REX_HOOK_RAW(sub_8224D130){const auto menu=ctx.r3.u32;__imp__sub_8224D130(ctx,ba
   }
 }
 REX_HOOK_RAW(sub_826EDB38){const auto label=motogp::options::OnlineLabel();
+  // Only action 0's label lookup in MP_MainMenu's row builder (82247EE0).
+  // Keep the shared Career bank entry, single-player menu and mode IDs intact.
+  const auto championship=motogp::options::multiplayer_championship_label.load(std::memory_order_acquire);
+  if(championship&&ctx.lr==0x82247FA4&&ctx.r3.u32==0x8288C6F0){ctx.r3.u64=championship;return;}
   if(const auto category=motogp::online::categories::Label(ctx.r3.u32)){ctx.r3.u64=category;return;}
   if(label&&ctx.r3.u32==motogp::options::kOnlineHandle&&motogp::options::Read(base,ctx.r3.u32)==731){ctx.r3.u64=label;return;}
   if(const auto gauge=motogp::options::GaugeLabel(ctx.r3.u32)){ctx.r3.u64=gauge;return;}

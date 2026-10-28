@@ -16,15 +16,27 @@ struct Configuration {
   // Same version endpoint contract as FIFA 09's Updater.VersionUrl.
   // The request appends ?v=major.minor.patch (or &v= after an existing query).
   std::wstring manifest_url;
+  // Published stable GitHub Releases only. Empty preserves a single-source
+  // configuration, including operator/private test configurations.
+  std::wstring github_releases_url;
 };
 
 // Approved launcher release version. MotoGP-specific manifest on the NOBK site
 // (static file next to the package in /downloads/motogp/, FIFA 09's fields).
-inline const Configuration kConfiguration{"1.1.12", L"https://nobkonline.com/downloads/motogp/version.json"};
+inline const Configuration kConfiguration{"1.2.0", L"https://nobkonline.com/downloads/motogp/version.json",
+    L"https://api.github.com/repos/inflamesgo/motogp0910-recomp/releases?per_page=20"};
+
+struct Package {
+  std::string version, url, sha256;
+};
 
 struct Release {
   std::string version, url, sha256;
   std::map<std::string, std::string> notes;
+  std::string publisher;
+  // Primary is always the higher version (GitHub wins a numeric tie). The
+  // helper may union a companion only after comparing actual extracted files.
+  std::optional<Package> companion;
   std::string NotesFor(std::string_view language) const;
   bool CanInstall() const;
 };
@@ -38,6 +50,7 @@ struct CheckResult {
 struct StagedUpdate {
   Release release;
   std::filesystem::path directory, archive;
+  std::filesystem::path companion_archive;
 };
 using Progress = std::function<void(uint64_t received, uint64_t total)>;
 

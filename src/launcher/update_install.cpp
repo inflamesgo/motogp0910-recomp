@@ -44,8 +44,14 @@ std::unique_ptr<Installation> PrepareInstallation(const StagedUpdate& staged,
   if(!fs::is_regular_file(helper_source))throw std::runtime_error("Update helper is missing. Extract the complete package");
   // Recheck the archive before handing it to a separate process.
   if(FileHash(staged.archive)!=Utf8Text(Fold(WideText(staged.release.sha256))))throw std::runtime_error("Update archive changed after download");
-  nlohmann::json job{{"root",Utf8Text(fs::canonical(root).wstring())},{"sha256",staged.release.sha256},
+  nlohmann::json job{{"protocol",2},{"root",Utf8Text(fs::canonical(root).wstring())},{"sha256",staged.release.sha256},
       {"parent",GetCurrentProcessId()},{"turkish",turkish},{"protected",nlohmann::json::array()}};
+  if(staged.release.companion){
+    if(staged.companion_archive!=staged.directory/L"companion.zip"||
+        FileHash(staged.companion_archive)!=Utf8Text(Fold(WideText(staged.release.companion->sha256))))
+      throw std::runtime_error("Companion update archive changed after download");
+    job["companion_sha256"]=staged.release.companion->sha256;
+  }
   FILETIME created{},exit{},kernel{},user{};
   if(!GetProcessTimes(GetCurrentProcess(),&created,&exit,&kernel,&user))throw std::runtime_error("Cannot identify current launcher");
   job["parent_created"]=(static_cast<uint64_t>(created.dwHighDateTime)<<32)|created.dwLowDateTime;
@@ -60,12 +66,22 @@ std::unique_ptr<Installation> PrepareInstallation(const StagedUpdate& staged,
   if(!ready.value||!installation->commit_||!installation->cancel_)throw std::runtime_error("Cannot initialize update handoff");
   auto helper=Spawn(helper_path,Quote(job_path.wstring()),staged.directory);
   installation->helper_=std::exchange(helper.value,nullptr);
-  const auto deadline=std::chrono::steady_clock::now()+std::chrono::minutes(3);
+  // A dual-source update can extract and compare two bounded full packages.
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::minutes(staged.release.companion?6:3);
   HANDLE handles[]{ready.value,installation->helper_};
   for(;;){
     if(cancelled&&cancelled->load())throw std::runtime_error("Update cancelled");
     const auto result=WaitForMultipleObjects(2,handles,FALSE,100);
-    if(result==WAIT_OBJECT_0)return installation;
+    if(result==WAIT_OBJECT_0){
+      const auto receipt=staged.directory/L"selection.json";
+      if(!fs::is_regular_file(receipt)||fs::file_size(receipt)>1024)
+        throw std::runtime_error("Update helper is outdated. Extract the complete matching launcher package");
+      std::ifstream input(receipt);const auto selection=nlohmann::json::parse(input);
+      if(selection.at("protocol").get<int>()!=2||
+          selection.at("companion_checked").get<bool>()!=staged.release.companion.has_value())
+        throw std::runtime_error("Update helper did not validate the expected packages");
+      return installation;
+    }
     if(result==WAIT_OBJECT_0+1){
       std::ifstream input(staged.directory/L"error.txt");std::string error((std::istreambuf_iterator<char>(input)),{});
       throw std::runtime_error(error.empty()?"Update preparation failed":error);

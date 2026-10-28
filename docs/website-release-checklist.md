@@ -28,7 +28,7 @@ Recheck at deployment because this is a dated observation.
 | Badges | `clsBadge` maps MotoGP to A, 250cc or Moto2 to B, 125cc to C | This matches the agreed season-relative letters; retain the separate class names and data identities |
 | Records and links | Board links use only `?v=<view>`; card filtering/labels have no explicit season identity | Add scope to queries, links, rendering and filters together with the backend |
 | Public board metadata | The observed response contains 55 populated boards, class labels MotoGP/250cc/125cc and no top-level season field | A point-in-time listing, not proof that no Moto2 result exists; provide explicit scoped identities, not relabelled mixed rows |
-| How to play | Correct state-dependent ISO/TU/DLC/verify sequence is already present; `Back + Start` remains | Keep the correct sequence; correct controller instructions and publish the detailed steps below |
+| How to play | ISO/TU/DLC labels match the launcher, but verification is presented as a required setup step; `Back + Start` remains | Remove verification from the normal installation steps and correct controller instructions |
 | Download copy | Page advertises 1.1.12 / 38 MB | Match the actually published release archive/version/size; do not substitute an unapproved version or a local test ZIP |
 
 The 20 artwork mappings do not by themselves validate every image/layout or
@@ -70,15 +70,19 @@ same track in native UI, public API and site; repeat across years for MotoGP and
 
 ## P0: rewrite How to play as actionable, matching-release steps
 
-The existing short sequence is substantially correct. Do not call the whole
-sequence broken or ask for nonexistent new buttons. Expand it from the current
-launcher code (`iso_import_ui.inc`, `dlc_ui.inc`, `main.cpp`) as follows, in
-English and Turkish:
+The ISO/TU/DLC import labels match the current launcher. The user explicitly
+requested removing **Verify game files** from the website's normal installation
+sequence; it is optional troubleshooting for damaged files or startup failures,
+not a prerequisite after every installation. Do not add a replacement
+troubleshooting step or explanatory verification paragraph to the public guide.
+The advertised setup flow should end at **Install DLC**. Use the following
+operator guidance in English and Turkish:
 
 1. **Prepare owned files.** Supply an Xbox 360 disc ISO, the supported TU
    0.0.1.1 package and all three free DLC packages: GP Class Season 2010 Update,
    2010 Moto2 and 125 Update, Twin Track Pack. Game/TU/DLC files are not included
-   or downloaded by the PC package. Launcher 1.1.12 is a separate version.
+   or downloaded by the PC package. The planned launcher release **1.2.0** is
+   a separate version; publish its actual final package size/hash after building.
 2. **Extract the complete PC package.** Keep launcher, `bin/`, `resources/`,
    `game/` and `dlc/` together. Open `MotoGP09-10Launcher.exe` from the root;
    do not run an isolated EXE or mix DLLs from an older release.
@@ -93,19 +97,24 @@ English and Turkish:
    supported ZIP/RAR/7z archives or extracted package folders until the inline
    missing list is empty. All three are required in Offline, LAN and Online,
    including direct EXE startup. Successful import need not open a success dialog.
-6. **Verify and choose mode.** Use **Verify game files**, then choose Online,
-   LAN or Offline on the Online page. Online is the default and requires NOBK
+6. **Choose mode.** After the required imports, choose Online, LAN or Offline
+   on the Online page. Online is the default and requires NOBK
    sign-in/PC linking. Offline/LAN require no site account. Do not promise that
    a failed Online connection automatically falls back to Offline.
 7. **Sign in for Online.** Explain Create account, Forgot password?, Remember
    me and My account. Retain the same shared NOBK account identity used by the
    other games. Records follow the linked account; display names alone do not
    prove ownership. Do not instruct users to delete profiles or saves.
-8. **Play and use the panel.** Press Play. Use Player Match to host/search/join.
-   Open NOBK.FRIENDS with **F1** by default, or hold **Back** on Xbox / **Select**
-   on PlayStation prompts. **Remove `Back + Start`**. Respect a customized panel
-   key. The startup strip and friend/invitation notifications are Online-only;
-   they are not missing features in Offline/LAN. F2 opens live settings.
+8. **Enter Online from the game's main menu.** The user-confirmed native path
+   is **Multiplayer → Online → choose the desired race type → lobby screen**.
+   Replace the old `Press Play ... choose Player Match` paragraph. Do not
+   describe a Play button in the game's main menu. State the menu names
+   exactly; do not invent Create/Search/Join submenu names without checking
+   the actual matching build. Keep lobby creation/join instructions separate
+   from the conditions for uploading leaderboard results. Open NOBK.FRIENDS
+   with **F1** by default, or hold **Back** on Xbox / **Select** on PlayStation
+   prompts. Remove `Back + Start`. Respect a customized panel key. Startup
+   and friend/invitation notifications are Online-only. F2 opens live settings.
 9. **Describe new Online features accurately.** Host a joinable lobby to invite
    eligible NOBK friends; accept/decline in F1. Native friends require the shared
    immutable-ID extension and matching service. Discord desktop/sharing plus
@@ -115,7 +124,8 @@ English and Turkish:
 10. **Publish truthful record and update guidance.** Explain season/class scope
     after the scoped service is deployed. Automatic records require successful
     Online uploads; menu access is not proof. Updates use the configured MotoGP
-    manifest, but the operator must publish and verify the actual package before
+    manifest and, in the later local updater, stable GitHub Releases. The
+    operator must publish and verify the actual package before
     promising a working update. Keep download version/size/checksum consistent.
 
 For older Documents-based DLC installations, explain reimport or moving the
@@ -132,3 +142,80 @@ denominators and invitation/help text. Mark completed DLC catalogue work as
 verified rather than repeatedly reopening it. The source PR can be reviewed
 with explicit integration tasks; public release readiness requires these P0
 data and instruction corrections, not just a merged client menu.
+
+
+## Additional user correction — verification is optional
+
+The user specifically highlighted the `Install DLC → Verify game files` text
+and requested removing the verification step from the website entirely. Publish
+`Select ISO → Select title update → Install DLC`, then proceed to mode/sign-in/
+launching the game from the launcher. The launcher's verification function is not being removed by this website
+request. Further website corrections are being collected separately.
+
+
+## Additional user correction — native Online entry
+
+The entire current Race paragraph is marked for replacement. User-confirmed
+path: **game main menu → Multiplayer → Online → desired race type → lobby**.
+The guide must not imply that the game main menu has a Play button. Do not
+conflate choosing an online race with every timed result being saved: explain
+record submission separately with verified mode/connection/service conditions.
+Use short action/result steps and exact current labels so a first-time player
+can follow the instructions without guessing. See the
+[visual/content comparison](how-to-play-design-review.md) for the page redesign.
+
+## Additional user correction — About the game
+
+Replace the current original/base-game-only description with concise text about
+this PC port and its required 2010/DLC content. Do not present 17 base circuits
+or 72 base-season rider entries as totals for the full supported installation.
+Preserve accurate publisher/developer attribution without making the PC port
+sound like an official Capcom release. A suitable English draft:
+
+> MotoGP 09/10 brings the Xbox 360 game's 2009 and 2010 racing seasons to PC
+> through a native recompilation. The original game was developed by Monumental
+> Games and published by Capcom in 2010. This community PC version adds launcher
+> settings, keyboard/controller support and NOBK Online connectivity.
+>
+> Race the 2009 season with MotoGP, 250cc and 125cc, or the 2010 season with
+> MotoGP, Moto2 and 125cc. The complete supported game and three free DLC packages
+> supply 20 circuit locations, including Silverstone, Shanghai and Istanbul Park,
+> with the season-specific riders, teams and bikes. Career, Championship,
+> Time Trial and Arcade offer different ways to play; Online racing is accessed
+> through Multiplayer → Online.
+>
+> Original game, title-update and DLC files are supplied by the player and are
+> not included in the PC download.
+
+Translate the approved final copy into Turkish as well. If listing lobby
+capacity, distinguish the supported limit of up to 20 riders from a claim that
+this review tested a full 20-rider race. Avoid claiming every circuit is eligible
+in every class/season. Keep native ghost downloads out of the feature list until
+implemented and accepted. The graphic/gallery is secondary to the setup guide.
+
+## Additional user correction — supported game and required packages
+
+Expand the existing game-information table with a clearly visible required-files
+checklist. Keep the following identifiers distinct: **Title ID** identifies the
+game; **Media ID** identifies the supported disc build; **Title Update** is the
+required game patch, not the PC launcher version.
+
+| Field | Website copy |
+| --- | --- |
+| Game | MotoGP 09/10 |
+| Source platform | Xbox 360 |
+| Supported release | USA / Europe |
+| Title ID | `434307F0` |
+| Media ID | `321F4634` |
+| Original game size | About 7 GB; do not present this as the PC download size |
+| Required Title Update | `0.0.1.1`, matching the supported game build |
+| Required DLC 1 | GP Class Season 2010 Update |
+| Required DLC 2 | 2010 Moto2 and 125 Update |
+| Required DLC 3 | Twin Track Pack |
+
+All three DLC packages are required by the current port in Offline, LAN and
+Online. Present them as individually named checklist items, not an unspecified
+“three DLCs” reference. The player supplies the original game, matching update
+and DLC files; do not imply they come inside the launcher download. Keep this
+list next to the installation prerequisites and link each import step back to
+the relevant item. Do not add verification back into the normal setup sequence.

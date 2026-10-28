@@ -43,7 +43,7 @@ frame observer; Discord retains its separate guest-frame capture path.
 
 Upstream also changed Rider Rank to records held first, then distinct tracks
 held (including DLC indices 18–20, excluding slot 17), points and API source
-position. Launcher version is 1.1.12 and the configured update manifest is
+position. The prepared PR launcher version is **1.2.0** and the configured update manifest is
 `https://nobkonline.com/downloads/motogp/version.json`.
 
 Integration validation is limited to changed-source compilation and the focused
