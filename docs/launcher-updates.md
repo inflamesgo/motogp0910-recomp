@@ -18,6 +18,17 @@ The previous Rider License milestone was 1.1.11; documentation and CI changes
 do not increment the product version. The live manifest contents and an actual
 installation transaction were not verified as part of the upstream merge.
 
+## Required release version bump
+
+Before publishing this feature update, the operator must increase
+`src/launcher/updates.h::kConfiguration.current_version` above the currently
+published release (the source baseline is 1.1.12) and rebuild the final branch.
+Use that same version in the built launcher, MotoGP `version.json`, release
+notes and website download label. Publish the actual final archive URL, size
+and SHA-256. An unchanged 1.1.12 manifest will not offer an update to existing
+1.1.12 installations; changing only the manifest while shipping an old-version
+binary can cause repeated update offers. The game TU remains 0.0.1.1.
+
 ## Approved launcher behavior
 
 - Perform one update check per launcher opening. There are no periodic retries

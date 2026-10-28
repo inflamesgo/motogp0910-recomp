@@ -219,6 +219,15 @@ FIFA-compatible lowercase `version`, HTTPS ZIP `url`, actual ZIP `sha256` and
 localized `notes` fields, `?v=<installed-version>` and
 `User-Agent: NOBK-Launcher/<installed-version>`.
 
+**Before publishing this update, the operator must increase the launcher's
+source version above the currently published release (baseline 1.1.12)** in
+`src/launcher/updates.h::kConfiguration.current_version`, then rebuild. The
+built launcher, public `version.json`, release notes and website download label
+must use the same new version. Publish the actual final ZIP URL/size/SHA-256;
+changing the manifest alone does not update the binary's reported version.
+The original game's TU remains 0.0.1.1. This handoff does not select or publish
+a new release number on the operator's behalf.
+
 Publish the complete matching application ZIP before its manifest, using the
 application archive itself. Current Actions stages application files directly;
 do not instruct users to unpack a ZIP inside another Actions ZIP. The package

@@ -59,6 +59,12 @@ boards; the menu test's missing-capability warnings are not successful queries.
   The current tree contains native analysis/API planning. ChunchunQ must implement
   or recover transport and complete native format/task/save/playback validation
   before enabling it. An earlier synthetic transport success is not native replay.
+- Before publishing, bump the launcher's source version in
+  `src/launcher/updates.h::kConfiguration.current_version` above the currently
+  published release (this source baseline is 1.1.12), then rebuild. Use that
+  same version in the MotoGP update manifest, release notes and website download
+  label, with the actual final ZIP URL, size and SHA-256. Changing only the
+  manifest leaves the installed binary reporting the old version.
 
 Operator read order:
 
@@ -68,6 +74,7 @@ Operator read order:
 4. [Invitations and ghost ownership](https://github.com/inflamesgo/motogp0910-recomp/blob/preview/docs/chunchunq-friends-invites-ghost-handoff.md).
 
 No production service/database/site changes, release publication or real updater
-transaction are claimed by this source transfer. Launcher remains 1.1.12;
-the MotoGP manifest is already configured. The final integrated branch needs
+transaction are claimed by this source transfer. Source currently reports
+1.1.12; the operator must perform the release version bump described above.
+The MotoGP manifest is already configured. The final integrated branch needs
 its own Windows build and the remaining native/service acceptance checks.
