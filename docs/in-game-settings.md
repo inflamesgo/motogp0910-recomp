@@ -1,9 +1,10 @@
 # In-game live settings
 
-F1 opens the MotoGP menu while the game is running. It uses the same Open Sans,
+F2 opens the MotoGP menu while the game is running. It uses the same Open Sans,
 dark cards and orange accents as F7 achievements, with English/Turkish labels
 chosen from the existing launcher language preference. The old SDK F4 binding
-(including an explicitly saved F4) migrates to F1; another custom shortcut is
+and the previous F1 settings binding migrate to F2; F1 now opens the
+[NOBK Online panel](nobk-panel.md). Another custom shortcut is
 preserved. Alt+F4 retains its normal window-close behavior. A remapped `bind_settings`
 is respected. Return, Esc or the overlay key closes it; controller navigation
 uses the D-pad/left stick and A/Cross, with B/Circle to return.

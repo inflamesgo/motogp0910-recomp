@@ -1,10 +1,10 @@
 {
   "sdk_version": "0.10.0.24-dev.gbd833a2",
   "source_commit": "bd833a2ab69d305f99ddf57418fc38ffec8af93d",
-  "archive": "rexglue-0.10.0.24-dev.gbd833a2-custom-windows-x64.zip",
-  "sha256": "c916075b8ec74de4e42f33725e5a0cf64f770a565b7a191f91a2846e98073936",
+  "archive": "rexglue-0.10.0.24-dev.gbd833a2-custom-f1-backdrop-windows-x64.zip",
+  "sha256": "7eeeb207f6e6cbdb31b13c8b31e4bcd11205e5d922df95015b21b57278641652",
   "dll_sha256": {
-    "rexruntime.dll": "0affc2408e5ca23ad8505a1f704225376c206d5462758e1faedbcebf414358bd",
+    "rexruntime.dll": "6aaf779f5af3d045da65187696b38a259a49d3a7c6589fc7b618deabb83bd98e",
     "rexgpu-xenos.dll": "54c3103610730c9775de12e6f79960fb4a30b91ca36dea2a5d11c0ab44535e15",
     "amd_fidelityfx_dx12.dll": "12a5081257ec95b0b53ad51b4a87fb3c03f97fe0bbb59f9496968f8d50ef93a6"
   },
@@ -22,6 +22,14 @@
     "thread-safe host processor count cache with unknown-count fallback",
     "shared SDL DualSense effect transport API v1 (USB/Bluetooth framing retained in SDL)",
     "host-volume root aliases and metadata, uncompressed XCTD capability handling, validated virtual dismount, null sampler binding diagnostics",
-    "read-only owning-module GPU diagnostic counter snapshot API v1; lightweight Release counter instrumentation"
-  ]
+    "read-only owning-module GPU diagnostic counter snapshot API v1; lightweight Release counter instrumentation",
+    "F1 background-only D3D12 half-resolution separable Gaussian blur with smooth content-width mask; versioned C bridge; no CPU image readback"
+  ],
+  "backdrop_source_sha256": {
+    "cmake/sdk-nobk-backdrop.patch": "1efe3b194f2f2c76deb1f1d202a72f6f324d563f3d0d0f59bb91f792d57bed8a",
+    "cmake/sdk-temporal-fsr.cmake": "0a0ff04a4928b598d1edb3f06fc2305dcb22a2afcb656b510b98d0ce156a3e83",
+    "src/nobk_backdrop_gpu.cpp": "38a6c39374db2579fade961a43926e6a49abb8ded23c65c600f7fc3cb24ea52c",
+    "src/nobk_backdrop_gpu.h": "5dd68a9864524ca84c9257579bf084221106a98d5bea249179b4cea64ec8f679",
+    "src/nobk_backdrop_shader.h": "7a15c1ed0541ff8a42f90a1f67cb23b67963df0993886af0314765a5e14fd233"
+  }
 }

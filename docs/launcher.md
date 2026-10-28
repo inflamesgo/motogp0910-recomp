@@ -12,6 +12,11 @@ The launcher opens on **General** every time. The default language is English; *
 interface immediately and retains the choice in the shared root `config.json`.
 File names stay English. No CMD file is required.
 
+General also includes **Discord → Show Discord activity**. It shares the current
+mode, circuit and activity duration with the Discord desktop app; disable it to
+keep gameplay activity private. The choice applies on the next launch. See
+[Discord presence](discord-presence.md) for supported states and validation limits.
+
 ## Importing an Xbox 360 ISO
 
 General uses one game-file action in the existing button position:
@@ -72,7 +77,7 @@ validation remain pending.
 The subsequent All files picker and immediate TU-patch extraction changes were
 initially source-only. They are included in the later main Windows Release build
 and isolated launcher regression. Actual supported ISO/TU imports and native
-Windows visual acceptance remain separate; see [local validation](https://github.com/inflamesgo/motogp0910-recomp/blob/5e91cf5/docs/rider-license-validation.md).
+Windows visual acceptance remain separate; see [local validation](https://github.com/inflamesgo/motogp0910-recomp/blob/28ba765/docs/rider-license-validation.md).
 
 ## Required DLC
 
@@ -126,17 +131,10 @@ are reported without generating substitutes; the loose icon remains required.
 Artwork failure does not undo a valid shortcut.
 The interface and results are localized in English and Turkish.
 
-The behavior reference is
-[ChunchunQ's FIFA 09 launcher](https://github.com/ChunchunQ/fifa09-recomp),
-`launcher/SteamShortcut.cs` at revision `711da3941d81879db06ea4f2c36c3a519ac826d9`.
-Its MIT attribution is retained in
-[the source license](../third_party/fifa09-launcher-LICENSE.txt) and the embedded
-launcher notices. Native Windows/Steam acceptance remains pending for this
-extracted integration branch.
-
-The later main source was built and checked as described in the external
-[main validation report](https://github.com/inflamesgo/motogp0910-recomp/blob/5e91cf5/docs/rider-license-validation.md). The selective integration worktree
-was not separately rebuilt.
+Source reference and MIT attribution are recorded in
+[reference projects](https://github.com/inflamesgo/motogp0910-recomp/blob/28ba765/docs/reference-projects.md). The implementation is now included in the main Windows Release build and the
+selective upstream delivery. Real Steam shortcut/artwork installation on native
+Windows remains unverified by the local CPU/UI checks.
 
 ## Graphics
 
@@ -205,13 +203,55 @@ surround. Mute remains available independently. The game's own audio menu
 continues to provide its separate music/effects options. Launcher edits apply
 on the next game launch.
 
+Mouse-wheel input over launcher sliders scrolls the settings page instead of
+changing their values, including master volume and upscaler sharpness. Dragging,
+clicking the track and keyboard adjustment remain available.
+
+## Discord invitation startup
+
+Discord's registered-game protocol can open the public launcher with
+`--discord-invite`. It selects Online and waits for normal file/DLC readiness,
+sign-in and an enabled Discord setting before running the usual PLAY transaction.
+An already-open launcher receives that activation. No invitation secret is
+passed in arguments or saved to configuration; the game receives Discord's
+deferred IPC join event. See [Discord invitations](discord-invites.md).
+
 ## Keyboard and controllers
 
 All 25 SDK controller actions appear as rounded key buttons in a scrollable list.
-Click a button, then press a key or chord. Escape cancels capture; right-click
-clears the binding. Reset keys restores only keyboard mappings, while Defaults
-resets all launcher-managed settings. Existing alternative key lists remain
-supported and are preserved until that action is rebound.
+Reset keybinds sits in the top row beside the compact controller selector and
+Enable keyboard checkbox, so restoring the preset does not require scrolling
+to the final binding. Its scope remains keyboard mappings only.
+Click the main button to replace an action's assigned keys, or its **+** button
+to append another key or chord without losing existing alternatives. Duplicate
+alternatives are ignored, including equivalent modifier order and Ctrl/Control
+aliases. Right-click the main button to remove individual alternatives, clear
+the action, restore its default, or add Escape. Escape itself cancels capture.
+Reset keys restores only keyboard mappings, while Defaults resets all
+launcher-managed settings. F2 live settings provide the same append and
+individual-removal actions, plus a comma-separated editable text field.
+
+| Action (native Default control preset) | Keyboard default |
+| --- | --- |
+| Accelerate / front brake | W / S |
+| Turn left / right | A / D |
+| Rider weight forward / backward | Up / Down |
+| Rear brake | Space |
+| Gear up / down | E / Q, Backspace |
+| Tuck in / confirm | R, Return |
+| Change camera / look behind | V / C |
+| Second Chance / pause | Tab / Escape |
+| Celebration / alternate camera / apology / angry gesture | 1 / 2 / 3 / 4 |
+
+These remain virtual controller bindings: R and Return both produce A/Cross;
+Q and Backspace both produce B/Circle. Menu and racing actions are not split.
+Native alternative control presets still determine the actual gameplay actions.
+The application applies the same defaults on direct starts and launcher starts.
+Exact former shipped defaults migrate when loaded from configuration; a
+custom value identical to an old default cannot be distinguished from that
+default. Other custom values, explicit unbinds, environment, command-line and
+live overrides are preserved. User configuration files are not rewritten until
+the user saves settings.
 
 Actions labeled **Unassigned** start without keyboard bindings. The former
 shipped L3/R3 and right-stick defaults are upgraded to empty bindings when
@@ -229,7 +269,7 @@ for automatic switching and forced-style testing.
 
 The launcher and game use one root `config.json`. Unknown supported keys,
 nested tables and custom save/cache roots are retained. Existing game/launcher
-TOMLs migrate automatically and remain as exact `.legacy.bak` backups. F1 saves
+TOMLs migrate automatically and remain as exact `.legacy.bak` backups. F2 saves
 the same JSON. External edits are protected from accidental overwrite; saves
 use atomic replacement. See [portable settings and validation](portable-launcher.md).
 
@@ -244,7 +284,7 @@ and never uploaded automatically.
 
 The following counts describe earlier launcher milestones, including the old
 three-page UI. Current source has seven pages; the latest main build and phased
-Wine validation are recorded in [the Rider License report](https://github.com/inflamesgo/motogp0910-recomp/blob/5e91cf5/docs/rider-license-validation.md).
+Wine validation are recorded in [the Rider License report](https://github.com/inflamesgo/motogp0910-recomp/blob/28ba765/docs/rider-license-validation.md).
 Preserve those evidence boundaries rather than treating old totals as a new run.
 
 - Windows game, launcher and runtime DLL pair built successfully.
@@ -383,9 +423,16 @@ checks; their GPU rendering has not been visually checked in a race. All ten
 settings have concise English/Turkish hover explanations on
 both the label and field, and occupy five aligned rows of two columns. Debug
 and crash diagnostics sit side by side below the last row, within the page
-viewport. The F1 menu exposes the same choices
+viewport. The F2 live-settings menu exposes the same choices
 and persists them through the shared JSON configuration. Every new setting
 defaults to `game`; existing configurations retain their original behavior.
+
+Checkbox hover help is restricted to the painted square and label footprint,
+including the spacing between them. Blank space to the right and vertical
+margins cannot trigger the popup. These controls use native rectangle tooltip
+tools rather than whole-window ID tools. Text, font and size updates recompute
+the rectangle so localization and scaling keep the hover region aligned.
+Mouse activation remains restricted to the square.
 
 The vignette override scales only the alpha float at `0x8337BE64` during the
 FSFX consumer `0x8237FA00`, restoring its exact original bits on return. Bloom
@@ -455,5 +502,5 @@ The footer displays the configured launcher version instead of the title-update
 version. The FPS selector has room for all nine presets, including 240 FPS.
 These edits are included in main `8a33ea9` and selective preview `ab7d3f7`.
 The main Windows Release build and isolated launcher checks are recorded in
-[local validation](https://github.com/inflamesgo/motogp0910-recomp/blob/5e91cf5/docs/rider-license-validation.md); a full native Windows gameplay
+[local validation](https://github.com/inflamesgo/motogp0910-recomp/blob/28ba765/docs/rider-license-validation.md); a full native Windows gameplay
 or live account-service acceptance run is not implied.

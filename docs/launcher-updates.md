@@ -10,16 +10,13 @@ restart acknowledgement. The current source is included in the main Windows
 Release build. Wine preview checks are recorded below; a real update transaction
 and native Windows installation acceptance remain unverified.
 
-The manifest endpoint is deliberately empty in
-`src/launcher/updates.h::kConfiguration`. An empty endpoint prevents all update
-network requests and leaves the notification button hidden. The launcher
-version constant is **1.1.11**, approved for the Rider License release,
-and is separate from the game's title update version `0.0.1.1`. Historical
-commits were grouped as 1.1.0–1.1.9, with the updater as milestone 1.1.10.
-The Rider License release advances that milestone to 1.1.11. These groups do
-not create historical Git tags or rewrite commits. Related fixes stay with
-their feature group; CI and documentation alone do not increment the product
-version. Configure the real delivery endpoint before activating the manifest.
+The current launcher version is **1.1.12**. ChunchunQ configured the MotoGP
+manifest at `https://nobkonline.com/downloads/motogp/version.json` in
+`src/launcher/updates.h::kConfiguration`. Update checks are therefore enabled.
+The game's title update remains independently versioned as `0.0.1.1`.
+The previous Rider License milestone was 1.1.11; documentation and CI changes
+do not increment the product version. The live manifest contents and an actual
+installation transaction were not verified as part of the upstream merge.
 
 ## Approved launcher behavior
 
@@ -45,8 +42,8 @@ version. Configure the real delivery endpoint before activating the manifest.
 
 ## Service connection and manifest
 
-The NOBK operator must supply a documented **MotoGP-specific HTTPS manifest
-endpoint**. Set it in `kConfiguration`. Following FIFA's `CheckAsync`,
+The configured **MotoGP-specific HTTPS manifest endpoint** is
+`https://nobkonline.com/downloads/motogp/version.json`. Following FIFA's `CheckAsync`,
 `VersionRequestUrl` appends `?v=<major.minor.build>` to the endpoint (or `&v=`
 when the operator's endpoint already has a query). A URL template is not needed.
 Keep the version accurate
@@ -98,7 +95,7 @@ until the service operator provides the MotoGP contract.
 
 ### Handoff and fallback mechanism
 
-Set the MotoGP endpoint in `updates.h::kConfiguration`; requests and JSON match
+The MotoGP endpoint is now set in `updates.h::kConfiguration`; requests and JSON match
 FIFA's `Updater.cs`. The UI is unchanged. MotoGP additionally retains a local
 **fallback mechanism** in `update_helper.cpp`: failed installation/startup
 restores the previous program files. Backups are removed only after healthy
@@ -196,7 +193,7 @@ The close control now uses a 32 × 32 logical-pixel button with a larger,
 antialiased vector X, a hand cursor, a translucent hover/pressed background and
 keyboard focus. This polish is included in the later main Windows Release build and launcher
 viewport audit. Those checks do not validate end-to-end update installation or
-native Windows transition smoothness; see [local validation](https://github.com/inflamesgo/motogp0910-recomp/blob/5e91cf5/docs/rider-license-validation.md).
+native Windows transition smoothness; see [local validation](https://github.com/inflamesgo/motogp0910-recomp/blob/28ba765/docs/rider-license-validation.md).
 
 Run `MotoGP09-10Launcher.exe --preview-update` to show a synthetic v1.1.11
 notification with English/Turkish sample release notes. Click the download icon

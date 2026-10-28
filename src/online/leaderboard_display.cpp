@@ -1,4 +1,7 @@
 #include "leaderboard_display.h"
+#include "../leaderboard_scope_capture.h"
+#include "leaderboard_filter.h"
+#include <map>
 #include <rex/cvar.h>
 #include <rex/hook.h>
 #include <rex/memory.h>
@@ -8,6 +11,9 @@
 #include <stdexcept>
 #include <string>
 
+REX_EXTERN(__imp__sub_8223E558);
+REX_EXTERN(__imp__sub_8223E630);
+REX_EXTERN(__imp__sub_8223CEB8);
 REX_EXTERN(__imp__sub_8223CF40);
 REX_EXTERN(__imp__sub_8223F340);
 
@@ -42,6 +48,9 @@ void Initialize(rex::Runtime* runtime){
 }
 
 REX_HOOK_RAW(sub_8223CF40){
+ const motogp::online::categories::DrawScope header(
+  motogp::online::scope_capture::IsStandaloneBoard(base,ctx.r3.u32)?
+   motogp::online::categories::Drawing::Board:motogp::online::categories::Drawing::None);
  // Base leaderboard draw: +24 selects Lap Times (0), Arcade (1),
  // All Time Ghost (2) or Monthly Ghost (3). All timed rows share the getter.
  // Scope the override to this call, so another board/thread cannot inherit it.
@@ -60,4 +69,44 @@ REX_HOOK_RAW(sub_8223F340){
   }
  }
  __imp__sub_8223F340(ctx,base);
+}
+
+namespace motogp::online::lap_times {
+namespace {
+// Track menus own these board objects until their native destructor runs.
+// The standalone Lap Times page never inherits a track-menu mode filter.
+thread_local std::map<uint32_t,BoardMode> track_boards;
+bool OnlineTrackCaller(uint32_t caller){
+ if(rex::cvar::Query<std::string>("network_mode")!="online")return false;
+ return (caller>=0x82208CE8 && caller<0x822094A0) ||
+        (caller>=0x82234680 && caller<0x82234B78);
+}
+BoardMode TrackMode(uint32_t board,uint32_t caller,uint8_t* base){
+ if(OnlineTrackCaller(caller)){
+  const auto mode=FrontendBoardMode(rex::memory::load_and_swap<uint32_t>(base+0x828DA060));
+  track_boards[board]=mode;
+  return mode;
+ }
+ const auto found=track_boards.find(board);
+ return found==track_boards.end()?BoardMode::Any:found->second;
+}
+}
+}
+REX_HOOK_RAW(sub_8223E558){
+ // Time Trial launches an additional, unconsumed copy of its initial query.
+ // Both native readers reset the same completion state and output buffer.
+ // Keep one request alive until the menu consumes it; Offline/LAN stay native.
+ if(ctx.lr==0x82234790 && rex::cvar::Query<std::string>("network_mode")=="online")return;
+ const motogp::online::BoardModeScope scope(motogp::online::lap_times::TrackMode(ctx.r3.u32,ctx.lr,base));
+ const motogp::online::scope_capture::ReadScope season(base,ctx.r3.u32);
+ __imp__sub_8223E558(ctx,base);
+}
+REX_HOOK_RAW(sub_8223E630){
+ const motogp::online::BoardModeScope scope(motogp::online::lap_times::TrackMode(ctx.r3.u32,ctx.lr,base));
+ const motogp::online::scope_capture::ReadScope season(base,ctx.r3.u32);
+ __imp__sub_8223E630(ctx,base);
+}
+REX_HOOK_RAW(sub_8223CEB8){
+ motogp::online::lap_times::track_boards.erase(ctx.r3.u32);
+ __imp__sub_8223CEB8(ctx,base);
 }

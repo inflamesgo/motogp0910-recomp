@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 struct ImFont;
+namespace motogp::nobk::visual { struct AchievementAppearance; }
 namespace rex { class Runtime; namespace ui { class ImmediateDrawer; class AchievementIconCache; class Window; class WindowedAppContext; } }
 namespace motogp::achievements {
 struct Preferences {
@@ -28,11 +29,15 @@ struct Preferences {
   bool Save() const;
   void Refresh();
 };
-struct MenuState { int filter = 0; char search[160]{}; };
+struct MenuState { int filter = 0; char search[160]{}; uint32_t selected_id=0; };
 struct Summary { size_t earned=0, total=0; uint64_t score=0, available_score=0; };
 Summary Progress(const rex::system::AchievementManager& manager);
 bool Matches(const rex::system::AchievementInfo& info, bool unlocked, const MenuState& state);
 // These render functions are also exercised with the actual runtime ImGui in the Windows probe.
+// Shared list and preferences; the host owns the window, theme and input gate.
+void DrawContents(rex::system::AchievementManager& manager, MenuState& state, Preferences& preferences,
+                  rex::ui::AchievementIconCache* icons=nullptr, float bottom_space=0.f,
+                  const motogp::nobk::visual::AchievementAppearance* appearance=nullptr);
 bool DrawMenu(rex::system::AchievementManager& manager, MenuState& state, Preferences& preferences,
               ImFont* font, rex::ui::AchievementIconCache* icons=nullptr, ImFont* heading=nullptr);
 void DrawToast(const rex::system::AchievementEvent& event, float alpha, bool turkish,

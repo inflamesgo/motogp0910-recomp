@@ -1,6 +1,7 @@
 #include "local_splitscreen.h"
 #include "splitscreen_assignment.h"
 #include "input_synchronization.h"
+#include "leaderboard_categories.h"
 #include <rex/hook.h>
 #include <rex/input/input_system.h>
 #include <rex/memory.h>
@@ -179,6 +180,7 @@ REX_HOOK_RAW(sub_8239B160) {
   if (entry && !ctx.r3.u8) motogp::splitscreen::End(ctx, base);
 }
 REX_HOOK_RAW(sub_8235ACB0) {
+  motogp::online::categories::ObserveScreen(base,ctx.r3.u32);
   if (motogp::splitscreen::Active() && ctx.r3.u32) {
     const auto vtable = motogp::splitscreen::Read(base, ctx.r3.u32);
     if (vtable == motogp::splitscreen::kMultiplayerVtable ||

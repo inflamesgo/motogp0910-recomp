@@ -1,5 +1,6 @@
 #pragma once
 #include "relay.h"
+#include "../leaderboard_categories.h"
 #include <filesystem>
 #include <map>
 #include <mutex>
@@ -14,7 +15,10 @@ class Client {
   std::string url_,credential_;
   Ticket ticket_;
   mutable std::mutex writes_mutex_;mutable std::condition_variable writes_changed_;mutable unsigned pending_writes_=0;
+  mutable std::mutex capabilities_mutex_;
+  mutable std::optional<bool> scoped_stats_;
   std::vector<uint8_t> Request(const std::string&,std::span<const uint8_t>)const;
+  void RequireScopedStats()const;
  public:
   // The profile is protected for the current Windows user with DPAPI. It never
   // lives in the TOML settings, crash report, build archive or log output.
@@ -22,10 +26,11 @@ class Client {
   ~Client();
   Client(const Client&)=delete;Client& operator=(const Client&)=delete;
   const Ticket& Connection()const{return ticket_;}
-  void Write(const std::vector<View>&,const std::string& nonce)const;
+  void Write(const std::vector<View>&,const std::string& nonce,std::optional<categories::Scope> scope={})const;
   void BeginWrite()const;void EndWrite()const;void Flush()const;
   Page Read(uint32_t view,uint32_t start,uint32_t count,
-                        std::span<const uint64_t> users={},uint64_t around=0)const;
+                        std::span<const uint64_t> users={},uint64_t around=0,std::optional<categories::Scope> scope={})const;
+  std::vector<uint8_t> Social(std::span<const uint8_t> body)const;
 };
 // Binds this PC's online profile for `url` to a NOBK Online site account, using
 // the launcher token from the site's sign-in API. Returns the account name the

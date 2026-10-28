@@ -34,6 +34,8 @@ using namespace launcher;
 namespace {
 constexpr int kWidth=1040,kHeight=704,kCaptionHeight=28;
 constexpr UINT kApplyLauncherLanguage=WM_APP+23;
+constexpr UINT kDiscordInviteLaunch=WM_APP+24;
+constexpr wchar_t kInstallationProperty[]=L"MotoGP0910.LauncherRoot";
 constexpr COLORREF kBackground=RGB(13,15,20),kSidebar=RGB(19,21,27),kCard=RGB(23,26,33),
     kField=RGB(32,36,45),kText=RGB(242,244,247),kMuted=RGB(157,165,178),
     kAccent=kLauncherAccent,kRed=RGB(239,66,47),kBorder=RGB(48,53,64),kUpdateWarning=RGB(92,210,240);
@@ -64,9 +66,10 @@ struct App {
   std::map<HWND,HWND> help_labels;
   std::array<HWND,7> navigation{};
   std::array<HWND,kEngineEffects.size()> engine_choices{};
-  HWND adaptive_triggers{},crash_diagnostics{},shadow_distance{},debug_overlay{};
+  HWND adaptive_triggers{},crash_diagnostics{},shadow_distance{},debug_overlay{},discord_presence{};
   std::vector<int> shadow_distances{kShadowDistances.begin(),kShadowDistances.end()};
   std::array<HWND,kBindings.size()> binding_buttons{};
+  std::array<HWND,kBindings.size()> binding_add_buttons{};
   HWND reset_bindings{};
   struct Label {HWND control;const wchar_t* en;const wchar_t* tr;};
   struct Placement {HWND control;int x,y,w,h;};
@@ -86,6 +89,8 @@ struct App {
   HWND pointer_focus{};
   unsigned localization_generation=0;
   bool capturing=false;
+  bool capture_append=false;
+  bool discord_pending=false;
   HFONT font{},heading{},small_font{},bold{},logo{},play_font{},account_name_font{};
   std::array<HANDLE,3> private_fonts{};
   HBRUSH background=CreateSolidBrush(kBackground),card=CreateSolidBrush(kCard),field=CreateSolidBrush(kField);
@@ -133,16 +138,18 @@ struct App {
     if(std::wstring_view(cls)==L"COMBOBOX"){PopupAnimation::Attach(c,id==kSize);SetWindowSubclass(c,ComboFrameProc,8,reinterpret_cast<DWORD_PTR>(this));SendMessageW(c,CB_SETITEMHEIGHT,WPARAM(-1),S(24));}
     return c;
   }
+  RECT CheckboxBounds()const{return {S(1),S(5),S(19),S(23)};}
   static LRESULT CALLBACK CheckProc(HWND control,UINT message,WPARAM wparam,LPARAM lparam,UINT_PTR id,DWORD_PTR data){
     auto& app=*reinterpret_cast<App*>(data);
-    if(message==WM_LBUTTONDBLCLK)return DefSubclassProc(control,WM_LBUTTONDOWN,wparam,lparam);
+    LRESULT pointer_result{};
+    if(CheckboxPointerInput(control,message,wparam,lparam,app.CheckboxBounds(),pointer_result))return pointer_result;
     if(message==BM_GETCHECK)return app.Checked(control)?BST_CHECKED:BST_UNCHECKED;
     if(message==BM_SETCHECK){app.SetCheck(control,wparam==BST_CHECKED);return 0;}
     if(message==WM_NCDESTROY)RemoveWindowSubclass(control,CheckProc,id);
     return DefSubclassProc(control,message,wparam,lparam);
   }
   static LRESULT CALLBACK BindingProc(HWND control,UINT message,WPARAM wparam,LPARAM lparam,UINT_PTR id,DWORD_PTR data){
-    if(message==WM_RBUTTONUP)return SendMessageW(reinterpret_cast<App*>(data)->window,WM_CONTEXTMENU,reinterpret_cast<WPARAM>(control),lparam);
+    if(message==WM_RBUTTONUP){POINT point{};GetCursorPos(&point);return SendMessageW(reinterpret_cast<App*>(data)->window,WM_CONTEXTMENU,reinterpret_cast<WPARAM>(control),MAKELPARAM(point.x,point.y));}
     if(message==WM_CONTEXTMENU)return SendMessageW(reinterpret_cast<App*>(data)->window,message,reinterpret_cast<WPARAM>(control),lparam);
     if(message==WM_NCDESTROY)RemoveWindowSubclass(control,BindingProc,id);
     return DefSubclassProc(control,message,wparam,lparam);
@@ -197,6 +204,10 @@ struct App {
     const auto label=capturing&&static_cast<int>(index)==binding_index?std::wstring(T(L"Press a key…",L"Bir tuşa bas…")):
         edited_bindings[index].empty()?std::wstring(T(L"Unbound",L"Atanmamış")):Wide(edited_bindings[index]);
     if(binding_buttons[index])SetWindowTextW(binding_buttons[index],label.c_str());
+  }
+  void BeginBindingCapture(size_t index,bool append){
+    CancelCapture();binding_index=static_cast<int>(index);capture_append=append;capturing=true;
+    SetFocus(binding_buttons[index]);RefreshBinding(index);
   }
   void SetBinding(size_t index,std::string value){
     edited_bindings[index]=std::move(value);RefreshBinding(index);
@@ -345,7 +356,7 @@ struct App {
     RefreshGameFilesAction();
     SetWindowTextW(play,T(process?L"GAME RUNNING":L"PLAY",process?L"OYUN ÇALIŞIYOR":L"OYUNU BAŞLAT"));
     FillCombo(post_effect,{T(L"Off",L"Kapalı"),L"FXAA",L"FXAA Extreme"});
-    FillCombo(backend,{L"SDL — Xbox / PlayStation",T(L"XInput — Xbox-compatible",L"XInput — Xbox uyumlu")});
+    FillCombo(backend,{L"SDL — Xbox / PlayStation",T(L"XInput — Xbox Compatible",L"XInput — Xbox uyumlu")});
     FillCombo(prompt_style,{T(L"Automatic",L"Otomatik"),L"PlayStation 3",L"Xbox 360",T(L"Keyboard",L"Klavye")});
     FillCombo(effect,{T(L"Bilinear (default)",L"Bilineer (varsayılan)"),L"AMD CAS",L"AMD FSR 1",L"AMD FSR 2",L"AMD FSR 3"});
     FillCombo(fsr_quality,{T(L"Auto",L"Otomatik"),T(L"Native AA",L"Doğal AA"),T(L"Quality",L"Kalite"),T(L"Balanced",L"Dengeli"),T(L"Performance",L"Performans"),T(L"Ultra Performance",L"Ultra Performans")});
@@ -372,7 +383,7 @@ struct App {
     const auto selected=SendMessageW(size,CB_GETCURSEL,0,0);
     FillWindowSizes(selected>=0 && selected<static_cast<LRESULT>(dimensions.size())?dimensions[selected]:std::pair{0,0});
     SetWindowTextW(status,(turkish?status_tr:status_en).c_str());UpdateSharpness();RefreshRates();
-    SetWindowTextW(reset_bindings,T(L"Reset keys to defaults",L"Tuşları varsayılana döndür"));
+    SetWindowTextW(reset_bindings,T(L"Reset keybinds",L"Atamaları sıfırla"));
     for(size_t i=0;i<binding_buttons.size();++i)RefreshBinding(i);
     RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN);
   }
@@ -400,10 +411,12 @@ struct App {
     auto key=KeyName(vk);if(key.empty())return true;
     std::string value;if(GetKeyState(VK_CONTROL)&0x8000)value+="Ctrl+";
     if(GetKeyState(VK_MENU)&0x8000)value+="Alt+";if(GetKeyState(VK_SHIFT)&0x8000)value+="Shift+";
-    value+=key;CancelCapture();SetBinding(binding_index,std::move(value));return true;
+    value+=key;if(capture_append)value=AddBindingAlternative(edited_bindings[binding_index],value);
+    CancelCapture();SetBinding(binding_index,std::move(value));return true;
   }
   void SetControls(const Settings& s){
     SetCheck(debug_overlay,s.debug_overlay_enabled);
+    SetCheck(discord_presence,s.discord_presence_enabled);
     SetNetworkControls(s);
     SendMessageW(display_monitor,CB_SETCURSEL,s.monitor>=1 && s.monitor<=static_cast<int>(monitors.size())?s.monitor-1:0,0);
     RefreshMonitorSizes(s.width,s.height);
@@ -447,6 +460,7 @@ struct App {
   Settings GetControls()const{
     Settings s=settings;
     s.debug_overlay_enabled=Checked(debug_overlay);
+    s.discord_presence_enabled=Checked(discord_presence);
     const auto screen=SendMessageW(display_monitor,CB_GETCURSEL,0,0);
     if(screen<0 || screen>=static_cast<LRESULT>(monitors.size()))throw std::runtime_error("Invalid monitor selection");
     s.monitor=SelectedMonitor();
@@ -512,7 +526,7 @@ struct App {
     if(is_check){
       if(c==account_remember)SelectObject(hdc,font);
       DrawSurface(hdc,c);
-      RECT box{r.left+S(1),r.top+S(5),r.left+S(19),r.top+S(23)};
+      RECT box=CheckboxBounds();OffsetRect(&box,r.left,r.top);
       PaintCheckbox(hdc,box,Checked(c),!disabled,pressed);
       r.left+=S(29);SetTextColor(hdc,disabled?kMuted:kText);auto text=Text(c);DrawTextW(hdc,text.c_str(),-1,&r,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);return;
     }
@@ -571,10 +585,51 @@ struct App {
     ApplyAccountFonts();
     RedrawWindow(window,nullptr,nullptr,RDW_INVALIDATE|RDW_ALLCHILDREN);
   }
-  void BindingMenu(HWND control,POINT){
+  void BindingMenu(HWND control,POINT point){
     auto it=std::find(binding_buttons.begin(),binding_buttons.end(),control);if(it==binding_buttons.end())return;
     CancelCapture();binding_index=static_cast<int>(std::distance(binding_buttons.begin(),it));
-    SetBinding(binding_index,{});
+    const auto alternatives=BindingAlternatives(edited_bindings[binding_index]);
+    HMENU menu=CreatePopupMenu();if(!menu)throw std::runtime_error("Could not create keyboard binding menu");
+    const auto brush=CreateSolidBrush(kPopupBackground);
+    struct Release{HMENU menu;HBRUSH brush;~Release(){DestroyMenu(menu);DeleteObject(brush);}} release{menu,brush};
+    MENUINFO info{sizeof(info)};info.fMask=MIM_BACKGROUND;info.hbrBack=brush;SetMenuInfo(menu,&info);
+    AppendMenuW(menu,MF_OWNERDRAW,1,T(L"Add key…",L"Tuş ekle…"));
+    AppendMenuW(menu,MF_OWNERDRAW,2,T(L"Clear all keys",L"Tüm tuşları kaldır"));
+    AppendMenuW(menu,MF_OWNERDRAW,3,T(L"Restore action default",L"Eylemi varsayılana döndür"));
+    // Escape cancels capture; provide an explicit assignment path as well.
+    AppendMenuW(menu,MF_OWNERDRAW,4,T(L"Add Escape",L"Esc ekle"));
+    std::vector<std::wstring> labels;labels.reserve(alternatives.size());
+    if(!alternatives.empty())AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+    for(size_t i=0;i<alternatives.size();++i){labels.push_back(std::wstring(T(L"Remove: ",L"Kaldır: "))+Wide(alternatives[i]));AppendMenuW(menu,MF_OWNERDRAW,100+i,labels.back().c_str());}
+    if(point.x==-1&&point.y==-1){RECT r{};GetWindowRect(control,&r);point={r.left,r.bottom};}
+    const auto choice=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_NONOTIFY|TPM_LEFTALIGN,point.x,point.y,0,window,nullptr);
+    if(choice==1)BeginBindingCapture(binding_index,true);
+    else if(choice==2)SetBinding(binding_index,{});
+    else if(choice==3)SetBinding(binding_index,kBindings[binding_index].defaults);
+    else if(choice==4)SetBinding(binding_index,AddBindingAlternative(edited_bindings[binding_index],"Escape"));
+    else if(choice>=100&&choice-100<alternatives.size())SetBinding(binding_index,RemoveBindingAlternative(edited_bindings[binding_index],choice-100));
+  }
+  void DiscordInviteLaunch(){
+    if(process)return;
+    discord_pending=true;
+    SendMessageW(network_mode,CB_SETCURSEL,2,0);UpdateNetworkMode();
+    ShowWindow(window,SW_RESTORE);SetForegroundWindow(window);
+    if(!game_ready)ShowPage(3);
+    else if(!account)ShowPage(6);
+    else if(!Checked(discord_presence)){
+      ShowPage(3);SetFocus(discord_presence);
+      MessageBoxW(window,T(L"Enable Show Discord activity in General to accept this invitation.",L"Bu daveti kabul etmek için Genel bölümündeki Discord etkinliğini göster seçeneğini aç."),L"Discord",MB_OK|MB_ICONINFORMATION);
+    }
+    SetTimer(window,10,400,nullptr);
+  }
+  void PollDiscordLaunch(){
+    if(!discord_pending||process||SendMessageW(network_mode,CB_GETCURSEL,0,0)!=2){discord_pending=false;KillTimer(window,10);return;}
+    if(!game_ready||!account||!Checked(discord_presence)||verifying||importing_iso||update_busy||update_finishing||steam_busy||dlc_busy)return;
+    discord_pending=false;KillTimer(window,10);
+    // Use the normal PLAY transaction: account linking, file/DLC checks,
+    // settings persistence and the existing crash-monitor launch path.
+    Command(kPlay,BN_CLICKED);
+    if(!process&&!account){discord_pending=true;ShowPage(6);SetTimer(window,10,400,nullptr);}
   }
   void SaveSettings() {
     settings=GetControls(); settings.Store(config.table);
@@ -681,13 +736,14 @@ struct App {
         auto c=FindControl(id);if(checks.contains(c)){if(id==kAchievementPopup||id==kAchievementSound){SaveAchievementOption(id);return;}SetCheck(c,!Checked(c));return;}
         if(id>=kNavGraphics && id<=kNavMultiplayer){ShowPage(id-kNavGraphics);return;}
         if(id>=kCaptureBase && id<kCaptureBase+static_cast<int>(kBindings.size())){CancelCapture();binding_index=id-kCaptureBase;id=kCapture;}
+        if(id>=kAddBindingBase && id<kAddBindingBase+static_cast<int>(kBindings.size())){BeginBindingCapture(id-kAddBindingBase,true);return;}
         switch(id){
           case kUpdateNotice:ToggleUpdatePanel();break;
           case kUpdateClose:if(update_open)ToggleUpdatePanel();break;
           case kUpdateNow:StartUpdateDownload();break;
           case kUpdateCancel:if(!update_preparing)update_cancelled=true;break;
           case kAdaptiveTriggers:AdaptiveDialog(window,font,turkish,scale,settings.adaptive).Show();break;
-          case kCapture:CancelCapture();capturing=true;SetFocus(binding_buttons[binding_index]);RefreshBinding(binding_index);
+          case kCapture:BeginBindingCapture(binding_index,false);
             break;
           case kClearBinding:CancelCapture();SetBinding(binding_index,{});break;
           case kResetBinding:CancelCapture();SetBinding(binding_index,kBindings[binding_index].defaults);break;
@@ -747,8 +803,9 @@ LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam
       if((wparam&0xFFF0)==kNoticesCommand){try{NoticesDialog(window,app->font,app->scale,app->turkish,Wide(EmbeddedBytes(104))).Show();}catch(const std::exception& e){app->ErrorBox(e);}return 0;}break;
     case WM_COMMAND:app->Command(LOWORD(wparam),HIWORD(wparam));return 0;
     case kApplyLauncherLanguage:try{app->ApplyLanguage();}catch(const std::exception& e){app->ErrorBox(e);}return 0;
+    case kDiscordInviteLaunch:app->DiscordInviteLaunch();return 0;
     case WM_CONTEXTMENU:app->BindingMenu(reinterpret_cast<HWND>(wparam),{static_cast<short>(LOWORD(lparam)),static_cast<short>(HIWORD(lparam))});return 0;
-    case WM_TIMER:if(wparam==9)app->PollDlc();else if(wparam==8)app->PollSteam();else if(wparam==4)app->PollUpdates();else if(wparam==5)app->AnimateUpdatePanel();else if(wparam==6)app->PollIsoImport();else if(wparam==7){KillTimer(window,7);if(!app->importing_iso&&!app->verifying)app->ReadyStatus();}else if(wparam==2)app->PollAchievements();else if(wparam==3)app->PollVerification();else app->Poll();return 0;
+    case WM_TIMER:if(wparam==10)app->PollDiscordLaunch();else if(wparam==9)app->PollDlc();else if(wparam==8)app->PollSteam();else if(wparam==4)app->PollUpdates();else if(wparam==5)app->AnimateUpdatePanel();else if(wparam==6)app->PollIsoImport();else if(wparam==7){KillTimer(window,7);if(!app->importing_iso&&!app->verifying)app->ReadyStatus();}else if(wparam==2)app->PollAchievements();else if(wparam==3)app->PollVerification();else app->Poll();return 0;
     case WM_DRAWITEM:{auto& draw=*reinterpret_cast<DRAWITEMSTRUCT*>(lparam);if(draw.CtlType==ODT_BUTTON)app->PaintControl(draw.hDC,draw.hwndItem,&draw);else if(draw.CtlType==ODT_COMBOBOX)app->DrawCombo(draw);
       else if(draw.CtlType==ODT_MENU)DrawPopupText(draw.hDC,draw.rcItem,reinterpret_cast<const wchar_t*>(draw.itemData),app->font,app->scale,bool(draw.itemState&ODS_SELECTED),bool(draw.itemState&(ODS_DISABLED|ODS_GRAYED)));return TRUE;}
     case WM_MEASUREITEM:{auto& measure=*reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);measure.itemHeight=app->S(32);if(measure.CtlType==ODT_MENU)measure.itemWidth=app->S(184);return TRUE;}
@@ -774,7 +831,7 @@ LRESULT CALLBACK WindowProc(HWND window,UINT message,WPARAM wparam,LPARAM lparam
       SetWindowPos(window,nullptr,std::clamp<int>(proposed->left,work.left,std::max<int>(work.left,work.right-width)),
           std::clamp<int>(proposed->top,work.top,std::max<int>(work.top,work.bottom-height)),width,height,SWP_NOZORDER|SWP_NOACTIVATE);return 0;}
     case WM_CLOSE:if(app->update_preparing&&!app->update_handoff)return 0;app->update_cancelled=true;app->verify_cancel=true;app->iso_cancel=true;app->dlc_cancel=true;DestroyWindow(window);return 0;
-    case WM_DESTROY:PostQuitMessage(0);return 0;
+    case WM_DESTROY:RemovePropW(window,kInstallationProperty);PostQuitMessage(0);return 0;
   }return DefWindowProcW(window,message,wparam,lparam);
 }
 }
@@ -793,9 +850,25 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
       MessageBoxW(nullptr,L"An update is being installed. Please wait. / Güncelleme kuruluyor. Lütfen bekle.",L"MotoGP 09/10",MB_OK);
       Gdiplus::GdiplusShutdown(gdip_token);CoUninitialize();return 0;
     }
-    App app;auto mutex_name=L"Local\\MotoGP0910Launcher-"+std::to_wstring(std::hash<std::wstring>{}(app.exe.wstring()));
+    int argument_count=0;auto* arguments=CommandLineToArgvW(GetCommandLineW(),&argument_count);
+    bool discord_invite=false;
+    if(arguments){for(int i=1;i<argument_count;++i)discord_invite|=std::wstring_view(arguments[i])==L"--discord-invite";LocalFree(arguments);}
+    App app;const auto root_hash=std::hash<std::wstring>{}(app.exe.wstring());
+    auto mutex_name=L"Local\\MotoGP0910Launcher-"+std::to_wstring(root_hash);
     HANDLE mutex=CreateMutexW(nullptr,FALSE,mutex_name.c_str());if(!mutex)throw std::runtime_error("Cannot initialize launcher lock");
-    if(GetLastError()==ERROR_ALREADY_EXISTS){CloseHandle(mutex);MessageBoxW(nullptr,app.T(L"The launcher is already open.",L"Launcher zaten açık."),L"MotoGP 09/10",MB_OK);Gdiplus::GdiplusShutdown(gdip_token);CoUninitialize();return 0;}
+    if(GetLastError()==ERROR_ALREADY_EXISTS){
+      CloseHandle(mutex);bool forwarded=false;
+      if(discord_invite){
+        struct Search{HANDLE root;HWND window=nullptr;} search{reinterpret_cast<HANDLE>(root_hash|1)};
+        EnumWindows([](HWND window,LPARAM data)->BOOL{
+          auto& search=*reinterpret_cast<Search*>(data);wchar_t name[64]{};GetClassNameW(window,name,64);
+          if(std::wstring_view(name)==L"MotoGP0910Launcher"&&GetPropW(window,kInstallationProperty)==search.root){search.window=window;return FALSE;}return TRUE;
+        },reinterpret_cast<LPARAM>(&search));
+        if(search.window)forwarded=PostMessageW(search.window,kDiscordInviteLaunch,0,0)!=FALSE;
+      }
+      if(!forwarded)MessageBoxW(nullptr,app.T(L"The launcher is already open.",L"Launcher zaten açık."),L"MotoGP 09/10",MB_OK);
+      Gdiplus::GdiplusShutdown(gdip_token);CoUninitialize();return 0;
+    }
     RECT work{};SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
     app.scale=std::max(0.55,std::min({GetDpiForSystem()/96.0,(work.right-work.left-40)/double(kWidth),(work.bottom-work.top-50)/double(kHeight+kCaptionHeight)}));
     WNDCLASSW cls{};cls.lpfnWndProc=WindowProc;cls.hInstance=instance;cls.lpszClassName=L"MotoGP0910Launcher";cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);cls.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(motogp::kIconResource));RegisterClassW(&cls);
@@ -804,9 +877,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR,int show){
     auto window=CreateWindowExW(0,cls.lpszClassName,L"MotoGP 09/10 Launcher",style,(work.right-size.right+size.left)/2,(work.bottom-size.bottom+size.top)/2,
         size.right-size.left,size.bottom-size.top,nullptr,nullptr,instance,&app);
     if(!window){CloseHandle(mutex);throw std::runtime_error("Cannot create launcher window");}
+    SetPropW(window,kInstallationProperty,reinterpret_cast<HANDLE>(root_hash|1));
     motogp::ApplyWindowIcon(window);
     BOOL dark=TRUE;DwmSetWindowAttribute(window,20,&dark,sizeof(dark));
-    ShowWindow(window,show);UpdateWindow(window);updates::AcknowledgeRestart();app.StartUpdateCheck();MSG message;
+    ShowWindow(window,show);UpdateWindow(window);updates::AcknowledgeRestart();app.StartUpdateCheck();
+    if(discord_invite)PostMessageW(window,kDiscordInviteLaunch,0,0);MSG message;
     while(GetMessageW(&message,nullptr,0,0)>0){if(app.CaptureKey(message)||app.UpdateShortcut(message)||app.AchievementSearchShortcut(message))continue;if(!IsDialogMessageW(window,&message)){TranslateMessage(&message);DispatchMessageW(&message);}}
     CloseHandle(mutex);
   }catch(const std::exception& e){MessageBoxW(nullptr,(L"Cannot open launcher / Launcher açılamadı:\n"+ErrorDetails(e)).c_str(),L"MotoGP 09/10",MB_OK|MB_ICONERROR);result=1;}

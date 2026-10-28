@@ -2,7 +2,7 @@
 
 The implementation below is retained in main `8a33ea9` and the selective
 preview delivery. Its original build-only milestone is distinguished from
-the later [local validation](https://github.com/inflamesgo/motogp0910-recomp/blob/5e91cf5/docs/rider-license-validation.md); native Windows
+the later [local validation](https://github.com/inflamesgo/motogp0910-recomp/blob/28ba765/docs/rider-license-validation.md); native Windows
 gameplay and physical-controller acceptance remain separate.
 
 Selecting **Multiplayer → Splitscreen** evaluates playable devices once at entry.
@@ -15,6 +15,12 @@ Other device combinations keep the native eligibility check and warning. No
 unconditional bypass of the two-player requirement is used. Ordinary input
 polling and hotplug detection continue through the pinned SDK; no extra timer or
 per-frame eligibility scan is introduced.
+
+The controller warning uses PC wording: "Split-screen requires two controllers,
+or one controller with keyboard controls enabled in the launcher." The Turkish
+text gives the same two choices. The existing message getter substitutes only
+bank 0 IDs 2065 and 2066; the original message banks, eligibility checks, dialog
+layout and Accept action remain unchanged.
 
 During the local session, user 1 has a temporary, distinct local identity named
 **Player 2**. It is signed in locally, has no Xbox LIVE flag and gains no community

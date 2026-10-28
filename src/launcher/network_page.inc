@@ -24,7 +24,7 @@
     account_status=PageControl(6,L"STATIC",L"",SS_LEFTNOWORDWRAP|SS_CENTERIMAGE,0,112,kFormWidth,48);
     account_country=PageControl(6,L"STATIC",L"",SS_LEFTNOWORDWRAP|SS_CENTERIMAGE,0,164,kFormWidth,24);
     account_intro=LabelControl(6,L"Sign in with your NOBK.Online account to play online. Your username is your name in the game.",
-        L"Online oynamak için NOBK.Online hesabınla giriş yap. Kullanıcı adın oyunda görünen adındır.",0,96,kFormWidth,40);
+        L"Online oynamak için NOBK.Online hesabınla giriş yap. Kullanıcı adın oyunda görünen adındır.",0,96,kFormWidth,32);
     account_user=field(L"Username",L"Kullanıcı adı",0,132,kColumnWidth,kAccountUser,15);
     const auto pass_caption=LabelControl(6,L"Password",L"Şifre",kColumnX,132,kColumnWidth,24);
     account_pass=PageControl(6,L"EDIT",L"",WS_TABSTOP|ES_AUTOHSCROLL|ES_PASSWORD|WS_BORDER,kColumnX,160,kColumnWidth,30,kAccountPass);

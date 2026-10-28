@@ -46,7 +46,7 @@ class Model {
 };
 struct View {
   Page page=Page::General;
-  std::string capture;bool capture_wait=true;
+  std::string capture;bool capture_wait=true,capture_append=false;
   std::map<std::string,std::string> edits;
   bool saved=false;
 };
@@ -60,6 +60,7 @@ class InputGate {
   bool IsOpen()const{return open_.load(std::memory_order_acquire);}
   bool Blocking()const{return held_.load(std::memory_order_acquire);}
   void SetFocused(bool focused);
+  bool Focused()const{return focused_.load(std::memory_order_acquire);}
   uint16_t Buttons()const{return buttons_.load(std::memory_order_acquire);}
   bool NeutralReady()const{return IsOpen()&&focused_.load(std::memory_order_acquire)&&neutral_epoch_.load(std::memory_order_acquire)==Epoch();}
   uint64_t Epoch()const{return epoch_.load(std::memory_order_acquire);}
@@ -77,6 +78,7 @@ std::unique_ptr<rex::ui::ImGuiDialog> CreateMenu(rex::ui::ImGuiDrawer* drawer,
 void SetGuestGate(InputGate* gate, InputGate* player_card_gate=nullptr, InputGate* nobk_panel_gate=nullptr);
 void PollGuestInput();
 bool GuestInputBlocked();
+bool MenuOpen();
 // Compatibility access to InputStateMutex: serialize device polling and MnK
 // binding edits. UI key handlers and binding edits run on the same UI thread.
 std::mutex& InputValueMutex();

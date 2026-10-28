@@ -7,5 +7,5 @@ enum ControlId {kPath=101,kBrowse,kSize,kBackend,kFullscreen,kVsync,kKeyboard,kM
     kOnlineServer=161,kVerifyFiles=162,kDebugOverlay=163,kResetBindings=165,kAchievementSearch=220,kAchievementFilter,kAchievementPopup,kAchievementSound,kAchievementList,
     kAccountUser=170,kAccountPass,kSignIn,kSignOut,kRegister,
     kMonitor=175,kAddToSteam=176,kInstallDlc=177,kForgotPassword=178,kUpdateNotice=180,kUpdateNow,kUpdateCancel,kUpdateClose,
-    kRememberAccount=190,kMyAccount=191,kBindingBase=300,kCaptureBase=400};
+    kRememberAccount=190,kMyAccount=191,kDiscordPresence=192,kBindingBase=300,kCaptureBase=400,kAddBindingBase=500};
 }

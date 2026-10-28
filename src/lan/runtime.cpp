@@ -2,6 +2,9 @@
 #include "socket_bridge.h"
 #include "online/client.h"
 #include "online/stats.h"
+#include "online/social.h"
+#include "online/social_guest.h"
+#include "online/discord_invites.h"
 #include "local_splitscreen.h"
 #include <rex/cvar.h>
 #include <rex/hook.h>
@@ -11,6 +14,7 @@
 #include <rex/system/xam/user_profile.h>
 #include <shared_mutex>
 #include <atomic>
+REX_EXTERN(__imp__sub_82303390);
 #ifdef _WIN32
 #include <Windows.h>
 #endif
@@ -41,6 +45,8 @@ void Original(const char* name,PPCContext& ctx,uint8_t* base){
   target(ctx,base);
 }
 bool Message(PPCContext& ctx,uint8_t* base,bool async){
+  if(bridge&&bridge->Online()&&!async&&ctx.r3.u32==0xFC)
+    if(const auto result=online::social::GuestMessage(*bridge,ctx.r4.u32,ctx.r6.u32)){ctx.r3.u64=*result;return true;}
   if(bridge && ctx.r3.u32==0xFC){
     // XLIVEBASE requests the game makes while in an online room (diagnostics).
     static std::atomic<uint64_t> seen{0};const auto n=seen.fetch_add(1,std::memory_order_relaxed)+1;
@@ -120,6 +126,8 @@ std::string PlayerName(){
 #endif
 }
 void Start(rex::system::KernelState* kernel){
+  online::discord_invites::Stop();
+  online::social::Stop();
   std::unique_lock lock(bridge_mutex);
   sockets.reset();
   bridge.reset();
@@ -143,6 +151,10 @@ void Start(rex::system::KernelState* kernel){
   auto next_bridge=std::make_unique<GuestBridge>(kernel,node,mode=="online"?"":rex::cvar::Query<std::string>("lan_host_ip"),rex::cvar::Query<std::string>("lan_room_name"),service);
   auto next_sockets=std::make_unique<SocketBridge>(*next_bridge);
   bridge=std::move(next_bridge);sockets=std::move(next_sockets);
+  if(service){
+    online::social::Start(kernel,service,[]{return CurrentRoom();});
+    online::discord_invites::Start(service,[]{return CurrentRoom();},rex::cvar::Query<bool>("discord_presence_enabled"));
+  }
   REXLOG_INFO("NETWORK_READY: mode={} adapter={} endpoint={}:{} discovery={}",mode,node->AdapterName(),IPv4(node->Address().ip),node->Address().port,
       rex::cvar::Query<std::string>("lan_host_ip").empty()?"automatic":"direct-IP fallback");
 #else
@@ -150,11 +162,38 @@ void Start(rex::system::KernelState* kernel){
 #endif
 }
 void Stop(){
+  online::discord_invites::Stop();
+  online::social::Stop();
   {std::shared_lock lock(bridge_mutex);if(sockets)sockets->Shutdown();}
   std::unique_lock lock(bridge_mutex);sockets.reset();bridge.reset();
 }
 std::optional<Room> CurrentRoom(){std::shared_lock lock(bridge_mutex);return bridge?bridge->Network().CurrentRoom():std::nullopt;}
 #ifdef _WIN32
+REX_HOOK_RAW(sub_82303390){
+  {
+    std::shared_lock lock(bridge_mutex);
+    if(bridge&&bridge->Online()&&bridge->Network().CurrentRoom()){
+      online::social::RequestOpen();ctx.r3.u64=0;return;
+    }
+  }
+  __imp__sub_82303390(ctx,base);
+}
+REX_HOOK_RAW(__imp__XamUserAreUsersFriends){
+  std::shared_lock lock(bridge_mutex);
+  if(!bridge||!bridge->Online()||ctx.r3.u32!=0){Original("__imp__XamUserAreUsersFriends",ctx,base);return;}
+  const auto input=ctx.r4.u32,count=ctx.r5.u32,output=ctx.r6.u32,overlapped=ctx.r7.u32;
+  if(!count||count>100||!bridge->Valid(input,count*8)||(output&&!bridge->Valid(output,4,true))||
+      (overlapped&&!bridge->Valid(overlapped,sizeof(rex::system::XAM_OVERLAPPED),true))||bool(output)==bool(overlapped)){
+    ctx.r3.u64=87;return;
+  }
+  const auto snapshot=online::social::Read();
+  const uint32_t error=snapshot.supported&&snapshot.error.empty()?0:1231;
+  bool friends=!error;
+  for(unsigned i=0;i<count&&friends;++i){const auto peer=rex::memory::load_and_swap<uint64_t>(base+input+i*8);
+    friends=std::any_of(snapshot.friends.begin(),snapshot.friends.end(),[&](const auto& f){return f.peer==peer;});}
+  if(output){rex::memory::store_and_swap<uint32_t>(base+output,friends?1:0);ctx.r3.u64=error;}
+  else{bridge->Kernel()->CompleteOverlappedImmediateEx(overlapped,error?1627:0,error?0x80070000u|error:0,friends?1:0);ctx.r3.u64=997;}
+}
 REX_HOOK_RAW(__imp__NetDll_XNetGetOpt){
   // XNetGetOpt(caller, id, value, size). The race/lobby code polls option 6,
   // XNET_OPTID_CALLER_XMIT_BYTES (ULONGLONG bytes sent by the title), about
@@ -185,7 +224,9 @@ REX_HOOK_RAW(__imp__XamUserCreateStatsEnumerator){
 }
 REX_HOOK_RAW(__imp__XamEnumerate){
   std::shared_lock lock(bridge_mutex);
-  if(bridge && bridge->Online())if(const auto size=online::EnumeratorSize(bridge->Kernel(),ctx.r3.u32)){
+  auto size=bridge&&bridge->Online()?online::EnumeratorSize(bridge->Kernel(),ctx.r3.u32):std::nullopt;
+  if(!size&&bridge&&bridge->Online())size=online::social::FriendEnumeratorSize(*bridge,ctx.r3.u32);
+  if(size){
     // XamEnumerate ABI: handle, flags, buffer, length, items, overlapped.
     if(ctx.r4.u32 || ctx.r6.u32<*size || !bridge->Valid(ctx.r5.u32,*size,true) ||
        (ctx.r7.u32 && !bridge->Valid(ctx.r7.u32,4,true)) ||

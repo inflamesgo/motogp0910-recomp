@@ -1,5 +1,6 @@
 #include "guest_bridge.h"
 #include "online/stats.h"
+#include "online/social.h"
 #include <rex/memory.h>
 #include <rex/string/utf8.h>
 #include <rex/system/util/object_table.h>
@@ -93,6 +94,7 @@ std::vector<Room> GuestBridge::KnownRooms()const{
       return room.id==cached.id && room.host==cached.host;
     }))rooms.push_back(cached);
   }
+  if(auto invited=online::social::AcceptedRoom())rooms.push_back(*invited);
   return rooms;
 }
 std::function<uint32_t()> GuestBridge::StatisticsOperation(uint32_t message,uint32_t buffer,uint32_t size){
@@ -239,6 +241,7 @@ std::optional<uint32_t> GuestBridge::Dispatch(uint32_t message,uint32_t buffer,u
         // the short discovery cache expires. A real keyed handshake still
         // decides whether the selected host is alive and accepts membership.
         rooms.insert(rooms.end(),search_results_.begin(),search_results_.end());
+        if(auto invited=online::social::AcceptedRoom())rooms.push_back(*invited);
         auto found=std::find_if(rooms.begin(),rooms.end(),[&](const Room& r){return r.id==Load64(data) &&
           std::equal(r.key.begin(),r.key.end(),data+44);});
         if(found==rooms.end() || !node_->Join(*found,std::chrono::milliseconds(online_?4000:1200)))return Error(1168);

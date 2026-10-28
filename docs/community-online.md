@@ -5,6 +5,23 @@ Xbox account requirement. Players use the same compatible Windows build and
 provide their own game data. The same server program runs on **Linux or Windows
 with Python 3.11 or newer**, using only Python's standard library.
 
+## Current source/deployment boundary — 28 October 2026
+
+Source anchor `28ba765` includes native/Discord social modules and a client
+that requires scoped season/class statistics. Current `server/` still lacks
+`/v2/stats/scoped/capabilities`, `/read`, `/write` and isolated season storage.
+The legacy view-only service described below is therefore insufficient for the
+new client's leaderboard reads **and uploads**. Missing-capability warnings are
+not successful queries. Follow [the exact integration and migration contract](leaderboard-season-integration.md)
+and [critical website/help checklist](website-release-checklist.md) before release.
+
+[Native invitations](online-friends-invites.md) require verified immutable friend
+IDs and `--friends-api`. [Discord invitations](discord-invites.md) use separate
+capabilities on `/v2/social`, without that friends-ID prerequisite. Ghost replay
+transport/task/save/playback is not implemented in this source anchor; see
+[the native ghost plan](ghost-download-plan.md). A locally working menu or
+Discord invitation does not prove production compatibility.
+
 ## What the VDS runs
 
 - A directory for native Player Match rooms.
@@ -17,8 +34,10 @@ with Python 3.11 or newer**, using only Python's standard library.
 One player's game still runs the race simulation, as in the original peer-hosted
 multiplayer. The VDS is **not an unattended dedicated race simulation**. Leaving
 as the race host ends that session. This service does not restore Microsoft's
-Xbox Live accounts, friends, invitations, voice, Marketplace or official ranked
-arbitration. Use **Player Match** for community racing. It has no authoritative
+Xbox Live accounts, voice, Marketplace or official ranked arbitration. Optional
+community NOBK friends/invitations require the matching client/server source
+update and `--friends-api`; see [deployment and acceptance](online-friends-invites.md).
+Use **Player Match** for community racing. It has no authoritative
 anti-cheat: a modified client can submit fabricated records for its own identity.
 
 ## Player setup
@@ -332,12 +351,11 @@ setup `822FEE30`, and row setters `8223F3D0`, `8223F338`, `8223F300` and
 `8223F288`. Research for all 17 internal IDs includes the Championship flag
 override; the flag is never reconstructed from lap duration.
 
-`lap_times_probe` is a main-branch-only CPU regression target (excluded from
-this selective PR) covering the native
+`lap_times_probe` is an opt-in CPU-only regression target covering the native
 output ABI, all 378 view IDs, unchanged internal reads, mode/season/track
 projection, missing/invalid values, and the 17 mode-label IDs. It requires no
 server, original game inputs or GPU. The later main-source local regression recorded in
-[the Rider License validation report](https://github.com/inflamesgo/motogp0910-recomp/blob/5e91cf5/docs/rider-license-validation.md) includes this
+[the Rider License validation report](https://github.com/inflamesgo/motogp0910-recomp/blob/28ba765/docs/rider-license-validation.md) includes this
 probe. Native Windows leaderboard rendering and a live lap submission still
 require separate acceptance; CPU projection checks do not establish them.
 
@@ -385,8 +403,54 @@ path, not for the new Internet relay.
 
 The ghost-category extension repairs row presentation only. It does not implement
 uploading/downloading a ghost replay or validate that the live service rolls
-Monthly records over by calendar period. Replay transfers are intentionally
-outside the current scope. The extension was initially syntax-checked only. The later
+Monthly records over by calendar period. Replay transfers remain an explicit separate integration task, not a delivered
+feature of this display extension. The extension was initially syntax-checked only. The later
 local regression
 includes the current `lap_times_probe`; neither that probe nor the display fix
 validates real ghost transfer, Monthly rollover or an Internet race.
+
+## Track-menu mode selection and Time Trial query ownership
+
+The track menus apply a request-local mode predicate to timed display queries:
+Arcade = native mode 2, Career = unflagged modes 3–6, Championship = the native
+`0x10000000` flag, Time Trial = unflagged mode 10. Missing/invalid mode metadata
+is excluded. The standalone Lap Times screen remains an overall leaderboard.
+Arcade score categories and internal best-rating reads retain their native path.
+
+The deployed binary statistics protocol has no mode predicate. The client reads
+complete ranked pages, selects matching records, assigns ranks within that mode,
+and then applies page/around-player/by-user selection. It does not filter only
+the first ten global rows or leave gaps in mode-relative ranks. Work is bounded
+at approximately 10,000 entries per query; an incomplete/oversized response fails
+rather than presenting a partial board as complete. No extra HTTP endpoint or
+server deployment is required for this display correction.
+
+For Time Trial track-menu lap queries, group 0 is read from the corresponding
+native all-time group 2 (`view + 126`). The native submission path at `822FF518`
+keeps its Time Trial lap independently there, while group 0 can retain a faster
+lap from another mode. This reads statistics only and does not restore ghost
+replay downloading. The native result still carries the view ID requested by the
+guest, preserving its selected-track and output ABI contract.
+
+Time Trial initialization at `82234680` starts two copies of the same initial
+board query back to back (`8223477C`, `8223478C`). The second board at menu
+`+0x48FC` has no result-consumption path. Both native statistics objects share
+specification, output and overlapped/completion state. Starting the second query
+resets/cancels the first before the visible menu consumes its rows; the client
+completion worker can still write the older request's output. The Online path
+suppresses the second call at return address `82234790`. The normal global and
+friends requests continue, and Offline/LAN keep the original behavior. Native
+board destruction removes mode tags; standalone pages do not inherit them.
+
+`leaderboard_filter_probe` covers mixed-mode records, the Championship flag,
+mode-relative ranking, paging, player-specific reads, records beyond the first
+server page, invalid metadata and nested scope restoration. Quick quality checks
+run this small portable probe on Linux; the Windows build compiles the production
+native hooks. A native Windows menu check is still needed to establish rendered
+behavior. No local build or regression campaign is part of an ordinary build
+request.
+
+Storage remains one best record per `(player, view)`. The filter cannot recover
+historic Career/Championship laps already displaced by another mode in that view.
+Independent per-mode history requires a backward-compatible server storage and
+query change; this client fix does not relabel or modify existing records.

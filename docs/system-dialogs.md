@@ -2,7 +2,7 @@
 
 The implementation below is retained in main `8a33ea9` and the selective
 preview delivery. Its original build-only milestone is distinguished from
-the later [local validation](https://github.com/inflamesgo/motogp0910-recomp/blob/5e91cf5/docs/rider-license-validation.md); native Windows
+the later [local validation](https://github.com/inflamesgo/motogp0910-recomp/blob/28ba765/docs/rider-license-validation.md); native Windows
 gameplay and physical-controller acceptance remain separate.
 
 Text-entry dialogs such as career team naming use the SDK's shared ImGui

@@ -299,6 +299,7 @@ void Capture(Model& model,View& view){
   for(int b=0;b<3;++b)if(ImGui::IsMouseClicked(b))key=std::array{"LMB","RMB","MMB"}[b];
   if(key.empty())return;
   auto& io=ImGui::GetIO();if(io.KeyAlt)key="Alt+"+key;if(io.KeyCtrl)key="Ctrl+"+key;if(io.KeyShift)key="Shift+"+key;
+  if(view.capture_append)key=launcher::AddBindingAlternative(model.Value(view.capture),key);
   if(model.Set(view.capture,key)){view.edits.erase(view.capture);view.capture.clear();view.saved=false;}
 }
 void Widget(Model& model,View& view,const Spec& s,bool tr){
@@ -323,20 +324,30 @@ void Widget(Model& model,View& view,const Spec& s,bool tr){
     if(ImGui::SliderInt("##value",&n,0,100,"%d%%"))changed=model.Set(s.key,std::to_string(s.key=="present_fsr_sharpness_reduction"?2.0*(1.0-n/100.0):n/100.0));}
   else{
     auto [it,inserted]=view.edits.try_emplace(s.key,value);auto& text=it->second;
-    char buffer[192]{};std::copy_n(text.data(),std::min(text.size(),sizeof(buffer)-1),buffer);
-    const float button_width=std::min(150.f,ImGui::GetContentRegionAvail().x*.4f);
-    ImGui::SetNextItemWidth(std::max(60.f,ImGui::GetContentRegionAvail().x-button_width-12));
-    bool enter=ImGui::InputText("##binding",buffer,sizeof(buffer),ImGuiInputTextFlags_EnterReturnsTrue);text=buffer;
+    std::vector<char> buffer(std::max<size_t>(192,text.size()+128));std::copy(text.begin(),text.end(),buffer.begin());
+    const float button_width=std::min(130.f,ImGui::GetContentRegionAvail().x*.32f);
+    const float add_width=ImGui::GetFrameHeight();
+    ImGui::SetNextItemWidth(std::max(60.f,ImGui::GetContentRegionAvail().x-button_width-add_width-ImGui::GetStyle().ItemSpacing.x*2));
+    bool enter=ImGui::InputText("##binding",buffer.data(),buffer.size(),ImGuiInputTextFlags_EnterReturnsTrue);text=buffer.data();
     if(enter||ImGui::IsItemDeactivatedAfterEdit())if(text!=value)changed=model.Set(s.key,text);
     const bool capture=view.capture==s.key;
     ImGui::SameLine();
-    if(ImGui::Button(capture?Tr(tr,"Press a key...","Bir tuşa bas..."):Tr(tr,"Change key","Tuş değiştir"),ImVec2(button_width,0))){view.capture=s.key;view.capture_wait=true;}
+    if(ImGui::Button(capture?Tr(tr,"Press a key...","Bir tuşa bas..."):Tr(tr,"Change key","Tuş değiştir"),ImVec2(button_width,0))){view.capture=s.key;view.capture_wait=true;view.capture_append=false;}
     if(capture&&ImGui::IsItemHovered())ImGui::SetTooltip("%s",Tr(tr,"Esc cancels","Esc ile iptal"));
     if(ImGui::BeginPopupContextItem("##binding_actions")){
-      if(ImGui::MenuItem(Tr(tr,"Unbind","Tuşu kaldır"))){changed=model.Set(s.key,"");view.edits.erase(s.key);}
-      if(ImGui::MenuItem(Tr(tr,"Restore action default","Eylemi varsayılana döndür"))){for(const auto& b:launcher::kBindings)if(b.key==s.key)changed=model.Set(s.key,b.defaults);view.edits.erase(s.key);}
+      if(ImGui::MenuItem(Tr(tr,"Add key...","Tuş ekle..."))){view.capture=s.key;view.capture_wait=true;view.capture_append=true;}
+      if(ImGui::MenuItem(Tr(tr,"Add Escape","Esc ekle"))){changed=model.Set(s.key,launcher::AddBindingAlternative(value,"Escape"));view.edits.erase(s.key);view.capture.clear();}
+      if(ImGui::MenuItem(Tr(tr,"Clear all keys","Tüm tuşları kaldır"))){changed=model.Set(s.key,"");view.edits.erase(s.key);view.capture.clear();}
+      if(ImGui::MenuItem(Tr(tr,"Restore action default","Eylemi varsayılana döndür"))){for(const auto& b:launcher::kBindings)if(b.key==s.key)changed=model.Set(s.key,b.defaults);view.edits.erase(s.key);view.capture.clear();}
+      const auto alternatives=launcher::BindingAlternatives(value);
+      if(!alternatives.empty())ImGui::Separator();
+      for(size_t i=0;i<alternatives.size();++i){ImGui::PushID(static_cast<int>(i));const auto label=std::string(Tr(tr,"Remove: ","Kaldır: "))+alternatives[i];
+        if(ImGui::MenuItem(label.c_str())){changed=model.Set(s.key,launcher::RemoveBindingAlternative(value,i));view.edits.erase(s.key);view.capture.clear();}ImGui::PopID();}
       ImGui::EndPopup();
     }
+    ImGui::SameLine();
+    if(ImGui::Button("+",ImVec2(add_width,0))){view.capture=s.key;view.capture_wait=true;view.capture_append=true;}
+    if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",Tr(tr,"Add another key; existing assignments are kept. Right-click Change key to remove individual assignments.","Başka bir tuş ekle; mevcut atamalar korunur. Tek tek kaldırmak için Tuş değiştir düğmesine sağ tıkla."));
   }
   if(table)ImGui::EndTable();
   if(changed)view.saved=false;ImGui::Separator();ImGui::Spacing();ImGui::PopID();
@@ -461,6 +472,10 @@ void PollGuestInput(){
   if(auto* gate=guest_gate.load(std::memory_order_acquire))gate->PollGuest();
   if(auto* gate=player_card_gate.load(std::memory_order_acquire))gate->PollGuest();
   if(auto* gate=nobk_panel_gate.load(std::memory_order_acquire))gate->PollGuest();
+}
+bool MenuOpen(){
+  auto* gate=guest_gate.load(std::memory_order_acquire);
+  return gate&&gate->IsOpen();
 }
 bool GuestInputBlocked(){
   auto* gate=guest_gate.load(std::memory_order_acquire);

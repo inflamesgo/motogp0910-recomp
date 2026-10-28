@@ -13,7 +13,7 @@
   void BuildSteam(){
     LabelControl(3,L"Steam",L"Steam",0,338,kFormWidth,22);
     steam_button=PageControl(3,L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,0,364,184,32,kAddToSteam);
-    steam_status=PageControl(3,L"STATIC",L"",0,0,406,kFormWidth,64);
+    steam_status=PageControl(3,L"STATIC",L"",0,0,402,kFormWidth,36);
     SendMessageW(steam_status,WM_SETFONT,reinterpret_cast<WPARAM>(small_font),TRUE);
     RefreshSteam();
   }

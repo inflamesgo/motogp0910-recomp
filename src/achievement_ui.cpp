@@ -1,4 +1,5 @@
 #include "achievement_ui.h"
+#include "nobk_panel_visuals.h"
 #include "config_file.h"
 #include "overlay_theme.h"
 #include <imgui.h>
@@ -32,7 +33,7 @@ void Trophy(ImVec2 pos,float size,ImU32 color) {
 }
 void Icon(const rex::system::AchievementInfo& info,bool unlocked,float size,rex::ui::AchievementIconCache* icons) {
   auto* texture=icons?icons->GetIcon(info):nullptr;
-  if(texture) ImGui::ImageWithBg(reinterpret_cast<ImTextureID>(texture),ImVec2(size,size),ImVec2(0,0),ImVec2(1,1),ImVec4(0,0,0,0), unlocked?white:muted);
+  if(texture) ImGui::ImageWithBg(reinterpret_cast<ImTextureID>(texture),ImVec2(size,size),ImVec2(0,0),ImVec2(1,1),ImVec4(0,0,0,0),ImVec4(1,1,1,1));
   else {Trophy(ImGui::GetCursorScreenPos(),size,ImGui::GetColorU32(unlocked?orange:muted)); ImGui::Dummy(ImVec2(size,size));}
 }
 std::string Fold(std::string_view value) {
@@ -88,6 +89,219 @@ bool Matches(const rex::system::AchievementInfo& info,bool unlocked,const MenuSt
   const auto search=Fold(state.search);
   return search.empty() || Fold(info.label).find(search)!=std::string::npos || Fold(unlocked?info.description:info.unachieved_description.empty()?info.description:info.unachieved_description).find(search)!=std::string::npos;
 }
+namespace {
+std::string UnlockDate(uint64_t filetime,bool tr) {
+  constexpr uint64_t epoch=116444736000000000ULL;
+  if(filetime<=epoch)return {};
+  const auto seconds=(filetime-epoch)/10000000ULL;
+  if(seconds>=4102444800ULL)return {};
+  const std::chrono::year_month_day date{std::chrono::floor<std::chrono::days>(std::chrono::sys_seconds{std::chrono::seconds{static_cast<int64_t>(seconds)}})};
+  constexpr const char* months[]{"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+  constexpr const char* months_tr[]{"Oca","Şub","Mar","Nis","May","Haz","Tem","Ağu","Eyl","Eki","Kas","Ara"};
+  return std::to_string(unsigned(date.day()))+" "+(tr?months_tr[unsigned(date.month())-1]:months[unsigned(date.month())-1]);
+}
+void DrawApexContents(rex::system::AchievementManager& manager,MenuState& state,Preferences& preferences,
+    rex::ui::AchievementIconCache* icons,float bottom_space,const motogp::nobk::visual::AchievementAppearance& appearance) {
+  namespace visual=motogp::nobk::visual;
+  preferences.Refresh();const bool tr=preferences.turkish;
+  const float s=appearance.scale,alpha=appearance.alpha;
+  ImFont* regular=appearance.regular?appearance.regular:ImGui::GetFont();
+  ImFont* medium=appearance.semibold?appearance.semibold:regular;
+  ImFont* bold=appearance.bold?appearance.bold:medium;
+  const auto top=ImGui::GetCursorScreenPos();const float width=ImGui::GetContentRegionAvail().x,right=top.x+width;
+  auto label=[&](const std::string& text,ImVec2 pos,float size,ImVec4 color,ImFont* font,float end) {
+    visual::Label(ImGui::GetWindowDrawList(),font,size,pos,color,text,end,s,alpha);
+  };
+  auto right_label=[&](const std::string& text,float end,float y,float size,ImVec4 color,ImFont* font) {
+    label(text,ImVec2(end-visual::TextWidth(font,size,text),y),size,color,font,end);
+  };
+  ImGui::PushFont(regular,30*s);
+  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,ImVec2(7*s,6*s));
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,3*s);
+  const auto summary=Progress(manager);const auto catalog=manager.ListAchievements();
+  label(Tr(tr,"ACHIEVEMENTS","BAŞARIMLAR"),top,56*s,white,bold,right);
+  const auto count=std::to_string(summary.earned)+" / "+std::to_string(summary.total)+" "+Tr(tr,"UNLOCKED","KAZANILDI");
+  label(count,ImVec2(top.x,top.y+72*s),33*s,white,medium,right-250*s);
+  const auto percent=summary.total?summary.earned*100/summary.total:0;
+  label(std::to_string(percent)+"%",ImVec2(top.x+visual::TextWidth(medium,33*s,count)+30*s,top.y+77*s),28*s,orange,bold,right-250*s);
+  const auto score=std::to_string(summary.score)+" / "+std::to_string(summary.available_score)+" G";
+  right_label(score,right,top.y+77*s,29*s,muted,medium);
+  auto* draw=ImGui::GetWindowDrawList();
+  const ImVec2 progress(top.x,top.y+127*s),progress_end(right,top.y+135*s);
+  draw->AddRectFilled(progress,progress_end,visual::Color(182,188,199,.24f*alpha),4*s);
+  if(summary.total&&summary.earned)draw->AddRectFilled(progress,ImVec2(top.x+width*float(summary.earned)/summary.total,progress_end.y),ImGui::GetColorU32(orange),4*s);
+  const char* filters[]{Tr(tr,"ALL","TÜMÜ"),Tr(tr,"UNLOCKED","KAZANILAN"),Tr(tr,"LOCKED","KİLİTLİ")};
+  constexpr float filter_x[]{0,110,310},filter_w[]{86,186,144};
+  bool changed=false;
+  ImGui::PushStyleColor(ImGuiCol_Button,ImVec4(0,0,0,0));
+  ImGui::PushStyleColor(ImGuiCol_ButtonHovered,AccentTint(.10f,.35f));
+  ImGui::PushStyleColor(ImGuiCol_ButtonActive,AccentTint(.18f,.5f));
+  for(int i=0;i<3;++i) {
+    ImGui::SetCursorScreenPos(ImVec2(top.x+filter_x[i]*s,top.y+160*s));
+    ImGui::PushStyleColor(ImGuiCol_Text,state.filter==i?white:muted);
+    if(ImGui::Button(filters[i],ImVec2(filter_w[i]*s,42*s))){state.filter=i;state.selected_id=0;changed=true;}
+    ImGui::PopStyleColor();
+    if(state.filter==i)draw->AddLine(ImVec2(top.x+filter_x[i]*s,top.y+202*s),ImVec2(top.x+(filter_x[i]+filter_w[i])*s,top.y+202*s),ImGui::GetColorU32(orange),2*s);
+  }
+  ImGui::PopStyleColor(3);
+  const ImVec2 search(top.x+560*s,top.y+160*s);
+  draw->AddCircle(ImVec2(search.x+9*s,search.y+17*s),8*s,ImGui::GetColorU32(muted),0,2*s);
+  draw->AddLine(ImVec2(search.x+15*s,search.y+23*s),ImVec2(search.x+24*s,search.y+32*s),ImGui::GetColorU32(muted),2*s);
+  ImGui::SetCursorScreenPos(ImVec2(search.x+34*s,search.y));ImGui::SetNextItemWidth(std::max(40*s,right-search.x-34*s));
+  ImGui::PushStyleColor(ImGuiCol_FrameBg,ImVec4(0,0,0,0));
+  ImGui::PushStyleColor(ImGuiCol_FrameBgHovered,ImVec4(0,0,0,0));
+  ImGui::PushStyleColor(ImGuiCol_FrameBgActive,ImVec4(0,0,0,0));
+  changed|=ImGui::InputTextWithHint("##achievement_search",Tr(tr,"Search achievements...","Başarımlarda ara..."),state.search,sizeof(state.search));
+  ImGui::PopStyleColor(3);
+  draw->AddLine(ImVec2(search.x,top.y+202*s),ImVec2(right,top.y+202*s),visual::Color(217,221,226,.25f*alpha),s);
+  const auto selected=std::find_if(catalog.begin(),catalog.end(),[&](const auto& info){return info.id==state.selected_id&&Matches(info,manager.IsUnlocked(info.id),state);});
+  if(selected==catalog.end()) {
+    state.selected_id=0;
+    for(const auto& info:catalog)if(Matches(info,manager.IsUnlocked(info.id),state)){state.selected_id=info.id;break;}
+  }
+  const char* popup_label=Tr(tr,"Pop-up in game","Oyun içi bildirim");
+  const char* sound_label=Tr(tr,"Unlock sound","Başarım sesi");
+  const float controls_width=ImGui::CalcTextSize(popup_label).x+ImGui::CalcTextSize(sound_label).x+2*ImGui::GetFrameHeight()+70*s;
+  const bool compact=width-controls_width<150*s;
+  const float footer=ImGui::GetFrameHeightWithSpacing()*(compact?2:1)+16*s;
+  ImGui::SetCursorScreenPos(ImVec2(top.x-32*s,top.y+212*s));
+  ImGui::BeginChild("##achievement_list",ImVec2(width+32*s,std::max(100*s,ImGui::GetContentRegionAvail().y-footer-bottom_space-12*s)),ImGuiChildFlags_None);
+  if(changed)ImGui::SetScrollY(0);
+  size_t shown=0;
+  for(const auto& info:catalog) {
+    const bool earned=manager.IsUnlocked(info.id);if(!Matches(info,earned,state))continue;++shown;
+    const auto& description=earned?info.description:info.unachieved_description.empty()?info.description:info.unachieved_description;
+    const float available=ImGui::GetContentRegionAvail().x-32*s,text_width=std::max(100*s,available-256*s);
+    const float title_height=visual::WrappedHeight(bold,32*s,info.label,text_width);
+    const float description_height=visual::WrappedHeight(regular,24*s,description,text_width);
+    const float row_height=std::max(98*s,10*s+title_height+description_height+12*s);
+    const auto origin=ImGui::GetCursorScreenPos();
+    const int visible=std::max(0,int((origin.y-ImGui::GetWindowPos().y)/std::max(1.f,row_height+2*s)));
+    const float slide=visual::RowOffset(appearance.now,appearance.opened,appearance.changed,visible,s);
+    const ImVec2 pos(origin.x+32*s+slide,origin.y);
+    ImGui::PushID(int(info.id));ImGui::SetCursorScreenPos(pos);
+    const bool clicked=ImGui::InvisibleButton("##achievement_row",ImVec2(available,row_height),ImGuiButtonFlags_EnableNav);
+    const auto mouse=ImGui::GetIO().MouseDelta;
+    if(clicked||ImGui::IsItemFocused()||(ImGui::IsItemHovered()&&(mouse.x!=0||mouse.y!=0)))state.selected_id=info.id;
+    const bool active=state.selected_id==info.id;
+    auto* row_draw=ImGui::GetWindowDrawList();
+    if(active){
+      visual::Marker(row_draw,ImVec2(pos.x-18*s,pos.y+row_height*.5f),s,alpha);
+      visual::Underline(row_draw,ImVec2(pos.x,pos.y+row_height-2*s),origin.x+32*s+available,s,alpha);
+    } else row_draw->AddLine(ImVec2(pos.x,pos.y+row_height-2*s),ImVec2(origin.x+32*s+available,pos.y+row_height-2*s),visual::Color(217,221,226,.18f*alpha),s);
+    ImGui::SetCursorScreenPos(ImVec2(pos.x+7*s,pos.y+(row_height-78*s)*.5f));Icon(info,earned,78*s,icons);
+    visual::WrappedLabel(row_draw,bold,32*s,ImVec2(pos.x+126*s,pos.y+10*s),white,info.label,text_width);
+    visual::WrappedLabel(row_draw,regular,24*s,ImVec2(pos.x+126*s,pos.y+10*s+title_height),muted,description,text_width);
+    right_label(std::to_string(info.gamerscore)+" G",origin.x+32*s+available-10*s,pos.y+16*s,31*s,white,bold);
+    auto status=earned?UnlockDate(manager.GetUnlockTime(info.id),tr):std::string{};
+    if(status.empty())status=Tr(tr,earned?"UNLOCKED":"LOCKED",earned?"KAZANILDI":"KİLİTLİ");
+    right_label(status,origin.x+32*s+available-10*s,pos.y+58*s,20*s,earned?orange:muted,regular);
+    ImGui::SetCursorScreenPos(origin);ImGui::Dummy(ImVec2(available+32*s,row_height));ImGui::PopID();
+  }
+  if(!shown)ImGui::TextDisabled("%s",Tr(tr,summary.total?"No achievements match this filter.":"Achievement catalog is not available yet.",summary.total?"Bu filtreye uygun başarım bulunamadı.":"Başarım listesi henüz hazır değil."));
+  ImGui::EndChild();
+  ImGui::SetCursorScreenPos(ImVec2(top.x,ImGui::GetCursorScreenPos().y));ImGui::Dummy(ImVec2(0,10*s));
+  bool popup=preferences.popup.load();if(ImGui::Checkbox(popup_label,&popup)){preferences.popup=popup;preferences.Save();}
+  ImGui::SameLine(0,22*s);
+  bool sound=preferences.sound.load();if(ImGui::Checkbox(sound_label,&sound)){preferences.sound=sound;preferences.Save();}
+  if(!compact)ImGui::SameLine(0,22*s);
+  const float volume_right=ImGui::GetCursorScreenPos().x+ImGui::GetContentRegionAvail().x;
+  ImGui::SetNextItemWidth(std::max(40*s,ImGui::GetContentRegionAvail().x-72*s));int volume=preferences.volume.load();
+  ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize,16*s);
+  for(const auto color:{ImGuiCol_FrameBg,ImGuiCol_FrameBgHovered,ImGuiCol_FrameBgActive,ImGuiCol_SliderGrab,ImGuiCol_SliderGrabActive})
+    ImGui::PushStyleColor(color,ImVec4(0,0,0,0));
+  auto* footer_draw=ImGui::GetWindowDrawList();const int slider_start=footer_draw->VtxBuffer.Size;
+  if(ImGui::SliderInt("##achievement_volume",&volume,0,100,"%d%%"))preferences.volume=volume;
+  if(ImGui::IsItemDeactivatedAfterEdit())preferences.Save();
+  ImGui::PopStyleColor(5);
+  const bool editing=ImGui::IsItemActive()&&ImGui::GetIO().WantTextInput;
+  if(!editing) {
+    const auto white=ImGui::GetIO().Fonts->TexUvWhitePixel;
+    // Retain the native slider's input and focus handling, replace only its
+    // normal value text with the right-aligned percentage. Ctrl+click numeric
+    // editing retains its native text and caret.
+    for(int i=slider_start;i<footer_draw->VtxBuffer.Size;++i) {
+      auto& vertex=footer_draw->VtxBuffer[i];
+      if(vertex.uv.x!=white.x||vertex.uv.y!=white.y)vertex.col&=0x00FFFFFFu;
+    }
+    const auto a=ImGui::GetItemRectMin(),b=ImGui::GetItemRectMax();
+    const float y=(a.y+b.y)*.5f,padding=2+8*s;
+    const float first=a.x+padding,last=std::max(first,b.x-padding),handle=first+(last-first)*volume/100.f;
+    footer_draw->AddLine(ImVec2(first,y),ImVec2(last,y),visual::Color(190,197,208,.5f*alpha),4*s);
+    footer_draw->AddLine(ImVec2(first,y),ImVec2(handle,y),ImGui::GetColorU32(orange),4*s);
+    footer_draw->AddCircleFilled(ImVec2(handle,y),8*s,ImGui::GetColorU32(orange));
+    right_label(std::to_string(volume)+"%",volume_right,y-12*s,24*s,muted,regular);
+  }
+  ImGui::PopStyleVar(3);ImGui::PopFont();
+}
+}
+void DrawContents(rex::system::AchievementManager& manager,MenuState& state,Preferences& preferences,rex::ui::AchievementIconCache* icons,float bottom_space,
+    const motogp::nobk::visual::AchievementAppearance* appearance) {
+  if(appearance){DrawApexContents(manager,state,preferences,icons,bottom_space,*appearance);return;}
+  preferences.Refresh();
+  const bool tr=preferences.turkish;
+  const auto summary=Progress(manager);
+  ImGui::Text("%zu / %zu %s",summary.earned,summary.total,Tr(tr,"unlocked","kazanıldı"));
+  if(ImGui::GetContentRegionAvail().x>430.f)ImGui::SameLine();
+  ImGui::TextColored(orange,"  %llu / %llu G",static_cast<unsigned long long>(summary.score),static_cast<unsigned long long>(summary.available_score));
+  ImGui::ProgressBar(summary.total?float(summary.earned)/summary.total:0,ImVec2(-1,5),"");
+  const char* filters[]={Tr(tr,"All","Tümü"),Tr(tr,"Unlocked","Kazanılan"),Tr(tr,"Locked","Kilitli")};
+  for(int i=0;i<3;++i) {if(i) ImGui::SameLine(); const bool selected=state.filter==i; if(selected) ImGui::PushStyleColor(ImGuiCol_Button,AccentTint(.24f));
+    if(ImGui::Button(filters[i])) state.filter=i;
+    if(selected) ImGui::PopStyleColor();
+  }
+  ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##achievement_search",Tr(tr,"Search achievements...","Başarımlarda ara..."),state.search,sizeof(state.search));
+  const bool compact=ImGui::GetContentRegionAvail().x<560.f;
+  const float controls_height=ImGui::GetFrameHeightWithSpacing()*(compact?2.f:1.f)+12.f;
+  ImGui::BeginChild("##achievement_list",ImVec2(0,std::max(40.f,ImGui::GetContentRegionAvail().y-controls_height-bottom_space)),ImGuiChildFlags_None);
+  size_t shown=0;
+  for(const auto& info:manager.ListAchievements()) {
+    const bool earned=manager.IsUnlocked(info.id); if(!Matches(info,earned,state)) continue; ++shown;
+    ImGui::PushID(static_cast<int>(info.id));
+    const auto& description=earned?info.description:info.unachieved_description.empty()?info.description:info.unachieved_description;
+    const float scale=appearance?appearance->scale:1.f;
+    const float available=ImGui::GetContentRegionAvail().x;
+    const float text_width=std::max(80.f,available-130.f*scale);
+    const float title_height=ImGui::CalcTextSize(info.label.c_str(),nullptr,false,text_width).y;
+    const float description_height=ImGui::CalcTextSize(description.c_str(),nullptr,false,text_width).y;
+    const float row_height=std::max((appearance?86.f:96.f)*scale,title_height+description_height+46.f*scale);
+    const auto origin=ImGui::GetCursorScreenPos();bool highlighted=false;
+    if(appearance) {
+      const int visible=std::max(0,int((origin.y-ImGui::GetWindowPos().y)/(row_height+ImGui::GetStyle().ItemSpacing.y)));
+      const float slide=motogp::nobk::visual::RowOffset(appearance->now,appearance->opened,appearance->changed,visible,scale);
+      const ImVec2 a(origin.x+slide,origin.y),b(a.x+available,a.y+row_height);
+      highlighted=ImGui::IsMouseHoveringRect(a,b);
+      motogp::nobk::visual::Strip(ImGui::GetWindowDrawList(),a,b,26.f*scale,highlighted,appearance->alpha);
+      ImGui::SetCursorScreenPos(a);ImGui::PushStyleColor(ImGuiCol_ChildBg,ImVec4(0,0,0,0));
+      ImGui::PushStyleColor(ImGuiCol_Text,white);
+    }
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding,appearance?0.f:8.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,appearance?ImVec2(40.f*scale,10.f*scale):ImVec2(14,12));
+    ImGui::BeginChild("##row",ImVec2(appearance?available:0,row_height),ImGuiChildFlags_AlwaysUseWindowPadding|(appearance?ImGuiChildFlags_None:ImGuiChildFlags_Borders),ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
+    Icon(info,earned,(appearance?40.f:48.f)*scale,icons);ImGui::SameLine();
+    ImGui::BeginGroup(); ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+text_width);
+    ImGui::TextUnformatted(info.label.c_str()); ImGui::TextColored(muted,"%s",description.c_str());
+    ImGui::TextColored(earned?orange:muted,"%s  ·  %u G",Tr(tr,earned?"UNLOCKED":"LOCKED",earned?"KAZANILDI":"KİLİTLİ"),info.gamerscore);
+    ImGui::PopTextWrapPos();ImGui::EndGroup(); ImGui::EndChild(); ImGui::PopStyleVar(2);
+    if(appearance) {
+      ImGui::PopStyleColor(2);
+      const auto next=ImGui::GetCursorScreenPos();
+      ImGui::SetCursorScreenPos(ImVec2(origin.x,next.y-ImGui::GetStyle().ItemSpacing.y));
+      ImGui::Dummy(ImVec2(0,0));
+    }
+    ImGui::PopID();
+  }
+  if(!shown) {ImGui::Spacing(); ImGui::TextDisabled("%s",Tr(tr,summary.total?"No achievements match this filter.":"Achievement catalog is not available yet.",summary.total?"Bu filtreye uygun başarım bulunamadı.":"Başarım listesi henüz hazır değil."));}
+  ImGui::EndChild();
+  ImGui::Separator();
+  bool popup=preferences.popup.load(); if(ImGui::Checkbox(Tr(tr,"Pop-up in game","Oyun içi bildirim"),&popup)) {preferences.popup=popup; preferences.Save();}
+  ImGui::SameLine();
+  bool sound=preferences.sound.load(); if(ImGui::Checkbox(Tr(tr,"Unlock sound","Başarım sesi"),&sound)) {preferences.sound=sound; preferences.Save();}
+  if(!compact)ImGui::SameLine();
+  int volume=preferences.volume.load(); ImGui::SetNextItemWidth((appearance||compact)?-1.f:170.f);
+  if(ImGui::SliderInt("##achievement_volume",&volume,0,100,"%d%%")) preferences.volume=volume;
+  if(ImGui::IsItemDeactivatedAfterEdit()) preferences.Save();
+}
 bool DrawMenu(rex::system::AchievementManager& manager,MenuState& state,Preferences& preferences,ImFont* font,rex::ui::AchievementIconCache* icons,ImFont* heading) {
   preferences.Refresh();
   Theme theme(font); const bool tr=preferences.turkish; const auto& io=ImGui::GetIO();
@@ -96,50 +310,13 @@ bool DrawMenu(rex::system::AchievementManager& manager,MenuState& state,Preferen
   ImGui::SetNextWindowSize(size,ImGuiCond_Always);
   bool close=false;
   if(ImGui::Begin("##motogp_achievements",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoMove)) {
-    const auto summary=Progress(manager);
     ImGui::TextColored(orange,"MotoGP 09/10");
     if(heading) ImGui::PushFont(heading,30.f);
     ImGui::TextUnformatted(Tr(tr,"Achievements","Başarımlar"));
     if(heading) ImGui::PopFont();
     ImGui::TextDisabled("%s",Tr(tr,"Your milestones. Every race counts.","Her yarış, yeni bir hedef."));
     ImGui::Spacing();
-    ImGui::Text("%zu / %zu %s",summary.earned,summary.total,Tr(tr,"unlocked","kazanıldı"));
-    ImGui::SameLine(); ImGui::TextColored(orange,"  %llu / %llu G",static_cast<unsigned long long>(summary.score),static_cast<unsigned long long>(summary.available_score));
-    ImGui::ProgressBar(summary.total?float(summary.earned)/summary.total:0,ImVec2(-1,5),"");
-    const char* filters[]={Tr(tr,"All","Tümü"),Tr(tr,"Unlocked","Kazanılan"),Tr(tr,"Locked","Kilitli")};
-    for(int i=0;i<3;++i) {if(i) ImGui::SameLine(); const bool selected=state.filter==i; if(selected) ImGui::PushStyleColor(ImGuiCol_Button,AccentTint(.24f));
-      if(ImGui::Button(filters[i])) state.filter=i;
-      if(selected) ImGui::PopStyleColor();
-    }
-    ImGui::SetNextItemWidth(-1); ImGui::InputTextWithHint("##achievement_search",Tr(tr,"Search achievements...","Başarımlarda ara..."),state.search,sizeof(state.search));
-    ImGui::BeginChild("##achievement_list",ImVec2(0,-92),ImGuiChildFlags_None);
-    size_t shown=0;
-    for(const auto& info:manager.ListAchievements()) {
-      const bool earned=manager.IsUnlocked(info.id); if(!Matches(info,earned,state)) continue; ++shown;
-      ImGui::PushID(static_cast<int>(info.id));
-      const auto& description=earned?info.description:info.unachieved_description.empty()?info.description:info.unachieved_description;
-      const float available=ImGui::GetContentRegionAvail().x;
-      const float text_width=std::max(80.f,available-130.f);
-      const float title_height=ImGui::CalcTextSize(info.label.c_str(),nullptr,false,text_width).y;
-      const float description_height=ImGui::CalcTextSize(description.c_str(),nullptr,false,text_width).y;
-      const float row_height=std::max(96.f,title_height+description_height+46.f);
-      ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding,8.f); ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(14,12));
-      ImGui::BeginChild("##row",ImVec2(0,row_height),ImGuiChildFlags_Borders|ImGuiChildFlags_AlwaysUseWindowPadding,ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
-      Icon(info,earned,48,icons);ImGui::SameLine();
-      ImGui::BeginGroup(); ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+text_width);
-      ImGui::TextUnformatted(info.label.c_str()); ImGui::TextColored(muted,"%s",description.c_str());
-      ImGui::TextColored(earned?orange:muted,"%s  ·  %u G",Tr(tr,earned?"UNLOCKED":"LOCKED",earned?"KAZANILDI":"KİLİTLİ"),info.gamerscore);
-      ImGui::PopTextWrapPos();ImGui::EndGroup(); ImGui::EndChild(); ImGui::PopStyleVar(2); ImGui::PopID();
-    }
-    if(!shown) {ImGui::Spacing(); ImGui::TextDisabled("%s",Tr(tr,summary.total?"No achievements match this filter.":"Achievement catalog is not available yet.",summary.total?"Bu filtreye uygun başarım bulunamadı.":"Başarım listesi henüz hazır değil."));}
-    ImGui::EndChild();
-    ImGui::Separator();
-    bool popup=preferences.popup.load(); if(ImGui::Checkbox(Tr(tr,"Pop-up in game","Oyun içi bildirim"),&popup)) {preferences.popup=popup; preferences.Save();}
-    ImGui::SameLine();
-    bool sound=preferences.sound.load(); if(ImGui::Checkbox(Tr(tr,"Unlock sound","Başarım sesi"),&sound)) {preferences.sound=sound; preferences.Save();}
-    ImGui::SameLine(); int volume=preferences.volume.load(); ImGui::SetNextItemWidth(std::max(90.f,std::min(170.f,size.x*.22f)));
-    if(ImGui::SliderInt("##achievement_volume",&volume,0,100,"%d%%")) preferences.volume=volume;
-    if(ImGui::IsItemDeactivatedAfterEdit()) preferences.Save();
+    DrawContents(manager,state,preferences,icons,ImGui::GetFrameHeightWithSpacing());
     ImGui::TextDisabled("%s",Tr(tr,"F7 / Esc to return to the game","Oyuna dönmek için F7 / Esc"));
     ImGui::SameLine(std::max(0.f,size.x-136.f)); close=ImGui::Button(Tr(tr,"Close","Kapat"),ImVec2(88,0));
     if(ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)&&ImGui::IsKeyPressed(ImGuiKey_Escape,false)) close=true;
@@ -182,6 +359,7 @@ class Menu final:public rex::ui::ImGuiDialog {
  public:
   Menu(rex::ui::ImGuiDrawer* d,rex::ui::ImmediateDrawer* immediate,rex::Runtime* runtime,rex::system::AchievementManager& manager,ImFont* font,ImFont* heading,std::shared_ptr<Preferences> p,CloseRequest close)
       :ImGuiDialog(d),manager_(manager),font_(font),heading_(heading),prefs_(std::move(p)),close_(std::move(close)),icons_(immediate,runtime) {}
+  ~Menu() override {prefs_->Save();}
  protected:
   void OnDraw(ImGuiIO&) override {if(DrawMenu(manager_,state_,*prefs_,font_,&icons_,heading_)&&!closing_) {closing_=true;close_(lifetime_);}}
  private:

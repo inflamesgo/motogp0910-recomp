@@ -5,6 +5,15 @@ security audit of the public NOBK website, account service or hosting. Shared
 site sign-in/PC linking was added afterward; see [current account behavior](community-online.md).
 The original findings and test evidence below retain their reviewed scope.
 
+Current integration caveat (28 October 2026): native/Discord social routes were
+added after this historical review. Their source/deployment boundaries are in
+[the invitation handoff](chunchunq-friends-invites-ghost-handoff.md). Scoped
+leaderboard routes/storage and ghost transport are absent from the current
+service, so this report cannot certify them. Implement the
+[scoped route and migration contract](leaderboard-season-integration.md) with
+explicit parser/proxy limits; preserve existing authentication/identity checks.
+No new security test or production audit was performed for this doc update.
+
 Scope: the Python control API, authenticated UDP relay, SQLite identity/stats,
 Windows control/UDP client, protocol transitions, packaging and the supplied
 Linux/Windows deployment instructions. This was a source review plus bounded

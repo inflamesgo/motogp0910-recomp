@@ -7,6 +7,14 @@ supplied by the user, replacing the previous drawn symbols.
 Keyboard prompts now use dark rounded keycaps, orange MotoGP accents and
 Open Sans Semibold lettering. [Design, coverage and validation](keyboard-prompts.md).
 
+The native bottom command bars prefer **Enter** for A/Cross and **Backspace**
+for B/Circle when those exact unmodified alternatives are assigned, regardless
+of their order in the saved list. Other bindings fall back to the first valid
+alternative. This is a caption preference only: gameplay mappings are unchanged.
+Control diagrams, loading/tutorial hints and replay prompts retain their
+gameplay labels, including R for tuck-in and Q for downshift with the default
+preset. Both command-bar sizing and drawing use the same scoped preference.
+
 ## Installation and use
 
 Extract the complete Windows ZIP. Replace the EXEs and both runtime DLLs,
@@ -124,6 +132,7 @@ archives are not modified.
 | `0x822BA980`, `0x822BA6C0`, `0x82388DA8` | Loading-tip input style, keyboard spacing and immediate icon replacement |
 | `0x8227E440` | Identify verified replay controller sprite calls |
 | `0x82358448` | Keyboard cap spacing in prompt bars |
+| `0x82358A88`, `0x82358CA8` | Scoped bottom-command navigation labels for both sizing and drawing |
 | `0x82284E98`, `0x82284E88`, `0x82284DB0` | Inline glyph recognition and sizing |
 | `0x823D1008` | Per-frame style and Windows XInput observation |
 

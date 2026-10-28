@@ -6,6 +6,7 @@
 #include "ps3_prompt_textures.h"
 #include "control_diagram.h"
 #include "frame_pacing.h"
+#include "discord_presence.h"
 
 #include <rex/cvar.h>
 #include <rex/hook.h>
@@ -31,6 +32,8 @@ REX_EXTERN(__imp__sub_82388DA8);
 REX_EXTERN(__imp__sub_822BA980);
 REX_EXTERN(__imp__sub_822BA6C0);
 REX_EXTERN(__imp__sub_82358448);
+REX_EXTERN(__imp__sub_82358A88);
+REX_EXTERN(__imp__sub_82358CA8);
 REX_EXTERN(__imp__sub_823D1008);
 REX_EXTERN(__imp__sub_82284E98);
 REX_EXTERN(__imp__sub_82284E88);
@@ -46,6 +49,11 @@ std::atomic<bool> focused{false};
 rex::ui::Window* input_window = nullptr;
 thread_local char measured_glyph=0;
 thread_local unsigned inline_depth=0;
+thread_local unsigned navigation_depth=0;
+struct NavigationPromptScope {
+  NavigationPromptScope(){++navigation_depth;}
+  ~NavigationPromptScope(){--navigation_depth;}
+};
 thread_local char sprite_glyph=0;
 thread_local Style sprite_style=Style::Xbox;
 #if REX_PLATFORM_WIN32
@@ -79,7 +87,7 @@ void PollXInput(bool=false) {}
 // are texture handles in the separate table at 0x8292CCB8, not font pixels.
 std::string Label(char code,Style style) {
   auto* glyph=FindGlyph(code);
-  return glyph?LabelFor(*glyph,style,[](const char* name){return rex::cvar::Query<std::string>(name);}):std::string{};
+  return glyph?LabelFor(*glyph,style,[](const char* name){return rex::cvar::Query<std::string>(name);},navigation_depth!=0):std::string{};
 }
 Style SelectedStyle() {
   const auto value=rex::cvar::Query<std::string>("button_prompt_style");
@@ -309,6 +317,17 @@ REX_HOOK_RAW(sub_8227E440) {
   using namespace motogp::prompts;
   DrawReplaySprite(ctx,base,ready.load(std::memory_order_relaxed)?frame_style.load(std::memory_order_relaxed):Style::Xbox);
 }
+// Both native bottom-command renderers measure and draw inside this scope.
+// Keep navigation aliases out of loading tips, control diagrams, tutorials and
+// replay controls, even when those are visible alongside a command bar.
+REX_HOOK_RAW(sub_82358A88) {
+  motogp::prompts::NavigationPromptScope scope;
+  __imp__sub_82358A88(ctx,base);
+}
+REX_HOOK_RAW(sub_82358CA8) {
+  motogp::prompts::NavigationPromptScope scope;
+  __imp__sub_82358CA8(ctx,base);
+}
 REX_HOOK_RAW(sub_82358448) {
   using namespace motogp::prompts;
   const auto index=ctx.r3.u32,width=ctx.r5.u32,height=ctx.r6.u32;
@@ -341,6 +360,7 @@ REX_HOOK_RAW(sub_82284DB0) {
 }
 REX_HOOK_RAW(sub_823D1008) {
   motogp::PaceGameFrame();
+  motogp::discord::ObserveGuestFrame(base);
   using namespace motogp::prompts;
   if(ready.load(std::memory_order_relaxed)) {
     active.SetKeyboardEnabled(rex::cvar::Query<bool>("mnk_mode"));

@@ -134,7 +134,8 @@
   }
   void PaintAchievementList(HDC target){
     RECT client;GetClientRect(achievement_list,&client);auto dc=CreateCompatibleDC(target);auto bitmap=CreateCompatibleBitmap(target,std::max<LONG>(1,client.right),std::max<LONG>(1,client.bottom));auto old=SelectObject(dc,bitmap);
-    FillRect(dc,&client,card);SetBkMode(dc,TRANSPARENT);
+    // Keep card gaps and the space beside the scrollbar on the shared artwork.
+    DrawSurface(dc,achievement_list);SetBkMode(dc,TRANSPARENT);
     const int bitmap_width=client.right;client.right-=S(20);
     const auto description=[&](size_t index)->std::wstring{const auto& info=catalog.entries[index].info;return Wide(AchievementEarned(info.id)||info.unachieved_description.empty()?info.description:info.unachieved_description);};
     auto height=[&](size_t index){SelectObject(dc,small_font);RECT r{0,0,std::max<LONG>(S(80),client.right-S(172)),0};auto text=description(index);DrawTextW(dc,text.c_str(),-1,&r,DT_CALCRECT|DT_WORDBREAK|DT_NOPREFIX);return std::max<int>(S(76),r.bottom+S(42));};

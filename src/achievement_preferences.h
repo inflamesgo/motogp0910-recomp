@@ -1,5 +1,5 @@
 #pragma once
-// Shared by the launcher and F7 overlay. Unlock state is never written here.
+// Shared by the launcher, NOBK Achievements tab and Offline/LAN overlay. Unlock state is never written here.
 #include <toml++/toml.hpp>
 #include <algorithm>
 #include <cwctype>

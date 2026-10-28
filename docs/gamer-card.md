@@ -27,7 +27,7 @@ The user supplied native screenshots of both tabs and confirmed that account
 data and avatars load in game. Windows build and Quick quality checks were
 dispatched for `1b8e105`; that dispatch did not include local validation or
 inspection of workflow results. The subsequent `8a33ea9` source milestone passed
-[local phased checks and a Windows Release build](https://github.com/inflamesgo/motogp0910-recomp/blob/5e91cf5/docs/rider-license-validation.md). The approved design is implemented on an 1100 by
+[local phased checks and a Windows Release build](https://github.com/inflamesgo/motogp0910-recomp/blob/28ba765/docs/rider-license-validation.md). The approved design is implemented on an 1100 by
 580 design canvas, scaled uniformly to fit the display. Text and hit targets
 share that canvas; the outer window has no scroll state. Overview fits without
 scrolling. Records draws complete rows with a dedicated row-based scrollbar,
@@ -116,15 +116,16 @@ Overview shows distinct circuits where the player leads at least one board,
 the number of boards where the player is first, and total published leaderboard
 entries. Its percentage uses the 20 playable circuits supplied by the base/DLC
 content. Native slot 17 (reserved Balaton) is excluded; Silverstone, Shanghai and
-Istanbul remain indices 18, 19 and 20. This differs deliberately from the live
-site's older 17-track catalogue. After comparing the user's screenshots with the
+Istanbul remain indices 18, 19 and 20. The site's v9 catalogue rechecked on
+28 October now also counts 20 tracks; the earlier 17-track difference is
+historical. After comparing the user's screenshots with the
 site's `leaders` / `withTracks` calculation, the user selected **DLC included:
 tracks led / 20**. The first statistic is now **Tracks Held**, and the **Total Track
 Domination** percentage uses that same distinct-first-place circuit count. In
 the supplied example, 17 boards led across 16 circuits means 16/20 = 80%; 19 is
-the total board count. The site's 16/17 uses its smaller catalogue. The previous
-17/20 counted circuits with any saved result, a different statistic. The initial
-2009 season filter still applies; multiple first-place boards on one circuit
+the total board count. The historical site's 16/17 used its then-smaller catalogue. The previous
+17/20 counted circuits with any saved result, a different statistic. All published
+seasons are now included, matching the site; multiple first-place boards on one circuit
 increase Records held but count only once toward Tracks Held. The third caption
 is **Boards Entered** (**Katıldığı tablolar**), replacing **Leaderboards**. This
 counts separate published circuit/class boards with a personal best, not unique
@@ -140,18 +141,19 @@ does not add another summary column or alter the Records table.
 
 The website does not display the raw `pos` from `/api/motogp/ranking` directly.
 Its current `withTracks` code joins that endpoint's players with leaders from
-`/api/motogp/views`, counts distinct circuits led, sorts by that count descending,
-then `firsts` descending, then `points` descending, and finally raw `pos`
+`/api/motogp/views`, counts distinct circuits led, sorts by `firsts` (records held) descending,
+then circuit count descending, then `points` descending, and finally raw `pos`
 ascending. The client follows that exact ordering and looks up the selected
 MotoGP player ID, never the current launcher user or a display-name guess.
 The live ranking page, its current JavaScript and both public endpoints were
 retrieved successfully during this implementation; the responses contained 15
 ranked riders and 38 populated boards at that time.
 
-This rank intentionally follows the site's current 17-base-circuit catalogue
-and full ranking scope. It does not apply the card's separate DLC denominator
-or temporary 2009 summary filter. The public ranking API currently returns at
-most 100 riders; an absent rider is shown with a hyphen, not an invented rank.
+This rank follows the site's 23 October catalogue: 17 base circuits plus DLC
+indices 18–20, excluding reserved slot 17, and the full ranking scope. It uses
+the same all-season record scope as the summary; the rank itself does not use
+the summary's denominator. The public ranking API currently returns at most
+100 riders; an absent rider is shown with a hyphen, not an invented rank.
 The hover explanation distinguishes a rider not listed from a lookup failure.
 Loading shows an ellipsis; a failed or malformed response shows a hyphen while
 the rest of the profile remains available.
@@ -165,20 +167,31 @@ shared across players for 60 seconds. Each opening selects its own player ID
 from that list, including when the profile itself is cached. No polling occurs;
 failed lookups wait 60 seconds before a subsequent opening can retry. Closed or
 superseded requests cannot publish into a different card. Local checks are
-recorded in [the validation report](https://github.com/inflamesgo/motogp0910-recomp/blob/5e91cf5/docs/rider-license-validation.md); native visual
+recorded in [the validation report](https://github.com/inflamesgo/motogp0910-recomp/blob/28ba765/docs/rider-license-validation.md); native visual
 verification remains pending.
 
 ## Records table
 
 Records has five columns: rank/board population on one line, circuit with
-class/2009 underneath, best lap, stored mode, and **Set**. Results use the site's
+class and the published season underneath, best lap, stored mode, and **Set**. Results use the site's
 `display.text`; game mode comes from uploaded property 6. Unknown data uses an
 ASCII hyphen to avoid a missing-glyph diamond. The empty bike column is removed.
 Class labels follow published metadata, preserving the existing server-side
-Moto2 integration limits. As requested, this initial view is scoped to 2009:
-known 2010 rows (property 13 = 1) are excluded from the list, filters and summary;
-legacy rows without a season remain in the initial 2009 presentation. The source
-season property is retained for the later server integration.
+Moto2 integration limits. The temporary 2009 restriction has been removed:
+2009 and 2010 records, including DLC, participate in the list, class filters and
+summary. Property 13 supplies the displayed year (0 = 2009, 1 = 2010); legacy
+rows without a known season remain visible without an invented year.
+
+A live API comparison on 23 October 2026 reproduced the reported mismatch:
+25 boards / 24 firsts / 20 circuits became 20 / 19 / 16 after the old filter
+excluded five 2010 rows. This was a client-side scope error, not API lag. The
+all-season regression reproduces the 25 / 24 / 20 totals, including all three DLC
+slots and the reserved-slot gap. The affected game and probe cross-compiled for
+Windows; the focused `gamer_card_probe ... --data-only` run passed under Wine.
+It verifies mixed-season totals, DLC inclusion, class filtering and real/unknown
+year labels without starting the unrelated font/emoji/ImGui checks. Evidence is
+kept in ignored `out/rider-season-fix-validation/`; native Windows UI acceptance
+is separate.
 
 **Set** uses each row's existing `updated` Unix timestamp, the same field used
 by the site's results table. It shows localized relative time below seven days,
@@ -263,10 +276,10 @@ the input font's SHA-256. Its SIL OFL attribution is retained in
 ## Personal-best circuit panel
 
 The user subsequently approved the circuit-panel layout. Personal Best now has
-a small circuit outline on the left, circuit name and lap/class/2009/mode in
+a small circuit outline on the left, circuit name and lap/class/season/mode in
 the middle, and rank/board population plus **Set** on the right. The middle
 column has equal insets between its dividers: circuit name at the top, the
-larger lap below, then class/2009/mode on one line, all centered on the same
+larger lap below, then class/season/mode on one line, all centered on the same
 axis. A missing-lap message shares that center. The date uses
 the same accepted-result timestamp and formatter as Records; hovering it shows
 the full local date and time. All lap details come from the exact selected
@@ -278,8 +291,8 @@ shows **No track selected**; lobby context integration remains a separate task.
 The site's public track catalogue maps native circuit slots 0–16 to PNG outlines
 under `https://www.nobkonline.com/assets/motogp/tracks/`. The client uses an explicit
 filename table with the original slot indices. Losail's `omap-qatar.png` was
-retrieved and visually inspected. Reserved slot 17 has no map. Published map
-paths for Silverstone, Shanghai and Istanbul were not found; the ignored local
+retrieved and visually inspected. Reserved slot 17 has no map. The earlier inspection found no published map
+paths for Silverstone, Shanghai and Istanbul; the ignored local
 game assets were also searched, including `frontend_track.mgb`, but no directly
 usable DLC outline was identified. These slots show **Map unavailable** while
 their lap data remains usable. No guessed substitute circuit or original game
@@ -295,7 +308,7 @@ session. Failed requests wait at least 60 seconds before another opening can
 retry; there is no polling. Cached profiles still select artwork from the new
 opening's circuit, and closed or superseded requests cannot publish into another
 card. The UI uploads each changed image once and fits its original aspect ratio
-inside the map area. See [local validation](https://github.com/inflamesgo/motogp0910-recomp/blob/5e91cf5/docs/rider-license-validation.md) for the
+inside the map area. See [local validation](https://github.com/inflamesgo/motogp0910-recomp/blob/28ba765/docs/rider-license-validation.md) for the
 subsequent checks; native visual review remains pending.
 
 ## Avatar loading and fallback
@@ -350,7 +363,7 @@ profile visible; a verified account rename clears the previous account's photo.
 Partial or failed loads are eligible for another attempt on reopening. The cache
 does not survive game shutdown, and a first visit still depends on network and
 server response time. Subsequent local checks are recorded in
-[the validation report](https://github.com/inflamesgo/motogp0910-recomp/blob/5e91cf5/docs/rider-license-validation.md).
+[the validation report](https://github.com/inflamesgo/motogp0910-recomp/blob/28ba765/docs/rider-license-validation.md).
 
 Avatar downloads are limited to 512 KiB and image dimensions to 1024 by 1024
 before decoding. HTTP errors, missing photos, invalid or oversized images leave
@@ -361,6 +374,23 @@ actual image format rather than the upload extension. No optional WEBP codec
 is required by the card. Texture creation and release
 use the existing immediate renderer on the UI thread. The full photo fits the
 avatar square without stretching or cropping. Avatars are not written to disk.
+
+## Current scoped API and DLC integration boundary — 28 October 2026
+
+Source `28ba765` already displays published rows from both years; the old
+2009-only filter is not current. It does not independently retrieve two
+season-scoped bests for one native view: `ReadResults` and `ReadRanking`
+deduplicate by view, and the selected personal-best context identifies a view
+only. Update those validators/context alongside the scoped public API, not
+by relabelling a shared middle-class board. See the
+[scoped integration contract](leaderboard-season-integration.md).
+
+The current site `tracks.json` publishes `omap-silverstone.png` (18),
+`omap-shanghai.png` (19), and `omap-istanbul.png` (20). The client's `kTrackMaps`
+entries for those indices remain empty. Bind the verified assets and inspect
+the actual outlines when doing that client integration; this documentation
+review does not change code or claim visual acceptance. The older absence
+report above explains the fallback at implementation time, not today's site.
 
 ## Diagnostics
 
@@ -432,7 +462,7 @@ and selected-board ordering, as well as a lobby member,
 multiple leaderboard rows including the local player, accounts with/without a
 photo, failed lookups, opening/dismissal presses and switching to the browser
 and back. Native playthrough checks remain pending; local CPU/UI coverage is
-recorded in [the validation report](https://github.com/inflamesgo/motogp0910-recomp/blob/5e91cf5/docs/rider-license-validation.md).
+recorded in [the validation report](https://github.com/inflamesgo/motogp0910-recomp/blob/28ba765/docs/rider-license-validation.md).
 
 ## Delivery and superseded design notes
 
@@ -443,3 +473,7 @@ former follow-up checklist are consolidated above; no new redesign is pending.
 The feature and its required resources/licenses were selectively pushed to
 `preview` as `ab7d3f7` for the existing upstream PR. The original frozen handoff
 worktree was retained. See [the handoff](chunchunq-handoff.md) for exact scope.
+
+Ordinary future build requests dispatch both Actions workflows on `main` under
+[the repository rules](https://github.com/inflamesgo/motogp0910-recomp/blob/28ba765/AGENTS.md). The local validation/build recorded for
+this milestone was an explicit exception, not a new default build policy.

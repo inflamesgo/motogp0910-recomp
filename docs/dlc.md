@@ -61,14 +61,53 @@ mask; no network fields or requests were added. Older clients remain outside
 this local enforcement and are not rejected by a new server-side package check.
 Native multiplayer behavior with these packages still requires gameplay review.
 
+## Native bike-parameter failure diagnostics
+
+### Complete bike catalog capacity
+
+The inspected base roster defines 65 bikes, the GP update adds 17 unique bikes,
+and the Moto2/125 update adds 20, for 102 unique definitions. Native
+`822E9118` stopped appending at 100. A missing name lookup in `822E87A0` returns
+ID 0, which explains a Moto2 grid containing `ducati_mb_hayden` despite the
+correct class and season. The diagnostic log confirmed five such active grid
+slots and a full 100-entry table; they were not unused slots beyond grid count.
+
+Four TU-specific instruction hooks in `motogp0910_manifest.toml` raise the
+capacity to 112 together: allocation bytes at `822E9284`, row initialization at
+`822E9298`, the append comparison at `822E9130`, and the used-bike bitmap clear
+at `8229FFA8`. The native parser, record order, allocator and physics data are
+preserved. The bitmap begins at stack+80 and the next buffer begins at +192;
+112 markers fit without enlarging the native frame or overwriting the next
+buffer. Increasing only the table would leave the extra markers uninitialized.
+
+`bike_capacity_probe` exercises the generated native initializer, append and
+lookup across the former limit, the new rejection boundary, allocation guards,
+the Moto2 bitmap/default-path stage and the calling convention. Metadata parsing
+and external I/O are isolated fixture callbacks. A live native Windows race is
+still the gameplay acceptance check.
+
+### Failed-load snapshots
+
+The native parameter loader `8229FF00` retains its original inputs, return value,
+file routing and simulation behavior. On failure, the client records
+`DLC_BIKE_PARAMS_FAILED` with the native class, live season/frontend/race mode,
+grid count and local profile selection. `DLC_BIKE_PARAMS_SLOT` records the
+enabled slots from the same 20-entry scan used by the loader, their bike IDs,
+parameter names and whether they fall within the current grid count. These
+read-only records are limited to four failed loads per application start;
+successful loads are silent. They do not redirect a missing parameter file to
+another bike or change physics. Live logs are required to identify the origin
+of a wrong parameter name; a generic file-not-found log alone does not prove
+that the selected rider or an AI rider belongs to a different season.
+
 ## Storage and preservation
 
 The destination is the public launcher's own `dlc` folder. It is independent of
 `user_data_root`, and no XUID folder is inserted between `dlc` and the title ID.
 Release archives include an empty `dlc/` directory beside `game/`; no installed
-DLC content is packaged. Preserve the empty directories when distributing the
-application ZIP. Marketplace content is shared across local game profiles in
-this installation:
+DLC content is packaged. Windows Actions uploads the prepared ZIP to preserve
+those empty directories. Marketplace content is shared across local game profiles
+in this installation:
 
 ```text
 LAUNCHER_FOLDER/
@@ -141,6 +180,6 @@ produced on 21 October without tests. The
 subsequent success-dialog removal and Turkish footer polish are also included in
 the 22 October main Release build. Its later launcher checks exercise readiness
 with isolated inventory fixtures; they do not perform a real DLC import or race.
-See [the validation report](https://github.com/inflamesgo/motogp0910-recomp/blob/5e91cf5/docs/rider-license-validation.md). No native Windows installation/gameplay result is claimed for the
+See [the validation report](https://github.com/inflamesgo/motogp0910-recomp/blob/28ba765/docs/rider-license-validation.md). No native Windows installation/gameplay result is claimed for the
 complete final source state. Imported DLC assets, including their language scripts, remain
 unmodified. Native visual/gameplay review and RAR/7z sample imports remain pending.

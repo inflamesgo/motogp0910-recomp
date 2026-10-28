@@ -253,6 +253,9 @@
     game_language=field(3,L"Game language",L"Oyun dili",0,198,kGameLanguage);FillCombo(game_language,{L"English",L"Français",L"Deutsch",L"Español",L"Italiano",L"Türkçe"});
     prompt_style=field(3,L"Button prompts",L"Tuş simgeleri",0,268,kPromptStyle);
     BuildSteam();
+    // Keep Discord below the two-line Steam status, within the page height.
+    discord_presence=check(3,0,440,kFormWidth,kDiscordPresence);
+    labels.push_back({discord_presence,L"Show Discord activity",L"Discord aktivitesini göster"});
     adapter=field(0,L"Graphics adapter",L"Ekran kartı",0,0,kAdapter);
     render_resolution=field(0,L"Internal resolution",L"İşleme çözünürlüğü",kColumnX,0,kRenderResolution);
     display_monitor=field(0,L"Monitor",L"Monitör",0,68,kMonitor);
@@ -273,22 +276,27 @@
     for(size_t i=0;i<engine_choices.size();++i){const auto slot=i<3?i:i+1;
       engine_choices[i]=field(4,kEngineEffects[i].english,kEngineEffects[i].turkish,(slot%2)*kColumnX,(slot/2)*82,kEngineBase+i);}
     shadow_distance=field(4,L"Shadow render distance",L"Gölge çizim mesafesi",kColumnX,82,kShadowDistance);
-    debug_overlay=check(4,0,410,kColumnWidth,kDebugOverlay);labels.push_back({debug_overlay,L"Enable debug overlay",L"Hata ayıklama bilgilerini göster"});
+    debug_overlay=check(4,0,410,kColumnWidth,kDebugOverlay);labels.push_back({debug_overlay,L"Enable debug log and overlay",L"Hata ayıklama bilgilerini göster"});
     crash_diagnostics=check(4,kColumnX,410,kColumnWidth,kCrashDiagnostics);SetCheck(crash_diagnostics,Get(config.table,"launcher_crash_monitor",true));
     LabelControl(1,L"Master volume",L"Ana ses düzeyi",0,0,kFormWidth-104);volume_value=PageControl(1,L"STATIC",L"100%",SS_RIGHT,kFormWidth-80,0,80,22);
     volume=PageControl(1,TRACKBAR_CLASSW,L"",WS_TABSTOP|TBS_HORZ|TBS_NOTICKS,0,36,kFormWidth,40,kVolume);SendMessageW(volume,TBM_SETRANGE,TRUE,MAKELPARAM(0,100));
     mute=check(1,0,100,kFormWidth,kMute);
-    backend=field(2,L"Controller",L"Kontrolcü",0,0,kBackend);keyboard=check(2,kColumnX,26,kColumnWidth,kKeyboard);
+    const auto backend_label=LabelControl(2,L"Controller",L"Kontrolcü",0,0,256,24);
+    backend=combo(2,0,26,256,kBackend);help_labels[backend]=backend_label;
+    keyboard=check(2,268,26,172,kKeyboard);
+    reset_bindings=PageControl(2,L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,452,26,kFormWidth-452,32,kResetBindings);
     adaptive_triggers=PageControl(2,L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,0,76,kFormWidth,32,kAdaptiveTriggers);
     for(size_t i=0;i<kBindings.size();++i){const int y=124+static_cast<int>(i)*38;
       LabelControl(2,kBindings[i].english,kBindings[i].turkish,0,y+3,kFormWidth-196,26);
-      binding_buttons[i]=PageControl(2,L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,kFormWidth-176,y,176,32,kCaptureBase+i);
+      binding_buttons[i]=PageControl(2,L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,kFormWidth-176,y,136,32,kCaptureBase+i);
       SetWindowSubclass(binding_buttons[i],BindingProc,1,reinterpret_cast<DWORD_PTR>(this));
+      binding_add_buttons[i]=PageControl(2,L"BUTTON",L"+",WS_TABSTOP|BS_PUSHBUTTON,kFormWidth-32,y,32,32,kAddBindingBase+i);
     }
-    reset_bindings=PageControl(2,L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,0,136+static_cast<int>(kBindings.size())*38,270,32,kResetBindings);
     BuildNetworkPage();
     BuildAchievements();
-    status=Control(L"STATIC",L"",0,44,kStatusY,kPageWidth-16,30);SendMessageW(status,WM_SETFONT,reinterpret_cast<WPARAM>(small_font),TRUE);
+    // Keep a small bottom inset: independently rounded Y/height values can
+    // otherwise place this control one pixel outside a 75% scaled window.
+    status=Control(L"STATIC",L"",0,44,kStatusY,kPageWidth-16,28);SendMessageW(status,WM_SETFONT,reinterpret_cast<WPARAM>(small_font),TRUE);
     save=Control(L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,28,kActionsY,108,32,kSave);
     defaults=Control(L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,146,kActionsY,128,32,kDefaults);
     logs=Control(L"BUTTON",L"",WS_TABSTOP|BS_PUSHBUTTON,284,kActionsY,88,32,kLogs);

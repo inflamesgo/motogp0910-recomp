@@ -25,6 +25,10 @@ inline RECT SliderTrack(HWND control){
 // fill also depends on the value, so a page click needs the full client clip.
 // Expand damage before BeginPaint; keep native input, capture and notifications.
 inline LRESULT CALLBACK SliderDamageProc(HWND control,UINT message,WPARAM wp,LPARAM lp,UINT_PTR id,DWORD_PTR){
+  // Wheel input scrolls the settings page instead of changing a focused or
+  // hovered slider. Mouse dragging and keyboard adjustment remain native.
+  if(message==WM_MOUSEWHEEL)return SendMessageW(GetParent(control),message,wp,lp);
+  if(message==WM_MOUSEHWHEEL)return 0;
   if((message==WM_LBUTTONDOWN||message==WM_LBUTTONDBLCLK)&&IsWindowEnabled(control)){
     const auto low=SendMessageW(control,TBM_GETRANGEMIN,0,0),high=SendMessageW(control,TBM_GETRANGEMAX,0,0);
     if(high>low){
