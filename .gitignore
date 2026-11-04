@@ -1,0 +1,53 @@
+# Original inputs and generated game code
+/assets/
+/game/
+/dlc/
+/generated/*
+!/generated/rexglue.cmake
+
+# Build outputs and local tool configuration
+/out/
+/build/
+/downloads/
+/CMakeUserPresets.json
+__pycache__/
+*.pyc
+.hypothesis/
+
+# Accounts, saves, diagnostics and deployment state
+/user/
+/saves/
+/profiles/
+/cache/
+/logs/
+/data/
+/server/
+.env
+.env.*
+*.log
+*.dmp
+*.profile
+*.sqlite3*
+*.sqlite*
+*.pem
+*.key
+*.pfx
+*.p12
+launcher.json
+config.json
+achievement-ui.toml
+hud-display.toml
+nobk-account.bin
+
+# Private editor/agent state and accidental input or backup imports
+/.codex/
+/.claude/
+/.agents/
+/.idea/
+*.xex
+*.xexp
+*.iso
+*.sav
+*.bundle
+*.zip
+!third_party/rexglue-runtime/rexglue-0.10.0.24-dev.gbd833a2-custom-f1-backdrop-windows-x64.zip

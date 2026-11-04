@@ -1,0 +1,62 @@
+// Generated achievement strings; keep in sync with resources/localization/tr/achievements.json.
+#pragma once
+#include <rex/system/achievement_store.h>
+namespace motogp::localization {
+inline bool TranslateAchievement(rex::system::AchievementInfo& info){
+  struct Text {uint32_t id;const char* label;const char* description;const char* locked;};
+  static constexpr Text rows[]={
+    {1,"Zafer","Bölünmüş Ekran dışındaki herhangi bir modda bir yarış kazanın.","Bölünmüş Ekran dışındaki herhangi bir modda bir yarış kazanın."},
+    {2,"Yüz Yarış","Bölünmüş Ekran dışındaki herhangi bir modda 100 yarış tamamlayın.","Bölünmüş Ekran dışındaki herhangi bir modda 100 yarış tamamlayın."},
+    {3,"Çaylak","Kariyer modunda bir 125cc sezonunu kazanın.","Kariyer modunda bir 125cc sezonunu kazanın."},
+    {4,"Profesyonel","Kariyer modunda bir 250cc sezonunu kazanın.","Kariyer modunda bir 250cc sezonunu kazanın."},
+    {5,"Efsane","Kariyer modunda bir MotoGP sezonunu kazanın.","Kariyer modunda bir MotoGP sezonunu kazanın."},
+    {6,"Sınıfın Birincisi","Kariyer modunda bir yarış hafta sonunun üç seansında da A derecesi alın.","Kariyer modunda bir yarış hafta sonunun üç seansında da A derecesi alın."},
+    {9,"Kadroyu Tamamla","Kariyer modunda tüm personel pozisyonlarını doldurun.","Kariyer modunda tüm personel pozisyonlarını doldurun."},
+    {10,"İtibar Kazandın!","Kariyer modunda 1. itibar seviyesine ulaşın.","Kariyer modunda 1. itibar seviyesine ulaşın."},
+    {11,"Nam Salmış","Kariyer modunda 10. itibar seviyesine ulaşın.","Kariyer modunda 10. itibar seviyesine ulaşın."},
+    {13,"Ünlü","Kariyer modunda 20. itibar seviyesine ulaşın.","Kariyer modunda 20. itibar seviyesine ulaşın."},
+    {14,"Tüm Zamanların En İyisi","Kariyer modunda 30. itibar seviyesine ulaşıp tüm zamanların en iyisi olun.","Kariyer modunda 30. itibar seviyesine ulaşıp tüm zamanların en iyisi olun."},
+    {15,"Kendi Markan","Takım kaplamanızı, kaskınızı ve tulumunuzu seçip kendi takım renklerinize boyayın.","Takım kaplamanızı, kaskınızı ve tulumunuzu seçip kendi takım renklerinize boyayın."},
+    {16,"Kendi Pistinde Zafer","Kariyer modunda ana pistinizde bir yarış kazanın.","Kariyer modunda ana pistinizde bir yarış kazanın."},
+    {17,"Sponsor Ağı","Tüm sponsorluk alanlarını doldurun.","Tüm sponsorluk alanlarını doldurun."},
+    {18,"Teknoloji Ustası","Kariyer modunda bir MotoGP motosikletini tamamen geliştirin.","Kariyer modunda bir MotoGP motosikletini tamamen geliştirin."},
+    {19,"Her Engeli Aş","Her tür dinamik hedefi başarıyla tamamlayın.","Her tür dinamik hedefi başarıyla tamamlayın."},
+    {20,"Dinamik!","50'den fazla dinamik yarış hedefi tamamlayın.","50'den fazla dinamik yarış hedefi tamamlayın."},
+    {21,"Bana Bunu Yaptırdılar","Şampiyona modunda tam bir sezon tamamlayın.","Şampiyona modunda tam bir sezon tamamlayın."},
+    {22,"Kilitleri Aç","Herhangi bir oyun modunda MotoGP sınıfını açın.","Herhangi bir oyun modunda MotoGP sınıfını açın."},
+    {23,"Ek Can","Arcade modunda devam hakkı kullanmadan tam bir sezon tamamlayın.","Arcade modunda devam hakkı kullanmadan tam bir sezon tamamlayın."},
+    {24,"Rüzgâr Koridoru","Arcade modunda toplam 10 dakika başka sürücülerin rüzgâr koridorundan yararlanın.","Arcade modunda toplam 10 dakika başka sürücülerin rüzgâr koridorundan yararlanın."},
+    {25,"Ayna, Sinyal, Manevra","Arcade modunda aynı tur içinde her tür süre bonusunu kazanın.","Arcade modunda aynı tur içinde her tür süre bonusunu kazanın."},
+    {26,"Jeton At","Arcade modunda devam hakkı kullanın ve ardından yarışı birinci bitirin.","Arcade modunda devam hakkı kullanın ve ardından yarışı birinci bitirin."},
+    {27,"Zamanı Geride Bırak","Arcade modunda devam hakkı kullanmadan bir yarışı başladığınızdan daha fazla süreyle bitirin.","Arcade modunda devam hakkı kullanmadan bir yarışı başladığınızdan daha fazla süreyle bitirin."},
+    {29,"Güç Takviyesi!","Arcade modunda süreniz bittikten sonra, devam hakkını kullanmadan önce ek süre kazanın.","Arcade modunda süreniz bittikten sonra, devam hakkını kullanmadan önce ek süre kazanın."},
+    {30,"Hayalet Avcısı!","Zamana Karşı modunda çevrim içi bir hayalet indirip ona karşı yarışın.","Zamana Karşı modunda çevrim içi bir hayalet indirip ona karşı yarışın."},
+    {31,"Kendi Yolunu Bul","Zamana Karşı modunda kişisel bir ideal çizgi oluşturup başka bir oyun modunda kullanın.","Zamana Karşı modunda kişisel bir ideal çizgi oluşturup başka bir oyun modunda kullanın."},
+    {32,"Eğlence Vampirini Yen","Zamana Karşı modunda Donington'da 01:19.78'den daha iyi bir zaman yapın.","Zamana Karşı modunda Donington'da 01:19.78'den daha iyi bir zaman yapın."},
+    {33,"Pol Pozisyonu","Sıralamayı birinci bitirip pol pozisyonunu alın.","Sıralamayı birinci bitirip pol pozisyonunu alın."},
+    {34,"Kusursuz Gün","Bölünmüş Ekran dışındaki herhangi bir modda ceza almadan bir yarış kazanın.","Bölünmüş Ekran dışındaki herhangi bir modda ceza almadan bir yarış kazanın."},
+    {35,"Altın Peşinde","Bölünmüş Ekran dışındaki herhangi bir modda her pistte bir yarış kazanın.","Bölünmüş Ekran dışındaki herhangi bir modda her pistte bir yarış kazanın."},
+    {36,"Meydan Oku","Yarışa son sıradan başlayıp birinci bitirin.","Yarışa son sıradan başlayıp birinci bitirin."},
+    {37,"Senden Farklıyım","Bölünmüş Ekran dışındaki herhangi bir modda bitiş çizgisini motosikletinizden ayrı geçin.","Bölünmüş Ekran dışındaki herhangi bir modda bitiş çizgisini motosikletinizden ayrı geçin."},
+    {38,"Duramıyorum","Bölünmüş Ekran dışındaki herhangi bir modda, herhangi bir pistte ters yönde bir tur tamamlayın.","Bölünmüş Ekran dışındaki herhangi bir modda, herhangi bir pistte ters yönde bir tur tamamlayın."},
+    {39,"Su Sporları","Bölünmüş Ekran dışındaki herhangi bir modda yağışlı havada bir yarış kazanın.","Bölünmüş Ekran dışındaki herhangi bir modda yağışlı havada bir yarış kazanın."},
+    {40,"Yolun Hâkimi","Bölünmüş Ekran dışındaki herhangi bir modda bütün yarışı lider götürüp kazanın.","Bölünmüş Ekran dışındaki herhangi bir modda bütün yarışı lider götürüp kazanın."},
+    {41,"İkiz Suret","Bölünmüş Ekran dışındaki herhangi bir modda oyundaki her sürücüyle bir yarış bitirin.","Bölünmüş Ekran dışındaki herhangi bir modda oyundaki her sürücüyle bir yarış bitirin."},
+    {42,"Yirmi Bir","Çevrim içi 21 yarış kazanın.","Çevrim içi 21 yarış kazanın."},
+    {43,"Nicky Hayden","Çevrim içi 69 yarış kazanın.","Çevrim içi 69 yarış kazanın."},
+    {44,"Bize Gelir misiniz?","Çok oyunculu bir yarışa ev sahipliği yapın.","Çok oyunculu bir yarışa ev sahipliği yapın."},
+    {45,"Kendi Emeğin","Çok oyunculu bir yarışta Kariyer modundaki motosikletinizi ve sürücünüzü kullanın.","Çok oyunculu bir yarışta Kariyer modundaki motosikletinizi ve sürücünüzü kullanın."},
+    {46,"Şampanya!","Başlangıç dizilişi tamamen insan oyuncularla dolu olan bir yarışı kazanın.","Başlangıç dizilişi tamamen insan oyuncularla dolu olan bir yarışı kazanın."},
+    {47,"Tek Teker Ustası","Bölünmüş Ekran dışındaki herhangi bir modda ön tekerleği kaldırarak en az 500 fit ilerleyin.","Bölünmüş Ekran dışındaki herhangi bir modda ön tekerleği kaldırarak en az 500 fit ilerleyin."},
+    {48,"Ön Teker Ustası","Bölünmüş Ekran dışındaki herhangi bir modda arka tekerleği kaldırarak en az 50 fit ilerleyin.","Bölünmüş Ekran dışındaki herhangi bir modda arka tekerleği kaldırarak en az 50 fit ilerleyin."},
+    {49,"Dostum, Motosikletim Nerede?","Bölünmüş Ekran dışındaki herhangi bir modda bir kazadan sonra motosikletinizden 100 yardadan fazla uzağa düşün.","Bölünmüş Ekran dışındaki herhangi bir modda bir kazadan sonra motosikletinizden 100 yardadan fazla uzağa düşün."},
+    {51,"İyi Yolculuklar","Bölünmüş Ekran dışındaki herhangi bir modda 100 milden fazla yol alın.","Bölünmüş Ekran dışındaki herhangi bir modda 100 milden fazla yol alın."},
+    {52,"Rüzgâr Tüneli","Bölünmüş Ekran dışındaki herhangi bir modda 207 mil/sa hızını aşın.","Bölünmüş Ekran dışındaki herhangi bir modda 207 mil/sa hızını aşın."},
+    {53,"Şerefe","Bölünmüş Ekran dışındaki herhangi bir modda seyircilerin heyecanını en yüksek seviyeye çıkarın.","Bölünmüş Ekran dışındaki herhangi bir modda seyircilerin heyecanını en yüksek seviyeye çıkarın."},
+    {54,"Foto Finiş","Bölünmüş Ekran dışındaki herhangi bir modda bir yarışı başka bir sürücüyle aranızda en fazla 0,1 saniye fark olacak şekilde bitirin.","Bölünmüş Ekran dışındaki herhangi bir modda bir yarışı başka bir sürücüyle aranızda en fazla 0,1 saniye fark olacak şekilde bitirin."},
+    {55,"İstikrar Abidesi!","Tam bir sezonun her yarışını ilk 10 içinde bitirin.","Tam bir sezonun her yarışını ilk 10 içinde bitirin."},
+  };
+  for(const auto& row:rows)if(row.id==info.id){info.label=row.label;info.description=row.description;info.unachieved_description=row.locked;return true;}
+  return false;
+}
+}
