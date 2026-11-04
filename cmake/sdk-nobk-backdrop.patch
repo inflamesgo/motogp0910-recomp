@@ -1,0 +1,47 @@
+diff --git a/include/rex/ui/d3d12/d3d12_presenter.h b/include/rex/ui/d3d12/d3d12_presenter.h
+--- a/include/rex/ui/d3d12/d3d12_presenter.h
++++ b/include/rex/ui/d3d12/d3d12_presenter.h
+@@ -313,6 +313,9 @@
+   // well as by presenter initialization and shutdown.
+   PaintContext paint_context_;
+
++  // Owned by the project backdrop pass; destroyed after paint fences complete.
++  void* motogp_panel_backdrop_ = nullptr;
++
+ #if defined(REX_HAS_FIDELITYFX_RUNTIME) && REX_HAS_FIDELITYFX_RUNTIME
+   void* temporal_upscaler_context_ = nullptr;
+   uint32_t temporal_upscaler_max_render_width_ = 0;
+diff --git a/src/ui/d3d12/d3d12_presenter.cpp b/src/ui/d3d12/d3d12_presenter.cpp
+--- a/src/ui/d3d12/d3d12_presenter.cpp
++++ b/src/ui/d3d12/d3d12_presenter.cpp
+@@ -22,6 +22,7 @@
+ #include <rex/ui/d3d12/d3d12_presenter.h>
+ #include <rex/ui/d3d12/d3d12_provider.h>
+ #include <rex/ui/d3d12/d3d12_util.h>
++#include "nobk_backdrop_gpu.h"
+ #include <rex/ui/surface_win.h>
+
+ #if defined(REX_HAS_FIDELITYFX_RUNTIME) && REX_HAS_FIDELITYFX_RUNTIME
+@@ -57,6 +58,7 @@
+   // From most likely the latest to most likely the earliest to be signaled, so
+   // just one sleep will likely be needed.
+   paint_context_.AwaitSwapChainUsageCompletion();
++  Motogp_DestroyPanelBackdrop(motogp_panel_backdrop_);
+   guest_output_resource_refresher_submission_tracker_.Shutdown();
+   ui_submission_tracker_.Shutdown();
+ #if defined(REX_HAS_FIDELITYFX_RUNTIME) && REX_HAS_FIDELITYFX_RUNTIME
+@@ -1181,6 +1183,14 @@
+     back_buffer_clear_needed = false;
+   }
+
++  if (execute_ui_drawers && guest_output_resource) {
++    Motogp_DrawPanelBackdrop(motogp_panel_backdrop_, provider_, command_list, back_buffer,
++        back_buffer_rtv, current_paint_submission,
++        paint_context_.paint_submission_tracker.GetCompletedSubmission());
++    // The backdrop restores this RTV, including on its no-op path.
++    // Rebind unconditionally if the original scene did not bind it.
++  }
++
+   if (execute_ui_drawers) {
+     // Draw the UI.
+     if (!back_buffer_bound) {

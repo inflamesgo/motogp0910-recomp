@@ -1,0 +1,20 @@
+#pragma once
+
+#include <rex/ui/window.h>
+#include <rex/ppc/context.h>
+#include "button_prompt_types.h"
+
+namespace motogp::prompts {
+// Replacement geometry uses the game's original UI draw batch and layout.
+class Geometry;
+void EmitGeometry(PPCContext& context,uint8_t* base,const Geometry& geometry);
+Style CurrentStyle();
+void StartInputObserver(rex::ui::Window* window);
+void StopInputObserver();
+// Native batching helpers preserve guest vertices and the guest calling convention.
+bool DrawReplacement(PPCContext& context,uint8_t* base,Style style,bool inline_glyph=false);
+// Replay controls use cropped sprites from a separate bank.
+char ReplaySpriteGlyph(uint64_t caller,uint32_t sprite,const uint8_t* base);
+void DrawReplaySprite(PPCContext& context,uint8_t* base,Style style);
+float MeasureButtonHalfWidth(char code,float original,Style style);
+}

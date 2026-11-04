@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "language": "tr",
+  "voice_language": "english",
+  "message_count": 2102,
+  "translated_messages": 1697,
+  "files": [
+    {
+      "path": "text/english.msg",
+      "source_decoded_sha256": "d3df65ecb87a4d1378936e15a6155ed2ce8482b13c574510ad8207baa0d20e1a",
+      "sha256": "2c84a4d390d95e137de08d46bc3aa39aebdb6247af7a7ee6cc7c2e716e4f1eee",
+      "size": 75347
+    },
+    {
+      "path": "scripts/bikes.english.lua",
+      "source_decoded_sha256": "af2866f6e8a069b59ed2431a5e575b7655a3512ce5d8a9cdc9cba5088b485fea",
+      "sha256": "1f2d07f905729a68139fa06d2a0dd5883412e5dba1c1af8fa7d71b733e9ca0b2",
+      "size": 23236
+    },
+    {
+      "path": "scripts/tracks.english.lua",
+      "source_decoded_sha256": "6d8944e4f4aed1c84dd9ce8f10bdd6a113bd5b58a48ba60ee9ae47e97a722c47",
+      "sha256": "9bb65d42188da12b159a5796dfcfa3afa49be8851c1f4fb1aeadeffa8a70e0e3",
+      "size": 51289
+    },
+    {
+      "path": "scripts/upgrades.english.lua",
+      "source_decoded_sha256": "a0e611a0af764a3952612b6f834ca4b77cde104b7845e58486ddc18e89adcdeb",
+      "sha256": "bfbf62c52c355dac1f29497de71af9810133a66696fe7b75f2dcde96e4eb92a7",
+      "size": 161575
+    },
+    {
+      "path": "scripts/unlockables.english.lua",
+      "source_decoded_sha256": "9621d38b598e2ed314105164ad569f624c81c676706a40d1b8f25bcc4828823d",
+      "sha256": "1b55de43221f02580a78e5e2a6b99131f27cf9fedeca52002cbe822a05488347",
+      "size": 6327
+    },
+    {
+      "path": "scripts/credits.english.lua",
+      "source_decoded_sha256": "f2a28390b5244d6fa31bf55d633ded6cd7d73558faf58895326ec4f164f49999",
+      "sha256": "bb693f5f2f433ab4ee487afb6d2263e5aa66726be26f6c19180d8266f75f753b",
+      "size": 35317
+    },
+    {
+      "path": "fonts/impact_17pt.font",
+      "source_decoded_sha256": "6df58a1901ee4f5cd057af05278c9fe1fb7891d689e32c73b6e6085cd21fab39",
+      "sha256": "8a518eb3a0bcd1ced41e8f81d836e58ca124f07ad1a8688b547033fb675de5a6",
+      "size": 2108952
+    },
+    {
+      "path": "fonts/impact_small.font",
+      "source_decoded_sha256": "723dee6c2541b05763f8fb966ede519414b0fa2f6911e2ace16670e0f15cb919",
+      "sha256": "76705cd68e86d8eee3c0072f4c11eaac8516136caa3f27093f4845b69354cd78",
+      "size": 536088
+    },
+    {
+      "path": "fonts/arial_bold_17pt.font",
+      "source_decoded_sha256": "8cf697da91c24935518fe581abc002c0541dec7c52db941078833de6c5e33f33",
+      "sha256": "654a07e0cb83d4dda1ac6ae9519b9e16785239ba48d71409d0d4bcc2c6c47085",
+      "size": 2108952
+    },
+    {
+      "path": "fonts/arial_bold_small.font",
+      "source_decoded_sha256": "395bdcacc71d2c2d8816345bdb2a5ec379d4c9401494d1a7b7b20f9a2efca8d2",
+      "sha256": "2d1ea05e9c09ca5d86729215e83d6004f002b9dfb1c79f83ee2ad955c8960949",
+      "size": 536088
+    }
+  ]
+}
